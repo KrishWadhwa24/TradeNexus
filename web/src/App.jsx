@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { getToken, setToken } from "./api.js";
-import { Icon, LogoMark } from "./icons.jsx";
+import { Icon } from "./icons.jsx";
 import Login from "./pages/Login.jsx";
 import Home from "./pages/Home.jsx";
 import Analytics from "./pages/Analytics.jsx";
@@ -33,7 +33,7 @@ const TITLES = {
 };
 
 export default function App() {
-  const [theme, setTheme] = useState(localStorage.getItem("theme") || "light");
+  const [theme, setTheme] = useState(localStorage.getItem("theme") || "dark");
   const [view, setView] = useState("home");
   const [menuOpen, setMenuOpen] = useState(false);
   const [user, setUser] = useState(() => {
@@ -89,7 +89,7 @@ export default function App() {
       {menuOpen && <div className="backdrop" onClick={() => setMenuOpen(false)} />}
       <aside className={"sidebar" + (menuOpen ? " open" : "")}>
         <div className="brand">
-          <span className="logo"><LogoMark /></span>
+          <span className="prompt">&gt;_</span>
           Trade<em>Nexus</em>
         </div>
         {NAV.map((n) => {

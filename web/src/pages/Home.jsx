@@ -17,7 +17,8 @@ export default function Home() {
   return (
     <div>
       <div className="hero">
-        <h2>Spot the movers before the crowd.</h2>
+        <span className="kicker">// TRENDING_NOW</span>
+        <h2>Spot the movers<br />before the <span className="accent">crowd.</span></h2>
         <p>Today's top gainers across your tracked universe, ranked by daily change. Dig deeper in Analytics and the scanners.</p>
         <HeroChart />
       </div>

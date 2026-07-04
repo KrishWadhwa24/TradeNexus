@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import { authApi, setToken } from "../api.js";
-import { LogoMark } from "../icons.jsx";
 
 export default function Login({ onAuthed }) {
   const [mode, setMode] = useState("login"); // login | register
@@ -29,11 +28,11 @@ export default function Login({ onAuthed }) {
     <div className="auth-wrap">
       <div className="auth-art">
         <div className="brand" style={{ padding: 0 }}>
-          <span className="logo"><LogoMark /></span>
-          <span style={{ fontSize: 22, fontWeight: 800, color: "#1a1030" }}>TradeNexus</span>
+          <span className="prompt">&gt;_</span> Trade<em>Nexus</em>
         </div>
-        <h1>Find winning stocks before the crowd.</h1>
-        <p>Pine &amp; weekly scanners over NSE data, live analytics, Telegram alerts, and paper trading — all in one place.</p>
+        <span className="kicker">// UNIFIED_STOCK_SCANNER</span>
+        <h1>Find winning stocks<br />before the <span className="accent">crowd.</span></h1>
+        <p>Pine &amp; weekly scanners over NSE + BSE data, live analytics, Telegram alerts, and paper trading — all in one terminal.</p>
       </div>
 
       <form className="auth-form" onSubmit={submit}>
