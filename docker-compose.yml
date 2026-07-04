@@ -1,0 +1,33 @@
+# Local dependencies for TradeNexus. Brings up Postgres + Redis only;
+# the Go server runs on the host via `make run` (or `go run ./cmd/server`).
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tradenexus-postgres
+    environment:
+      POSTGRES_USER: tradenexus
+      POSTGRES_PASSWORD: tradenexus
+      POSTGRES_DB: tradenexus
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tradenexus"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: tradenexus-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

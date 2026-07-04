@@ -1,0 +1,68 @@
+import React, { useState } from "react";
+import { authApi, setToken } from "../api.js";
+import { LogoMark } from "../icons.jsx";
+
+export default function Login({ onAuthed }) {
+  const [mode, setMode] = useState("login"); // login | register
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    setErr("");
+    setBusy(true);
+    try {
+      const fn = mode === "login" ? authApi.login : authApi.register;
+      const r = await fn(email, password);
+      setToken(r.token);
+      onAuthed(r.user);
+    } catch (e2) {
+      setErr(e2.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="auth-wrap">
+      <div className="auth-art">
+        <div className="brand" style={{ padding: 0 }}>
+          <span className="logo"><LogoMark /></span>
+          <span style={{ fontSize: 22, fontWeight: 800, color: "#1a1030" }}>TradeNexus</span>
+        </div>
+        <h1>Find winning stocks before the crowd.</h1>
+        <p>Pine &amp; weekly scanners over NSE data, live analytics, Telegram alerts, and paper trading — all in one place.</p>
+      </div>
+
+      <form className="auth-form" onSubmit={submit}>
+        <h2>{mode === "login" ? "Welcome back" : "Create your account"}</h2>
+        <div className="subtle">{mode === "login" ? "Sign in to your dashboard." : "Start scanning in seconds."}</div>
+
+        <div className="field">
+          <label>Email</label>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required />
+        </div>
+        <div className="field">
+          <label>Password</label>
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="min 6 characters" required />
+        </div>
+
+        {err && <div className="err">{err}</div>}
+
+        <button className="btn-primary" disabled={busy}>
+          {busy ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
+        </button>
+
+        <div className="auth-switch">
+          {mode === "login" ? (
+            <>New here? <a onClick={() => { setMode("register"); setErr(""); }}>Create an account</a></>
+          ) : (
+            <>Already have an account? <a onClick={() => { setMode("login"); setErr(""); }}>Sign in</a></>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+}

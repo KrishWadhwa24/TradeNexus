@@ -1,0 +1,121 @@
+// Package scheduler runs the recurring jobs: the daily post-close scan (with
+// reconciliation/backfill) and the signal retention cleanup. Times are IST.
+package scheduler
+
+import (
+	"context"
+	"time"
+
+	"github.com/robfig/cron/v3"
+	"github.com/rs/zerolog"
+
+	"tradenexus/internal/engine"
+	"tradenexus/internal/market"
+	"tradenexus/internal/paper"
+)
+
+// Config controls the schedule.
+type Config struct {
+	Enabled            bool
+	DailyScanCron      string // e.g. "20 15 * * 1-5"  (15:20 IST, Mon-Fri)
+	CleanupCron        string // e.g. "0 1 * * *"      (01:00 IST daily)
+	FillScheduledCron  string // e.g. "16 9 * * 1-5"   (09:16 IST, at market open)
+	RunReconcileOnBoot bool
+}
+
+// Scheduler wraps a cron instance bound to the engine + paper services.
+type Scheduler struct {
+	cron  *cron.Cron
+	svc   *engine.Service
+	paper *paper.Service
+	cfg   Config
+	log   zerolog.Logger
+}
+
+// New builds a scheduler (IST-based cron).
+func New(svc *engine.Service, paperSvc *paper.Service, cfg Config, log zerolog.Logger) *Scheduler {
+	return &Scheduler{
+		cron:  cron.New(cron.WithLocation(market.IST)),
+		svc:   svc,
+		paper: paperSvc,
+		cfg:   cfg,
+		log:   log,
+	}
+}
+
+// Start registers jobs and (optionally) kicks off a startup reconciliation.
+func (s *Scheduler) Start(ctx context.Context) error {
+	if !s.cfg.Enabled {
+		s.log.Info().Msg("scheduler disabled")
+		return nil
+	}
+
+	if _, err := s.cron.AddFunc(s.cfg.DailyScanCron, func() {
+		s.log.Info().Msg("scheduler: daily scan starting")
+		jobCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		res, err := s.svc.ReconcileAll(jobCtx)
+		if err != nil {
+			s.log.Error().Err(err).Msg("scheduler: daily scan failed")
+			return
+		}
+		s.log.Info().Int("instruments", len(res)).Msg("scheduler: daily scan done")
+	}); err != nil {
+		return err
+	}
+
+	if _, err := s.cron.AddFunc(s.cfg.CleanupCron, func() {
+		jobCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		deleted, err := s.svc.Cleanup(jobCtx)
+		if err != nil {
+			s.log.Error().Err(err).Msg("scheduler: cleanup failed")
+			return
+		}
+		s.log.Info().Int64("deleted", deleted).Msg("scheduler: retention cleanup done")
+	}); err != nil {
+		return err
+	}
+
+	// Fill SCHEDULED paper trades at market open.
+	if s.paper != nil && s.cfg.FillScheduledCron != "" {
+		if _, err := s.cron.AddFunc(s.cfg.FillScheduledCron, func() {
+			jobCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			n, err := s.paper.FillScheduled(jobCtx)
+			if err != nil {
+				s.log.Error().Err(err).Msg("scheduler: fill scheduled trades failed")
+				return
+			}
+			s.log.Info().Int("filled", n).Msg("scheduler: scheduled paper trades filled")
+		}); err != nil {
+			return err
+		}
+	}
+
+	s.cron.Start()
+	s.log.Info().Str("daily", s.cfg.DailyScanCron).Str("cleanup", s.cfg.CleanupCron).Msg("scheduler started")
+
+	if s.cfg.RunReconcileOnBoot {
+		go func() {
+			bootCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			s.log.Info().Msg("scheduler: startup reconciliation starting")
+			res, err := s.svc.ReconcileAll(bootCtx)
+			if err != nil {
+				s.log.Error().Err(err).Msg("scheduler: startup reconciliation failed")
+				return
+			}
+			s.log.Info().Int("instruments", len(res)).Msg("scheduler: startup reconciliation done")
+		}()
+	}
+	return nil
+}
+
+// Stop halts the cron scheduler, waiting for running jobs to finish.
+func (s *Scheduler) Stop() {
+	if s.cron != nil {
+		ctx := s.cron.Stop()
+		<-ctx.Done()
+	}
+}

@@ -1,0 +1,153 @@
+<svg viewBox="0 0 1180 900" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="arw" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#64748b"/>
+    </marker>
+    <style>
+      .box{rx:10;ry:10;stroke-width:1.5;}
+      .t{font-size:14px;font-weight:600;fill:#0f172a;}
+      .s{font-size:11px;fill:#334155;}
+      .lbl{font-size:11px;fill:#64748b;}
+      .grp{font-size:12px;font-weight:700;fill:#475569;letter-spacing:.5px;}
+      .flow{stroke:#64748b;stroke-width:1.6;fill:none;marker-end:url(#arw);}
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1180" height="900" fill="#f8fafc"/>
+  <text x="30" y="42" font-size="24" font-weight="800" fill="#0f172a">TradeNexus — Architecture &amp; Data Flow</text>
+  <text x="30" y="66" class="s">Go backend · PostgreSQL · Redis · React · Angel One SmartAPI · Telegram</text>
+
+  <!-- External sources -->
+  <rect x="30" y="100" width="240" height="90" class="box" fill="#ede9fe" stroke="#7c3aed"/>
+  <text x="45" y="128" class="t">Angel One SmartAPI</text>
+  <text x="45" y="150" class="s">Historical REST (ONE_DAY, ≤2000)</text>
+  <text x="45" y="168" class="s">SmartStream WebSocket 2.0 (LTP)</text>
+  <text x="45" y="184" class="lbl">TOTP + JWT auth · scrip master</text>
+
+  <!-- Ingestion / Sync -->
+  <rect x="330" y="90" width="300" height="130" class="box" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="345" y="116" class="t">Ingestion &amp; Sync Engine</text>
+  <text x="345" y="138" class="s">• Daily candle fetch + rate-limit (token bucket)</text>
+  <text x="345" y="156" class="s">• Backfill missing trading days</text>
+  <text x="345" y="174" class="s">• Reconciliation on startup / recovery</text>
+  <text x="345" y="192" class="s">• Late-recovery (e.g. 22:00) daily-candle check</text>
+  <text x="345" y="210" class="lbl">holiday vs outage classification</text>
+
+  <!-- Calendar -->
+  <rect x="680" y="100" width="200" height="90" class="box" fill="#fef9c3" stroke="#ca8a04"/>
+  <text x="695" y="128" class="t">Trading Calendar</text>
+  <text x="695" y="150" class="s">NSE weekdays −</text>
+  <text x="695" y="168" class="s">market_holidays</text>
+  <text x="695" y="184" class="lbl">gap detection source</text>
+
+  <!-- Candle store -->
+  <rect x="330" y="260" width="300" height="110" class="box" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="345" y="286" class="t">Candle Store (Postgres)</text>
+  <text x="345" y="308" class="s">daily_candles = source of truth</text>
+  <text x="345" y="326" class="s">→ derive weekly / monthly (OHLCV agg)</text>
+  <text x="345" y="344" class="s">is_confirmed gate (no forming candles)</text>
+  <text x="345" y="362" class="lbl">Asia/Kolkata boundaries</text>
+
+  <!-- Indicators -->
+  <rect x="330" y="410" width="300" height="95" class="box" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="345" y="436" class="t">Indicator Engine</text>
+  <text x="345" y="458" class="s">EMA/SMA/RSI/ATR · highest/lowest · cross</text>
+  <text x="345" y="476" class="s">full-replay (recovery) + incremental</text>
+  <text x="345" y="494" class="lbl">persists Pine state for determinism</text>
+
+  <!-- Scanner engine -->
+  <rect x="290" y="545" width="380" height="150" class="box" fill="#ffe4e6" stroke="#e11d48"/>
+  <text x="305" y="571" class="t">Scanner Engine (concurrent worker pool)</text>
+  <rect x="305" y="585" width="165" height="95" rx="8" fill="#fff" stroke="#e11d48"/>
+  <text x="318" y="606" class="t" font-size="12">A) Pine "Chase Momentum"</text>
+  <text x="318" y="626" class="s">Daily · Weekly · Monthly</text>
+  <text x="318" y="644" class="s">binary BUY/SELL</text>
+  <text x="318" y="662" class="lbl">no confidence</text>
+  <rect x="485" y="585" width="170" height="95" rx="8" fill="#fff" stroke="#e11d48"/>
+  <text x="498" y="606" class="t" font-size="12">B) 4 Weekly Scanners</text>
+  <text x="498" y="626" class="s">run on weekly candles</text>
+  <text x="498" y="644" class="s">confidence = N / 4 fired</text>
+  <text x="498" y="662" class="lbl">shows which fired</text>
+
+  <!-- Scheduler -->
+  <rect x="30" y="410" width="240" height="180" class="box" fill="#e0e7ff" stroke="#4f46e5"/>
+  <text x="45" y="436" class="t">Scheduler (cron, IST)</text>
+  <text x="45" y="460" class="s">• Daily-close job (~15:15+)</text>
+  <text x="45" y="480" class="s">• Weekly confirm (wk end)</text>
+  <text x="45" y="500" class="s">• Monthly confirm (mo end)</text>
+  <text x="45" y="520" class="s">• Retention cleanup</text>
+  <text x="45" y="540" class="s">• Scrip refresh</text>
+  <text x="45" y="560" class="s">• Scheduled paper fills</text>
+  <text x="45" y="580" class="lbl">triggers sync → scan</text>
+
+  <!-- Signals + audit -->
+  <rect x="290" y="735" width="230" height="110" class="box" fill="#fae8ff" stroke="#a21caf"/>
+  <text x="305" y="761" class="t">Signals + Audit Store</text>
+  <text x="305" y="783" class="s">Postgres signals + reason_json</text>
+  <text x="305" y="801" class="s">Redis cache + idempotency key</text>
+  <text x="305" y="819" class="lbl">stock:tf:date:scanner (dedupe)</text>
+  <text x="305" y="836" class="lbl">retention sweep removes old</text>
+
+  <!-- Paper trading -->
+  <rect x="545" y="735" width="230" height="110" class="box" fill="#cffafe" stroke="#0891b2"/>
+  <text x="560" y="761" class="t">Paper Trading Engine</text>
+  <text x="560" y="783" class="s">virtual capital, only on signals</text>
+  <text x="560" y="801" class="s">market-aware: now / next open</text>
+  <text x="560" y="819" class="s">portfolio + P&amp;L, trade history</text>
+  <text x="560" y="836" class="lbl">web or Telegram entry</text>
+
+  <!-- Redis -->
+  <rect x="700" y="410" width="180" height="95" class="box" fill="#fee2e2" stroke="#dc2626"/>
+  <text x="715" y="436" class="t">Redis</text>
+  <text x="715" y="456" class="s">cache · rate-limit</text>
+  <text x="715" y="474" class="s">idempotency · queues</text>
+  <text x="715" y="492" class="s">pub/sub · sessions</text>
+
+  <!-- Telegram -->
+  <rect x="910" y="560" width="240" height="110" class="box" fill="#e0f2fe" stroke="#0284c7"/>
+  <text x="925" y="586" class="t">Telegram Bot</text>
+  <text x="925" y="608" class="s">out: scanner + timeframe + N/4</text>
+  <text x="925" y="626" class="s">inline "Paper Buy" button</text>
+  <text x="925" y="644" class="s">in: /papertrade /portfolio /pnl</text>
+  <text x="925" y="662" class="lbl">queued delivery + retry</text>
+
+  <!-- Analytics + export -->
+  <rect x="910" y="410" width="240" height="120" class="box" fill="#f1f5f9" stroke="#475569"/>
+  <text x="925" y="436" class="t">Analytics + REST API</text>
+  <text x="925" y="458" class="s">dashboard aggregation</text>
+  <text x="925" y="476" class="s">filter / sort / customize</text>
+  <text x="925" y="494" class="s">Excel export (.xlsx)</text>
+  <text x="925" y="514" class="lbl">audit browse endpoints</text>
+
+  <!-- Frontend -->
+  <rect x="910" y="700" width="240" height="145" class="box" fill="#ecfccb" stroke="#65a30d"/>
+  <text x="925" y="726" class="t">React SPA</text>
+  <text x="925" y="748" class="s">watchlists · live prices (WS)</text>
+  <text x="925" y="766" class="s">signal feed + audit browser</text>
+  <text x="925" y="784" class="s">analytics dashboard + export</text>
+  <text x="925" y="802" class="s">paper trading + P&amp;L</text>
+  <text x="925" y="820" class="s">Telegram settings</text>
+  <text x="925" y="838" class="lbl">React Query · charts</text>
+
+  <!-- Flows -->
+  <path class="flow" d="M270,150 H328"/>
+  <path class="flow" d="M680,150 H632"/>
+  <path class="flow" d="M480,220 V258"/>
+  <path class="flow" d="M480,370 V408"/>
+  <path class="flow" d="M480,505 V543"/>
+  <path class="flow" d="M270,500 H288 V560 H288"/>
+  <path class="flow" d="M420,695 V733"/>
+  <path class="flow" d="M545,660 H540 H520 V733" />
+  <path class="flow" d="M630,470 H698"/>
+  <path class="flow" d="M520,790 H543"/>
+  <path class="flow" d="M775,800 H908"/>
+  <path class="flow" d="M775,780 H840 V470 H908"/>
+  <path class="flow" d="M670,660 H840 V615 H908"/>
+  <path class="flow" d="M1030,560 V532"/>
+  <path class="flow" d="M270,110 V90 H150 V408" opacity="0"/>
+  <path class="flow" d="M150,90 H270" opacity="0"/>
+
+  <text x="905" y="360" class="lbl" text-anchor="end">live LTP → React (WS)</text>
+  <path class="flow" d="M150,190 V300 H328" />
+  <text x="160" y="250" class="lbl">live ticks (display only)</text>
+</svg>

@@ -1,0 +1,265 @@
+{
+  "info": {
+    "name": "TradeNexus - Modules 1-6",
+    "description": "Foundation, Angel client, candles, indicators, scanners, signals, scheduler ops.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "instrumentId", "value": "1" },
+    { "key": "userId", "value": "" },
+    { "key": "watchlistId", "value": "" },
+    { "key": "signalId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Health (liveness)",
+      "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] } }
+    },
+    {
+      "name": "2. Ready (postgres + redis)",
+      "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/health/ready", "host": ["{{baseUrl}}"], "path": ["health", "ready"] } }
+    },
+    {
+      "name": "3. Rate limiter - try (run repeatedly)",
+      "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/ratelimit/try", "host": ["{{baseUrl}}"], "path": ["v1", "ratelimit", "try"] } }
+    },
+    {
+      "name": "4. Angel login",
+      "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/angel/login", "host": ["{{baseUrl}}"], "path": ["v1", "angel", "login"] } }
+    },
+    {
+      "name": "5. Angel status",
+      "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/angel/status", "host": ["{{baseUrl}}"], "path": ["v1", "angel", "status"] } }
+    },
+    {
+      "name": "6. Scrip master sync",
+      "request": { "method": "POST", "url": { "raw": "{{baseUrl}}/v1/angel/scripmaster/sync", "host": ["{{baseUrl}}"], "path": ["v1", "angel", "scripmaster", "sync"] } }
+    },
+    {
+      "name": "7. Instrument search",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/v1/instruments/search?q=reli&limit=10",
+          "host": ["{{baseUrl}}"], "path": ["v1", "instruments", "search"],
+          "query": [ { "key": "q", "value": "reli" }, { "key": "limit", "value": "10" } ]
+        }
+      }
+    },
+    {
+      "name": "8. Instrument get by id",
+      "request": { "method": "GET", "url": { "raw": "{{baseUrl}}/v1/instruments/{{instrumentId}}", "host": ["{{baseUrl}}"], "path": ["v1", "instruments", "{{instrumentId}}"] } }
+    },
+    {
+      "name": "9. Candle sync (daily + weekly/monthly)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/v1/instruments/{{instrumentId}}/candles/sync?days=1300",
+          "host": ["{{baseUrl}}"], "path": ["v1", "instruments", "{{instrumentId}}", "candles", "sync"],
+          "query": [ { "key": "days", "value": "1300" } ]
+        }
+      }
+    },
+    {
+      "name": "10. Candles get (tf=1D|1W|1M)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/v1/instruments/{{instrumentId}}/candles?tf=1W&limit=5",
+          "host": ["{{baseUrl}}"], "path": ["v1", "instruments", "{{instrumentId}}", "candles"],
+          "query": [ { "key": "tf", "value": "1W" }, { "key": "limit", "value": "5" } ]
+        }
+      }
+    },
+    {
+      "name": "11. Angel historical (raw passthrough)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"exchange\": \"NSE\",\n  \"symbol_token\": \"2885\",\n  \"from\": \"2024-01-01\",\n  \"to\": \"2024-03-01\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/v1/angel/historical", "host": ["{{baseUrl}}"], "path": ["v1", "angel", "historical"] }
+      }
+    },
+    {
+      "name": "12. Scan instrument (stored candles)",
+      "request": {
+        "method": "POST",
+        "url": { "raw": "{{baseUrl}}/v1/instruments/{{instrumentId}}/scan", "host": ["{{baseUrl}}"], "path": ["v1", "instruments", "{{instrumentId}}", "scan"] }
+      }
+    },
+    {
+      "name": "13. Sync + scan (fetch from Angel then scan)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/v1/instruments/{{instrumentId}}/sync-scan?days=1300",
+          "host": ["{{baseUrl}}"], "path": ["v1", "instruments", "{{instrumentId}}", "sync-scan"],
+          "query": [ { "key": "days", "value": "1300" } ]
+        }
+      }
+    },
+    {
+      "name": "14. Signals list (audit)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/v1/signals?instrument_id={{instrumentId}}&tf=1W&source=weekly&limit=50",
+          "host": ["{{baseUrl}}"], "path": ["v1", "signals"],
+          "query": [
+            { "key": "instrument_id", "value": "{{instrumentId}}" },
+            { "key": "tf", "value": "1W" },
+            { "key": "source", "value": "weekly" },
+            { "key": "limit", "value": "50" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "15. Calendar check",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/v1/calendar/check?date=2026-01-26",
+          "host": ["{{baseUrl}}"], "path": ["v1", "calendar", "check"],
+          "query": [ { "key": "date", "value": "2026-01-26" } ]
+        }
+      }
+    },
+    {
+      "name": "16. Add holidays",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": { "mode": "raw", "raw": "{\n  \"dates\": [\"2026-01-26\", \"2026-03-06\"]\n}" },
+        "url": { "raw": "{{baseUrl}}/v1/admin/holidays", "host": ["{{baseUrl}}"], "path": ["v1", "admin", "holidays"] }
+      }
+    },
+    {
+      "name": "17. Reconcile (one via ?id or all)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/v1/admin/reconcile?id={{instrumentId}}",
+          "host": ["{{baseUrl}}"], "path": ["v1", "admin", "reconcile"],
+          "query": [ { "key": "id", "value": "{{instrumentId}}" } ]
+        }
+      }
+    },
+    {
+      "name": "18. Scan all tracked",
+      "request": {
+        "method": "POST",
+        "url": { "raw": "{{baseUrl}}/v1/admin/scan-all", "host": ["{{baseUrl}}"], "path": ["v1", "admin", "scan-all"] }
+      }
+    },
+    {
+      "name": "19. Cleanup (retention)",
+      "request": {
+        "method": "POST",
+        "url": { "raw": "{{baseUrl}}/v1/admin/cleanup", "host": ["{{baseUrl}}"], "path": ["v1", "admin", "cleanup"] }
+      }
+    },
+    {
+      "name": "20. Create user",
+      "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+        "const b = pm.response.json(); if (b.id) pm.collectionVariables.set('userId', b.id);"
+      ] } } ],
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"krish@example.com\"\n}" },
+        "url": { "raw": "{{baseUrl}}/v1/users", "host": ["{{baseUrl}}"], "path": ["v1", "users"] }
+      }
+    },
+    {
+      "name": "21. Create watchlist",
+      "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+        "const b = pm.response.json(); if (b.id) pm.collectionVariables.set('watchlistId', b.id);"
+      ] } } ],
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": { "mode": "raw", "raw": "{\n  \"name\": \"Momentum\"\n}" },
+        "url": { "raw": "{{baseUrl}}/v1/users/{{userId}}/watchlists", "host": ["{{baseUrl}}"], "path": ["v1", "users", "{{userId}}", "watchlists"] }
+      }
+    },
+    {
+      "name": "22. Add watchlist item",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": { "mode": "raw", "raw": "{\n  \"instrument_id\": {{instrumentId}}\n}" },
+        "url": { "raw": "{{baseUrl}}/v1/watchlists/{{watchlistId}}/items", "host": ["{{baseUrl}}"], "path": ["v1", "watchlists", "{{watchlistId}}", "items"] }
+      }
+    },
+    {
+      "name": "23. Set scanner prefs",
+      "request": {
+        "method": "PUT",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": { "mode": "raw", "raw": "{\n  \"prefs\": {\n    \"pine_1d\": true, \"pine_1w\": true, \"pine_1m\": true,\n    \"weekly_1\": true, \"weekly_2\": true, \"weekly_3\": true, \"weekly_4\": true\n  }\n}" },
+        "url": { "raw": "{{baseUrl}}/v1/users/{{userId}}/scanner-prefs", "host": ["{{baseUrl}}"], "path": ["v1", "users", "{{userId}}", "scanner-prefs"] }
+      }
+    },
+    {
+      "name": "24. Set Telegram config",
+      "request": {
+        "method": "PUT",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": { "mode": "raw", "raw": "{\n  \"bot_token\": \"123:ABC\",\n  \"chat_id\": \"99999\",\n  \"enabled\": true\n}" },
+        "url": { "raw": "{{baseUrl}}/v1/users/{{userId}}/telegram", "host": ["{{baseUrl}}"], "path": ["v1", "users", "{{userId}}", "telegram"] }
+      }
+    },
+    {
+      "name": "25. List watchlists",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/v1/users/{{userId}}/watchlists", "host": ["{{baseUrl}}"], "path": ["v1", "users", "{{userId}}", "watchlists"] }
+      }
+    },
+    {
+      "name": "26. Signal recipients preview",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/v1/signals/{{signalId}}/recipients", "host": ["{{baseUrl}}"], "path": ["v1", "signals", "{{signalId}}", "recipients"] }
+      }
+    },
+    {
+      "name": "27. Dispatch signal (window + dedup)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/v1/admin/dispatch?signal_id={{signalId}}",
+          "host": ["{{baseUrl}}"], "path": ["v1", "admin", "dispatch"],
+          "query": [ { "key": "signal_id", "value": "{{signalId}}" } ]
+        }
+      }
+    },
+    {
+      "name": "28. Analytics summary",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/v1/analytics/summary?tf=1W&source=weekly",
+          "host": ["{{baseUrl}}"], "path": ["v1", "analytics", "summary"],
+          "query": [ { "key": "tf", "value": "1W" }, { "key": "source", "value": "weekly" } ]
+        }
+      }
+    },
+    {
+      "name": "29. Analytics Excel export (Send and Download)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/v1/analytics/export.xlsx",
+          "host": ["{{baseUrl}}"], "path": ["v1", "analytics", "export.xlsx"]
+        }
+      }
+    }
+  ]
+}
