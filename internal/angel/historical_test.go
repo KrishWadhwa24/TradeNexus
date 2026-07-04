@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,5 +67,31 @@ func TestGetDailyCandles_HTTP(t *testing.T) {
 	}
 	if len(cs) != 2 {
 		t.Fatalf("expected 2 candles, got %d", len(cs))
+	}
+}
+
+func TestGetDailyCandles_DataString(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"status": true, "message": "SUCCESS", "errorcode": "",
+			"data": "Invalid Token"
+		}`))
+	}))
+	defer srv.Close()
+
+	c := New(Config{APIBaseURL: srv.URL}, nil, zerolog.Nop())
+	c.mu.Lock()
+	c.tokens = tokenData{JWTToken: "test-jwt"}
+	c.tokenTime = time.Now()
+	c.mu.Unlock()
+
+	_, err := c.GetDailyCandles(context.Background(), "NSE", "3045",
+		time.Now().AddDate(0, 0, -5), time.Now())
+	if err == nil {
+		t.Fatal("expected data string error")
+	}
+	if !strings.Contains(err.Error(), "Invalid Token") {
+		t.Fatalf("expected Angel data message, got %v", err)
 	}
 }

@@ -73,10 +73,13 @@ func main() {
 
 	// 5) Angel client + repositories.
 	angelClient := angel.New(angel.Config{
-		APIKey:     cfg.AngelAPIKey,
-		ClientCode: cfg.AngelClientCode,
-		PIN:        cfg.AngelPIN,
-		TOTPSecret: cfg.AngelTOTPSecret,
+		APIKey:              cfg.AngelAPIKey,
+		ClientCode:          cfg.AngelClientCode,
+		PIN:                 cfg.AngelPIN,
+		TOTPSecret:          cfg.AngelTOTPSecret,
+		ScripMasterURL:      cfg.AngelScripMasterURL,
+		ScripMasterTimeout:  cfg.AngelScripMasterTimeout,
+		ScripMasterAttempts: cfg.AngelScripMasterAttempts,
 	}, angelLimiter, log)
 	instRepo := instruments.NewRepo(pg.Pool)
 	candleRepo := candles.NewRepo(pg.Pool)

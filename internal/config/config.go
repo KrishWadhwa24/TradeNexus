@@ -36,8 +36,11 @@ type Config struct {
 	AngelTOTPSecret string `env:"ANGEL_TOTP_SECRET" envDefault:""`
 
 	// Angel rate limiting
-	AngelHistRate  float64 `env:"ANGEL_HIST_RATE" envDefault:"3"`
-	AngelHistBurst int     `env:"ANGEL_HIST_BURST" envDefault:"3"`
+	AngelHistRate            float64       `env:"ANGEL_HIST_RATE" envDefault:"3"`
+	AngelHistBurst           int           `env:"ANGEL_HIST_BURST" envDefault:"3"`
+	AngelScripMasterTimeout  time.Duration `env:"ANGEL_SCRIPMASTER_TIMEOUT" envDefault:"5m"`
+	AngelScripMasterAttempts int           `env:"ANGEL_SCRIPMASTER_ATTEMPTS" envDefault:"3"`
+	AngelScripMasterURL      string        `env:"ANGEL_SCRIPMASTER_URL" envDefault:""`
 
 	// Exchange / calendar
 	Exchange string `env:"EXCHANGE" envDefault:"NSE"`
@@ -46,12 +49,12 @@ type Config struct {
 	JWTSecret string `env:"JWT_SECRET" envDefault:"dev-change-me-please"`
 
 	// Scanner / scheduler
-	SchedulerEnabled    bool   `env:"SCHEDULER_ENABLED" envDefault:"true"`
-	DailyScanCron       string `env:"DAILY_SCAN_CRON" envDefault:"20 15 * * 1-5"`
-	CleanupCron         string `env:"CLEANUP_CRON" envDefault:"0 1 * * *"`
-	FillScheduledCron   string `env:"FILL_SCHEDULED_CRON" envDefault:"16 9 * * 1-5"`
-	RetentionDays       int    `env:"RETENTION_DAYS" envDefault:"30"`
-	ReconcileOnStartup  bool   `env:"RECONCILE_ON_STARTUP" envDefault:"true"`
+	SchedulerEnabled   bool   `env:"SCHEDULER_ENABLED" envDefault:"true"`
+	DailyScanCron      string `env:"DAILY_SCAN_CRON" envDefault:"20 15 * * 1-5"`
+	CleanupCron        string `env:"CLEANUP_CRON" envDefault:"0 1 * * *"`
+	FillScheduledCron  string `env:"FILL_SCHEDULED_CRON" envDefault:"16 9 * * 1-5"`
+	RetentionDays      int    `env:"RETENTION_DAYS" envDefault:"30"`
+	ReconcileOnStartup bool   `env:"RECONCILE_ON_STARTUP" envDefault:"true"`
 
 	// Notifications (Module 7)
 	NotifyEnabled    bool   `env:"NOTIFY_ENABLED" envDefault:"true"`
