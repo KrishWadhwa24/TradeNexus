@@ -15,7 +15,7 @@ import (
 
 // Default Angel endpoints. Overridable via Config for tests (httptest servers).
 const (
-	defaultAPIBaseURL    = "https://apiconnect.angelbroking.com"
+	defaultAPIBaseURL     = "https://apiconnect.angelbroking.com"
 	defaultScripMasterURL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
 
 	pathLogin      = "/rest/auth/angelbroking/user/v1/loginByPassword"
@@ -39,8 +39,10 @@ type Config struct {
 	MACAddress     string
 
 	// Overridable base URLs (leave empty for production defaults).
-	APIBaseURL     string
-	ScripMasterURL string
+	APIBaseURL          string
+	ScripMasterURL      string
+	ScripMasterTimeout  time.Duration
+	ScripMasterAttempts int
 }
 
 // Client talks to Angel SmartAPI.
@@ -62,6 +64,12 @@ func New(cfg Config, limiter *ratelimit.Limiter, log zerolog.Logger) *Client {
 	}
 	if cfg.ScripMasterURL == "" {
 		cfg.ScripMasterURL = defaultScripMasterURL
+	}
+	if cfg.ScripMasterTimeout == 0 {
+		cfg.ScripMasterTimeout = 5 * time.Minute
+	}
+	if cfg.ScripMasterAttempts == 0 {
+		cfg.ScripMasterAttempts = 3
 	}
 	if cfg.ClientLocalIP == "" {
 		cfg.ClientLocalIP = "127.0.0.1"

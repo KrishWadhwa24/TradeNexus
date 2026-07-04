@@ -1,5 +1,7 @@
 package angel
 
+import "encoding/json"
+
 // loginRequest is the body for loginByPassword.
 type loginRequest struct {
 	ClientCode string `json:"clientcode"`
@@ -36,12 +38,13 @@ type histRequest struct {
 	ToDate      string `json:"todate"`
 }
 
-// histResponse envelope. Data is an array of [ts, o, h, l, c, v] rows.
+// histResponse envelope. Data is usually an array of [ts, o, h, l, c, v] rows,
+// but Angel sometimes returns a string message with HTTP 200.
 type histResponse struct {
 	Status    bool            `json:"status"`
 	Message   string          `json:"message"`
 	ErrorCode string          `json:"errorcode"`
-	Data      [][]interface{} `json:"data"`
+	Data      json.RawMessage `json:"data"`
 }
 
 // Scrip is one row of the Angel OpenAPI scrip master.

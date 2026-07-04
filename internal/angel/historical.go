@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -62,7 +63,27 @@ func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken stri
 		return nil, fmt.Errorf("angel historical failed: %s (%s)", hr.Message, hr.ErrorCode)
 	}
 
-	return parseCandles(hr.Data)
+	rows, err := decodeHistoricalData(hr.Data)
+	if err != nil {
+		return nil, fmt.Errorf("angel historical failed: %s", err)
+	}
+	return parseCandles(rows)
+}
+
+func decodeHistoricalData(data json.RawMessage) ([][]interface{}, error) {
+	var rows [][]interface{}
+	if err := json.Unmarshal(data, &rows); err == nil {
+		return rows, nil
+	}
+
+	var msg string
+	if err := json.Unmarshal(data, &msg); err == nil {
+		if msg == "" {
+			return nil, errors.New("empty data")
+		}
+		return nil, errors.New(msg)
+	}
+	return nil, fmt.Errorf("unexpected data payload: %s", string(data))
 }
 
 // parseCandles maps Angel's [ts, o, h, l, c, v] rows into market.Candle values.
