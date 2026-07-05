@@ -166,7 +166,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/calendar/check", s.handleCalendarCheck)
 
 			// Admin / ops (Module 6)
-			r.With(middleware.Timeout(35 * time.Minute)).Post("/admin/reconcile", s.handleReconcile)
+			r.With(middleware.Timeout(35*time.Minute)).Post("/admin/reconcile", s.handleReconcile)
 			r.Post("/admin/scan-all", s.handleScanAll)
 			r.Post("/admin/cleanup", s.handleCleanup)
 			r.Post("/admin/holidays", s.handleAddHolidays)
