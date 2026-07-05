@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { api, download, fmt, fmtInt, livePricesURL, pct } from "../api.js";
+import { api, connectLivePrices, download, fmt, fmtInt, pct } from "../api.js";
 
 export default function Analytics({ userId }) {
   const [rows, setRows] = useState([]);
@@ -19,21 +19,21 @@ export default function Analytics({ userId }) {
 
   useEffect(() => {
     if (!userId) return;
-    const ws = new WebSocket(livePricesURL(userId));
-    ws.onmessage = (event) => {
-      try {
-        const tick = JSON.parse(event.data);
-        if (!tick.instrument_id || !tick.price) return;
-        setRows((current) => current.map((row) => {
-          if (row.instrument_id !== tick.instrument_id) return row;
-          const pctChange = row.prev_close > 0 ? ((tick.price - row.prev_close) / row.prev_close) * 100 : row.pct_change;
-          return { ...row, price: tick.price, pct_change: pctChange };
-        }));
-      } catch {
-        // Ignore non-tick control messages.
-      }
-    };
-    return () => ws.close();
+    return connectLivePrices(userId, {
+      onMessage: (event) => {
+        try {
+          const tick = JSON.parse(event.data);
+          if (!tick.instrument_id || !tick.price) return;
+          setRows((current) => current.map((row) => {
+            if (row.instrument_id !== tick.instrument_id) return row;
+            const pctChange = row.prev_close > 0 ? ((tick.price - row.prev_close) / row.prev_close) * 100 : row.pct_change;
+            return { ...row, price: tick.price, pct_change: pctChange };
+          }));
+        } catch {
+          // Ignore non-tick control messages.
+        }
+      },
+    });
   }, [userId]);
 
   function exportCsv() {
