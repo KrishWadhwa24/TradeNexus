@@ -320,13 +320,18 @@ func (s *Service) ReconcileAll(ctx context.Context) ([]ReconcileResult, error) {
 		return nil, err
 	}
 	var out []ReconcileResult
-	for _, id := range ids {
+	for i, id := range ids {
 		r, err := s.Reconcile(ctx, id)
 		if err != nil {
 			s.log.Error().Err(err).Int64("instrument", id).Msg("reconcile-all: instrument failed")
 			continue
 		}
 		out = append(out, r)
+		if i < len(ids)-1 {
+			if err := sleepContext(ctx, 350*time.Millisecond); err != nil {
+				return out, err
+			}
+		}
 	}
 	return out, nil
 }
@@ -334,4 +339,15 @@ func (s *Service) ReconcileAll(ctx context.Context) ([]ReconcileResult, error) {
 // Cleanup removes signals older than the retention window (30 days by default).
 func (s *Service) Cleanup(ctx context.Context) (int64, error) {
 	return s.signals.DeleteOlderThan(ctx, s.retention)
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
