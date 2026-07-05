@@ -11,6 +11,12 @@ export function getToken() {
   return token;
 }
 
+export function livePricesURL(userId) {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const qs = new URLSearchParams({ token });
+  return `${proto}//${window.location.host}/v1/users/${userId}/live-prices?${qs}`;
+}
+
 async function req(method, path, body) {
   const opts = { method, headers: {} };
   if (token) opts.headers["Authorization"] = "Bearer " + token;

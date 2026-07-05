@@ -132,7 +132,47 @@ func (s *Service) persist(ctx context.Context, instID int64, rep scanner.Report,
 			return n, err
 		}
 	}
+	if err := s.persistPatternSignals(add, instID, market.TF1D, lastTimeOrZero(daily), rep.Patterns.Daily); err != nil {
+		return n, err
+	}
+	if err := s.persistPatternSignals(add, instID, market.TF1W, lastTimeOrZero(weekly), rep.Patterns.Weekly); err != nil {
+		return n, err
+	}
+	if err := s.persistPatternSignals(add, instID, market.TF1M, lastTimeOrZero(monthly), rep.Patterns.Monthly); err != nil {
+		return n, err
+	}
 	return n, nil
+}
+
+func (s *Service) persistPatternSignals(add func(signals.Signal) error, instID int64, tf string, date time.Time, res scanner.PatternTimeframeResult) error {
+	if date.IsZero() {
+		return nil
+	}
+	patterns := []struct {
+		name string
+		sig  scanner.PatternSignal
+	}{
+		{scanner.PatternDowntrendBreakout, res.DowntrendBreakout},
+		{scanner.PatternRectangle, res.Rectangle},
+		{scanner.PatternCupHandle, res.CupHandle},
+	}
+	for _, p := range patterns {
+		if !p.sig.Buy {
+			continue
+		}
+		if err := add(signals.Signal{
+			InstrumentID: instID,
+			Source:       "patterns",
+			ScannerName:  p.name,
+			Timeframe:    tf,
+			Direction:    "BUY",
+			CandleDate:   date,
+			Reasons:      p.sig.Reasons,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func pineSignal(instID int64, tf string, date time.Time, sig scanner.PineSignal) signals.Signal {
@@ -152,6 +192,13 @@ func pineSignal(instID int64, tf string, date time.Time, sig scanner.PineSignal)
 }
 
 func lastTime(c []market.Candle) time.Time { return c[len(c)-1].Time }
+
+func lastTimeOrZero(c []market.Candle) time.Time {
+	if len(c) == 0 {
+		return time.Time{}
+	}
+	return lastTime(c)
+}
 
 // SyncAndScan fetches `days` of daily history from Angel, stores it, rebuilds
 // aggregates, and scans.

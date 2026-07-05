@@ -20,6 +20,7 @@ import (
 	"tradenexus/internal/config"
 	"tradenexus/internal/engine"
 	"tradenexus/internal/instruments"
+	"tradenexus/internal/live"
 	"tradenexus/internal/logger"
 	"tradenexus/internal/notify"
 	"tradenexus/internal/paper"
@@ -112,6 +113,10 @@ func main() {
 	// Analytics service (dashboard + Excel export).
 	analyticsSvc := analytics.NewService(pg.Pool)
 
+	// Live price websocket fan-out. This owns the Angel stream connection and
+	// keeps it separate from scanning/reconciliation services.
+	liveHub := live.NewHub(angelClient, log)
+
 	// Paper-trading service.
 	paperSvc := paper.New(pg.Pool, angelClient, candleRepo, instRepo, signalRepo, calSvc, log)
 
@@ -146,6 +151,7 @@ func main() {
 			Notifier:    dispatcher,
 			Analytics:   analyticsSvc,
 			Paper:       paperSvc,
+			Live:        liveHub,
 			JWTSecret:   cfg.JWTSecret,
 		}).Router(),
 		ReadHeaderTimeout: 10 * time.Second,

@@ -16,6 +16,9 @@ const NAV = [
   { key: "analytics", label: "Analytics", icon: "chart" },
   { key: "scanner:pine", label: "Pine Scanner", icon: "scan", sub: true },
   { key: "scanner:weekly", label: "Weekly Scanner", icon: "scan", sub: true },
+  { key: "patterns:cup_handle", label: "Cup and Handle", icon: "scan", sub: true },
+  { key: "patterns:downtrend_breakout", label: "Downtrend Breakout", icon: "scan", sub: true },
+  { key: "patterns:rectangle", label: "Rectangle Box", icon: "scan", sub: true },
   { key: "audit", label: "Audit", icon: "list" },
   { key: "paper", label: "Paper Trading", icon: "wallet" },
   { key: "profile", label: "Profile", icon: "user" },
@@ -27,6 +30,9 @@ const TITLES = {
   analytics: "Analytics Dashboard",
   "scanner:pine": "Pine Scanner",
   "scanner:weekly": "Weekly Scanner",
+  "patterns:cup_handle": "Cup and Handle",
+  "patterns:downtrend_breakout": "Downtrend Breakout",
+  "patterns:rectangle": "Rectangle Box",
   audit: "Signal Audit",
   paper: "Paper Trading",
   profile: "Profile",
@@ -69,11 +75,14 @@ export default function App() {
   function render() {
     const p = { userId };
     switch (view) {
-      case "home": return <Home />;
+      case "home": return <Home {...p} />;
       case "watchlist": return <Watchlist {...p} />;
       case "analytics": return <Analytics {...p} />;
       case "scanner:pine": return <Scanner source="pine" {...p} />;
       case "scanner:weekly": return <Scanner source="weekly" {...p} />;
+      case "patterns:cup_handle": return <Scanner source="patterns" pattern="pattern_cup_handle" {...p} />;
+      case "patterns:downtrend_breakout": return <Scanner source="patterns" pattern="pattern_downtrend_breakout" {...p} />;
+      case "patterns:rectangle": return <Scanner source="patterns" pattern="pattern_rectangle" {...p} />;
       case "audit": return <Audit />;
       case "paper": return <Paper {...p} />;
       case "profile": return <Profile {...p} />;

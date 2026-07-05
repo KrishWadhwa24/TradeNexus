@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"tradenexus/internal/market"
@@ -40,24 +41,25 @@ func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken stri
 		ToDate:      to.In(market.IST).Format(angelDateLayout),
 	})
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.cfg.APIBaseURL+pathHistorical, bytes.NewReader(reqBody))
+	raw, status, err := c.doHistoricalRequest(ctx, reqBody)
 	if err != nil {
 		return nil, err
 	}
-	c.commonHeaders(req)
-	req.Header.Set("Authorization", "Bearer "+c.jwt())
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("angel historical: %w", err)
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		if err := c.refreshOrLogin(ctx); err == nil {
+			raw, status, err = c.doHistoricalRequest(ctx, reqBody)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("angel historical HTTP %d: %s", status, bodyPreview(raw))
+	}
 
 	var hr histResponse
 	if err := json.Unmarshal(raw, &hr); err != nil {
-		return nil, fmt.Errorf("angel historical decode (status %d): %w", resp.StatusCode, err)
+		return nil, fmt.Errorf("angel historical decode (status %d): %w", status, err)
 	}
 	if !hr.Status {
 		return nil, fmt.Errorf("angel historical failed: %s (%s)", hr.Message, hr.ErrorCode)
@@ -68,6 +70,42 @@ func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken stri
 		return nil, fmt.Errorf("angel historical failed: %s", err)
 	}
 	return parseCandles(rows)
+}
+
+func (c *Client) doHistoricalRequest(ctx context.Context, reqBody []byte) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.cfg.APIBaseURL+pathHistorical, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, 0, err
+	}
+	c.commonHeaders(req)
+	req.Header.Set("Authorization", "Bearer "+c.jwt())
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("angel historical: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	return raw, resp.StatusCode, nil
+}
+
+func (c *Client) refreshOrLogin(ctx context.Context) error {
+	if err := c.RefreshTokens(ctx); err == nil {
+		return nil
+	}
+	return c.Login(ctx)
+}
+
+func bodyPreview(raw []byte) string {
+	const max = 240
+	if len(raw) == 0 {
+		return "empty response body"
+	}
+	if len(raw) > max {
+		raw = raw[:max]
+	}
+	return string(raw)
 }
 
 func decodeHistoricalData(data json.RawMessage) ([][]interface{}, error) {
@@ -123,6 +161,9 @@ func toFloat(v interface{}) float64 {
 		return n
 	case json.Number:
 		f, _ := n.Float64()
+		return f
+	case string:
+		f, _ := strconv.ParseFloat(n, 64)
 		return f
 	default:
 		return 0

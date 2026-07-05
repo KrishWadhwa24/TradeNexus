@@ -4,6 +4,7 @@
 package angel
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"time"
@@ -55,6 +56,17 @@ type Client struct {
 	mu        sync.RWMutex
 	tokens    tokenData
 	tokenTime time.Time
+}
+
+// StreamCredentials returns the current credentials required by Angel's
+// websocket feed, logging in first if needed.
+func (c *Client) StreamCredentials(ctx context.Context) (apiKey, clientCode, jwtToken, feedToken string, err error) {
+	if err := c.ensureLogin(ctx); err != nil {
+		return "", "", "", "", err
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.cfg.APIKey, c.cfg.ClientCode, c.tokens.JWTToken, c.tokens.FeedToken, nil
 }
 
 // New builds a client, filling defaults for any empty config fields.

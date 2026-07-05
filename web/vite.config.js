@@ -8,7 +8,10 @@ export default defineConfig({
     allowedHosts: true,
     port: 5173,
     proxy: {
-      "/v1": "http://localhost:8080",
+      "/v1": {
+        target: "http://localhost:8080",
+        ws: true,
+      },
       "/health": "http://localhost:8080",
     },
   },

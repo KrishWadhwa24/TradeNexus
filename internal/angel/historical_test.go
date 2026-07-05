@@ -37,6 +37,19 @@ func TestParseCandles_Malformed(t *testing.T) {
 	}
 }
 
+func TestParseCandles_NumericStrings(t *testing.T) {
+	rows := [][]interface{}{
+		{"2024-01-01T00:00:00+05:30", "100.5", "110.5", "95.5", "105.5", "1000"},
+	}
+	cs, err := parseCandles(rows)
+	if err != nil {
+		t.Fatalf("parseCandles: %v", err)
+	}
+	if cs[0].Open != 100.5 || cs[0].High != 110.5 || cs[0].Low != 95.5 || cs[0].Close != 105.5 || cs[0].Volume != 1000 {
+		t.Fatalf("numeric strings were not parsed: %+v", cs[0])
+	}
+}
+
 func TestGetDailyCandles_HTTP(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") == "" {
@@ -93,5 +106,28 @@ func TestGetDailyCandles_DataString(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Invalid Token") {
 		t.Fatalf("expected Angel data message, got %v", err)
+	}
+}
+
+func TestGetDailyCandles_NonJSONHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Access denied", http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	c := New(Config{APIBaseURL: srv.URL}, nil, zerolog.Nop())
+	c.mu.Lock()
+	c.tokens = tokenData{JWTToken: "test-jwt"}
+	c.tokenTime = time.Now()
+	c.mu.Unlock()
+
+	_, err := c.GetDailyCandles(context.Background(), "NSE", "3045",
+		time.Now().AddDate(0, 0, -5), time.Now())
+	if err == nil {
+		t.Fatal("expected HTTP error")
+	}
+	if !strings.Contains(err.Error(), "angel historical HTTP 403") ||
+		!strings.Contains(err.Error(), "Access denied") {
+		t.Fatalf("expected status and body preview, got %v", err)
 	}
 }

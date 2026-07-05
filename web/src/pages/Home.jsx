@@ -1,25 +1,59 @@
 import React, { useEffect, useState } from "react";
-import { api, fmt, pct } from "../api.js";
+import { api, fmt, livePricesURL, pct } from "../api.js";
 import { HeroChart, EmptyArt } from "../icons.jsx";
 
-export default function Home() {
+export default function Home({ userId }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    api.get("/v1/market/trending?limit=30")
-      .then((r) => setRows(r.trending || []))
+    if (!userId) return;
+    setLoading(true);
+    setErr("");
+    api.get(`/v1/users/${userId}/dashboard`)
+      .then((r) => {
+        const ranked = [...(r.rows || [])]
+          .sort((a, b) => b.pct_change - a.pct_change)
+          .slice(0, 30)
+          .map((row) => ({
+            instrument_id: row.instrument_id,
+            symbol: row.symbol,
+            last_close: row.last_close,
+            prev_close: row.prev_close,
+            pct_change: row.pct_change,
+          }));
+        setRows(ranked);
+      })
       .catch((e) => setErr(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) return;
+    const ws = new WebSocket(livePricesURL(userId));
+    ws.onmessage = (event) => {
+      try {
+        const tick = JSON.parse(event.data);
+        if (!tick.instrument_id || !tick.price) return;
+        setRows((current) => current.map((row) => {
+          if (row.instrument_id !== tick.instrument_id) return row;
+          const pctChange = row.prev_close > 0 ? ((tick.price - row.prev_close) / row.prev_close) * 100 : row.pct_change;
+          return { ...row, last_close: tick.price, pct_change: pctChange };
+        }).sort((a, b) => b.pct_change - a.pct_change));
+      } catch {
+        // Ignore non-tick control messages.
+      }
+    };
+    return () => ws.close();
+  }, [userId]);
 
   return (
     <div>
       <div className="hero">
         <span className="kicker">// TRENDING_NOW</span>
         <h2>Spot the movers<br />before the <span className="accent">crowd.</span></h2>
-        <p>Today's top gainers across your tracked universe, ranked by daily change. Dig deeper in Analytics and the scanners.</p>
+        <p>Today's top gainers across your watchlist, ranked by daily change. Dig deeper in Analytics and the scanners.</p>
         <HeroChart />
       </div>
 
@@ -30,7 +64,7 @@ export default function Home() {
       ) : err ? (
         <div className="err">{err}</div>
       ) : !rows.length ? (
-        <div className="empty"><EmptyArt /><div>No data yet. Add stocks to your watchlist and sync them.</div></div>
+        <div className="empty"><EmptyArt /><div>No watchlist data yet. Add stocks to your watchlist and sync them.</div></div>
       ) : (
         <div className="panel">
           <table>

@@ -4,10 +4,11 @@ import "tradenexus/internal/market"
 
 // Report is the full scan outcome for one instrument across all timeframes.
 type Report struct {
-	DailyPine   PineSignal   `json:"daily_pine"`
-	WeeklyPine  PineSignal   `json:"weekly_pine"`
-	MonthlyPine PineSignal   `json:"monthly_pine"`
-	Weekly      WeeklyResult `json:"weekly_scanners"`
+	DailyPine   PineSignal    `json:"daily_pine"`
+	WeeklyPine  PineSignal    `json:"weekly_pine"`
+	MonthlyPine PineSignal    `json:"monthly_pine"`
+	Weekly      WeeklyResult  `json:"weekly_scanners"`
+	Patterns    PatternReport `json:"patterns"`
 }
 
 // Run evaluates the Pine strategy on daily/weekly/monthly candles and the four
@@ -22,5 +23,10 @@ func Run(daily, weekly, monthly []market.Candle, cfg PineConfig) Report {
 		WeeklyPine:  ScanPine(weekly, cfg),
 		MonthlyPine: ScanPine(monthly, cfg),
 		Weekly:      ScanWeekly(weekly),
+		Patterns: PatternReport{
+			Daily:   ScanPatternTimeframe(daily, true, true),
+			Weekly:  ScanPatternTimeframe(weekly, true, true),
+			Monthly: ScanPatternTimeframe(monthly, false, false),
+		},
 	}
 }
