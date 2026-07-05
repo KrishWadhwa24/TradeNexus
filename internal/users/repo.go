@@ -143,6 +143,20 @@ func (r *Repo) CreateWatchlist(ctx context.Context, userID, name string) (string
 	return id, err
 }
 
+// DeleteWatchlist removes a watchlist owned by a user.
+func (r *Repo) DeleteWatchlist(ctx context.Context, userID, watchlistID string) error {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM watchlists
+		WHERE id = $1::uuid AND user_id = $2::uuid`, watchlistID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // AddWatchlistItem adds an instrument to a watchlist.
 func (r *Repo) AddWatchlistItem(ctx context.Context, watchlistID string, instrumentID int64) error {
 	_, err := r.pool.Exec(ctx, `

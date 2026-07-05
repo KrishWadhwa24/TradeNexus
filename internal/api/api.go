@@ -176,6 +176,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/users", s.handleListUsers)
 			r.Post("/users/{uid}/watchlists", s.handleCreateWatchlist)
 			r.Get("/users/{uid}/watchlists", s.handleListWatchlists)
+			r.Delete("/users/{uid}/watchlists/{wid}", s.handleDeleteWatchlist)
 			r.Post("/watchlists/{wid}/items", s.handleAddWatchlistItem)
 			r.Delete("/watchlists/{wid}/items/{instrumentId}", s.handleRemoveWatchlistItem)
 			r.Put("/users/{uid}/scanner-prefs", s.handleSetScannerPrefs)
