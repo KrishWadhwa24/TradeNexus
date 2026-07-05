@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api.js";
+import { Box, Typography, Button, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, CircularProgress, Alert, FormControl, InputLabel, Select, MenuItem, Chip } from "@mui/material";
 
 export default function Audit() {
   const [rows, setRows] = useState([]);
@@ -23,60 +24,84 @@ export default function Audit() {
 
   useEffect(load, [tf, source]);
 
-  return (
-    <div>
-      <div className="toolbar">
-        <div className="section-title" style={{ margin: 0 }}>
-          All signals (retained 30 days, then auto-removed)
-        </div>
-        <div className="row">
-          <select value={source} onChange={(e) => setSource(e.target.value)}>
-            <option value="">All sources</option>
-            <option value="pine">Pine</option>
-            <option value="weekly">Weekly</option>
-          </select>
-          <select value={tf} onChange={(e) => setTf(e.target.value)}>
-            <option value="">All timeframes</option>
-            <option value="1D">1D</option>
-            <option value="1W">1W</option>
-            <option value="1M">1M</option>
-          </select>
-          <button className="btn-sm" onClick={load}>Refresh</button>
-        </div>
-      </div>
+  const renderBody = () => {
+    if (loading) return (
+        <Box sx={{ display: 'flex', justifyContent: 'center', p: 5, gap: 2, alignItems: 'center' }}>
+            <CircularProgress size={24}/>
+            <Typography>Loading audit…</Typography>
+        </Box>
+    );
+    if (err) return <Alert severity="error">{err}</Alert>;
+    if (!rows.length) return <Alert severity="info">No signals recorded.</Alert>;
 
-      {loading ? (
-        <div className="spinner">Loading audit…</div>
-      ) : err ? (
-        <div className="err">{err}</div>
-      ) : !rows.length ? (
-        <div className="empty">No signals recorded.</div>
-      ) : (
-        <div className="panel">
-          <table>
-            <thead>
-              <tr>
-                <th>Symbol</th><th>Signal</th><th>Source</th><th>Timeframe</th>
-                <th>Confidence</th><th>Scanner(s)</th><th>Candle date</th><th>Generated</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((s) => (
-                <tr key={s.id}>
-                  <td>{s.symbol}</td>
-                  <td><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
-                  <td className="muted">{s.source}</td>
-                  <td>{s.timeframe}</td>
-                  <td>{s.confidence != null ? s.confidence + "/4" : "—"}</td>
-                  <td className="muted">{s.scanner_name}</td>
-                  <td className="muted">{s.candle_date?.slice(0, 10)}</td>
-                  <td className="muted">{new Date(s.created_at).toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+    return (
+      <TableContainer component={Paper}>
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableCell>Symbol</TableCell>
+              <TableCell>Signal</TableCell>
+              <TableCell>Source</TableCell>
+              <TableCell>Timeframe</TableCell>
+              <TableCell>Confidence</TableCell>
+              <TableCell>Scanner(s)</TableCell>
+              <TableCell>Candle date</TableCell>
+              <TableCell>Generated</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {rows.map((s) => (
+              <TableRow key={s.id} hover>
+                <TableCell sx={{fontWeight: 'bold'}}>{s.symbol}</TableCell>
+                <TableCell>
+                  <Chip
+                    label={s.direction}
+                    color={s.direction === "BUY" ? "success" : "error"}
+                    size="small"
+                  />
+                </TableCell>
+                <TableCell sx={{color: 'text.secondary'}}>{s.source}</TableCell>
+                <TableCell>{s.timeframe}</TableCell>
+                <TableCell>{s.confidence != null ? s.confidence + "/4" : "—"}</TableCell>
+                <TableCell sx={{color: 'text.secondary'}}>{s.scanner_name}</TableCell>
+                <TableCell sx={{color: 'text.secondary'}}>{s.candle_date?.slice(0, 10)}</TableCell>
+                <TableCell sx={{color: 'text.secondary'}}>{new Date(s.created_at).toLocaleString()}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    );
+  }
+
+  return (
+    <Box>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
+        <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
+          All signals (retained 30 days, then auto-removed)
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          <FormControl size="small" sx={{minWidth: 150}}>
+            <InputLabel>Source</InputLabel>
+            <Select value={source} label="Source" onChange={(e) => setSource(e.target.value)}>
+              <MenuItem value="">All sources</MenuItem>
+              <MenuItem value="pine">Pine</MenuItem>
+              <MenuItem value="weekly">Weekly</MenuItem>
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{minWidth: 150}}>
+            <InputLabel>Timeframe</InputLabel>
+            <Select value={tf} label="Timeframe" onChange={(e) => setTf(e.target.value)}>
+              <MenuItem value="">All timeframes</MenuItem>
+              <MenuItem value="1D">1D</MenuItem>
+              <MenuItem value="1W">1W</MenuItem>
+              <MenuItem value="1M">1M</MenuItem>
+            </Select>
+          </FormControl>
+          <Button variant="outlined" onClick={load}>Refresh</Button>
+        </Box>
+      </Box>
+      {renderBody()}
+    </Box>
   );
 }

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { api } from "../api.js";
+import { Box, Typography, Button, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, CircularProgress, Alert, TextField, Chip, Snackbar } from "@mui/material";
 
 // source: "pine" | "weekly"
 export default function Scanner({ source, userId }) {
@@ -46,62 +47,79 @@ export default function Scanner({ source, userId }) {
     }
   }
 
-  if (loading) return <div className="spinner">Loading signals…</div>;
-  if (err) return <div className="err">{err}</div>;
+  if (loading) return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', p: 5, gap: 2, alignItems: 'center' }}>
+          <CircularProgress size={24}/>
+          <Typography>Loading signals…</Typography>
+      </Box>
+  );
+  if (err) return <Alert severity="error">{err}</Alert>;
 
   return (
-    <div>
-      <div className="toolbar">
-        <div className="section-title" style={{ margin: 0 }}>
+    <Box>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
+        <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
           {source === "pine" ? "Pine (Chase Momentum)" : "Weekly scanners"} — current & last 7 days
-        </div>
-        <div className="row">
-          {msg && <span className="msg">{msg}</span>}
-          <button className="btn-sm" onClick={runScan}>Run scan now</button>
-          <button className="btn-sm" onClick={load}>Refresh</button>
-        </div>
-      </div>
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+          <Button variant="outlined" size="small" onClick={runScan}>Run scan now</Button>
+          <Button variant="outlined" size="small" onClick={load}>Refresh</Button>
+        </Box>
+      </Box>
 
       {!rows.length ? (
-        <div className="empty">No signals in the last 7 days.</div>
+        <Alert severity="info">No signals in the last 7 days.</Alert>
       ) : (
-        <div className="panel">
-          <table>
-            <thead>
-              <tr>
-                <th>Symbol</th><th>Signal</th><th>Timeframe</th>
-                {source === "weekly" && <th>Confidence</th>}
-                <th>Scanner(s)</th><th>Candle date</th><th>Buy</th>
-              </tr>
-            </thead>
-            <tbody>
+        <TableContainer component={Paper}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>Symbol</TableCell>
+                <TableCell>Signal</TableCell>
+                <TableCell>Timeframe</TableCell>
+                {source === "weekly" && <TableCell>Confidence</TableCell>}
+                <TableCell>Scanner(s)</TableCell>
+                <TableCell>Candle date</TableCell>
+                <TableCell align="right">Buy</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
               {rows.map((s) => (
-                <tr key={s.id}>
-                  <td>{s.symbol}</td>
-                  <td><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
-                  <td>{s.timeframe}</td>
-                  {source === "weekly" && <td>{s.confidence != null ? s.confidence + "/4" : "—"}</td>}
-                  <td className="muted">{s.scanner_name}</td>
-                  <td className="muted">{s.candle_date?.slice(0, 10)}</td>
-                  <td>
+                <TableRow key={s.id} hover>
+                  <TableCell sx={{fontWeight: 'bold'}}>{s.symbol}</TableCell>
+                  <TableCell>
+                    <Chip
+                      label={s.direction}
+                      color={s.direction === "BUY" ? "success" : "error"}
+                      size="small"
+                    />
+                  </TableCell>
+                  <TableCell>{s.timeframe}</TableCell>
+                  {source === "weekly" && <TableCell>{s.confidence != null ? s.confidence + "/4" : "—"}</TableCell>}
+                  <TableCell sx={{color: 'text.secondary'}}>{s.scanner_name}</TableCell>
+                  <TableCell sx={{color: 'text.secondary'}}>{s.candle_date?.slice(0, 10)}</TableCell>
+                  <TableCell align="right">
                     {s.direction === "BUY" ? (
-                      <div className="row" style={{ justifyContent: "flex-end" }}>
-                        <input
-                          className="qty btn-sm"
-                          type="number" min="1" placeholder="qty"
-                          value={qty[s.id] || ""}
+                      <Box sx={{ display: 'flex', gap: 1, justifyContent: "flex-end" }}>
+                        <TextField
+                          type="number"
+                          size="small"
+                          defaultValue="1"
                           onChange={(e) => setQty({ ...qty, [s.id]: e.target.value })}
+                          sx={{ width: 80 }}
+                          InputProps={{ inputProps: { min: 1 } }}
                         />
-                        <button className="btn-primary btn-sm" onClick={() => buy(s)}>Buy</button>
-                      </div>
-                    ) : <span className="muted">—</span>}
-                  </td>
-                </tr>
+                        <Button variant="contained" size="small" onClick={() => buy(s)}>Buy</Button>
+                      </Box>
+                    ) : '—'}
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
-    </div>
+      <Snackbar open={!!msg} autoHideDuration={6000} onClose={() => setMsg("")} message={msg} />
+    </Box>
   );
 }

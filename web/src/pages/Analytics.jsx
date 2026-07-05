@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api, download, fmt, fmtInt, pct } from "../api.js";
+import { Box, Typography, Button, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, CircularProgress, Alert } from "@mui/material";
 
 export default function Analytics({ userId }) {
   const [rows, setRows] = useState([]);
@@ -31,54 +32,75 @@ export default function Analytics({ userId }) {
     URL.revokeObjectURL(url);
   }
 
-  if (!userId) return <div className="empty">Select a user (top right) to view their watchlist dashboard.</div>;
-  if (loading) return <div className="spinner">Loading dashboard…</div>;
-  if (err) return <div className="err">{err}</div>;
+  if (!userId) {
+      return <Alert severity="info">Select a user to view their watchlist dashboard.</Alert>;
+  }
+  if (loading) {
+      return (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 5, gap: 2, alignItems: 'center' }}>
+              <CircularProgress size={24}/>
+              <Typography>Loading dashboard…</Typography>
+          </Box>
+      );
+  }
+  if (err) {
+      return <Alert severity="error">{err}</Alert>;
+  }
 
   return (
-    <div>
-      <div className="toolbar">
-        <div className="section-title" style={{ margin: 0 }}>Watchlist parameters (live price + indicators)</div>
-        <div className="row">
-          <button className="btn-sm" onClick={exportCsv} disabled={!rows.length}>Export CSV</button>
-          <button className="btn-sm" onClick={() => download("/v1/analytics/export.xlsx", "tradenexus_signals.xlsx").catch((e) => setErr(e.message))}>
+    <Box>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
+        <Typography variant="h5" sx={{ fontWeight: 'bold' }}>Watchlist parameters (live price + indicators)</Typography>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button variant="outlined" size="small" onClick={exportCsv} disabled={!rows.length}>Export CSV</Button>
+          <Button variant="outlined" size="small" onClick={() => download("/v1/analytics/export.xlsx", "tradenexus_signals.xlsx").catch((e) => setErr(e.message))}>
             Export signals (.xlsx)
-          </button>
-        </div>
-      </div>
+          </Button>
+        </Box>
+      </Box>
 
       {!rows.length ? (
-        <div className="empty">No watchlist stocks. Add instruments to a watchlist and sync their candles.</div>
+        <Alert severity="warning">No watchlist stocks. Add instruments to a watchlist and sync their candles.</Alert>
       ) : (
-        <div className="panel">
-          <table>
-            <thead>
-              <tr>
-                <th>Symbol</th><th>Price</th><th>Chg%</th><th>RSI(14)</th>
-                <th>EMA10</th><th>EMA20</th><th>EMA50</th><th>SMA40</th>
-                <th>ATR(14)</th><th>Volume</th><th>Vol SMA20</th>
-              </tr>
-            </thead>
-            <tbody>
+        <TableContainer component={Paper}>
+          <Table stickyHeader>
+            <TableHead>
+              <TableRow>
+                <TableCell>Symbol</TableCell>
+                <TableCell align="right">Price</TableCell>
+                <TableCell align="right">Chg%</TableCell>
+                <TableCell align="right">RSI(14)</TableCell>
+                <TableCell align="right">EMA10</TableCell>
+                <TableCell align="right">EMA20</TableCell>
+                <TableCell align="right">EMA50</TableCell>
+                <TableCell align="right">SMA40</TableCell>
+                <TableCell align="right">ATR(14)</TableCell>
+                <TableCell align="right">Volume</TableCell>
+                <TableCell align="right">Vol SMA20</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
               {rows.map((r) => (
-                <tr key={r.instrument_id}>
-                  <td>{r.symbol}</td>
-                  <td>{fmt(r.price)}</td>
-                  <td className={r.pct_change >= 0 ? "pos" : "neg"}>{pct(r.pct_change)}</td>
-                  <td>{fmt(r.rsi14)}</td>
-                  <td>{fmt(r.ema10)}</td>
-                  <td>{fmt(r.ema20)}</td>
-                  <td>{fmt(r.ema50)}</td>
-                  <td>{fmt(r.sma40)}</td>
-                  <td>{fmt(r.atr14)}</td>
-                  <td>{fmtInt(r.volume)}</td>
-                  <td className="muted">{fmtInt(Math.round(r.vol_sma20))}</td>
-                </tr>
+                <TableRow key={r.instrument_id} hover>
+                  <TableCell sx={{fontWeight: 'bold'}}>{r.symbol}</TableCell>
+                  <TableCell align="right">{fmt(r.price)}</TableCell>
+                  <TableCell align="right" sx={{ color: r.pct_change >= 0 ? 'success.main' : 'error.main' }}>
+                    {pct(r.pct_change)}
+                  </TableCell>
+                  <TableCell align="right">{fmt(r.rsi14)}</TableCell>
+                  <TableCell align="right">{fmt(r.ema10)}</TableCell>
+                  <TableCell align="right">{fmt(r.ema20)}</TableCell>
+                  <TableCell align="right">{fmt(r.ema50)}</TableCell>
+                  <TableCell align="right">{fmt(r.sma40)}</TableCell>
+                  <TableCell align="right">{fmt(r.atr14)}</TableCell>
+                  <TableCell align="right">{fmtInt(r.volume)}</TableCell>
+                  <TableCell align="right" sx={{color: 'text.secondary'}}>{fmtInt(Math.round(r.vol_sma20))}</TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
-    </div>
+    </Box>
   );
 }
