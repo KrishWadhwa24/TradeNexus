@@ -13,17 +13,17 @@ import (
 
 // coverage summarizes what's stored in the DB for one instrument.
 type coverage struct {
-	InstrumentID      int64  `json:"instrument_id"`
-	Symbol            string `json:"symbol"`
-	Exchange          string `json:"exchange"`
-	DailyCount        int    `json:"daily_candles"`
-	FirstDate         string `json:"first_date,omitempty"`
-	LastDate          string `json:"last_date,omitempty"`
-	WeeklyCount       int    `json:"weekly_candles"`
-	MonthlyCount      int    `json:"monthly_candles"`
-	TargetDailyBars   int    `json:"target_daily_bars"`   // what we aim to fetch on add
-	MissingTradingDays int   `json:"missing_trading_days"` // gaps a reconcile would backfill
-	HasData           bool   `json:"has_data"`
+	InstrumentID       int64  `json:"instrument_id"`
+	Symbol             string `json:"symbol"`
+	Exchange           string `json:"exchange"`
+	DailyCount         int    `json:"daily_candles"`
+	FirstDate          string `json:"first_date,omitempty"`
+	LastDate           string `json:"last_date,omitempty"`
+	WeeklyCount        int    `json:"weekly_candles"`
+	MonthlyCount       int    `json:"monthly_candles"`
+	TargetDailyBars    int    `json:"target_daily_bars"`    // what we aim to fetch on add
+	MissingTradingDays int    `json:"missing_trading_days"` // gaps a reconcile would backfill
+	HasData            bool   `json:"has_data"`
 }
 
 func (s *Server) buildCoverage(r *http.Request, id int64) (coverage, error) {
@@ -100,8 +100,8 @@ func (s *Server) handleUserCoverage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"stocks":             len(rows),
+		"stocks":              len(rows),
 		"total_daily_candles": totalDaily,
-		"coverage":           rows,
+		"coverage":            rows,
 	})
 }

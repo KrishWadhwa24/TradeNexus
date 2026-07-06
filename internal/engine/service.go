@@ -127,6 +127,8 @@ func (s *Service) persist(ctx context.Context, instID int64, rep scanner.Report,
 			Direction:    "BUY",
 			CandleDate:   lastTime(weekly),
 			Confidence:   &conf,
+			RSI:          rep.Weekly.RSI,
+			Volume:       rep.Weekly.Volume,
 			Reasons:      rep.Weekly.Details,
 		}); err != nil {
 			return n, err
@@ -320,18 +322,14 @@ func (s *Service) ReconcileAll(ctx context.Context) ([]ReconcileResult, error) {
 		return nil, err
 	}
 	var out []ReconcileResult
-	for i, id := range ids {
+	for _, id := range ids {
 		r, err := s.Reconcile(ctx, id)
 		if err != nil {
 			s.log.Error().Err(err).Int64("instrument", id).Msg("reconcile-all: instrument failed")
 			continue
 		}
 		out = append(out, r)
-		if i < len(ids)-1 {
-			if err := sleepContext(ctx, 350*time.Millisecond); err != nil {
-				return out, err
-			}
-		}
+
 	}
 	return out, nil
 }

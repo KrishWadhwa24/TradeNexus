@@ -31,16 +31,16 @@ type Stats struct {
 
 // Row is one flattened signal for the Excel export.
 type Row struct {
-	ID          int64
+	ID           int64
 	InstrumentID int64
-	Symbol      string
-	Source      string
-	Scanner     string
-	Timeframe   string
-	Direction   string
-	CandleDate  time.Time
-	Confidence  *int
-	CreatedAt   time.Time
+	Symbol       string
+	Source       string
+	Scanner      string
+	Timeframe    string
+	Direction    string
+	CandleDate   time.Time
+	Confidence   *int
+	CreatedAt    time.Time
 }
 
 // Service provides analytics queries.

@@ -77,8 +77,8 @@ func (s *Server) instrumentParams(r *http.Request, id int64) (analytics.Params, 
 	p.InstrumentID = id
 	p.Symbol = inst.TradingSymbol
 	// Best-effort live price.
-	if ltp, err := s.angel.GetLTP(r.Context(), inst.Exchange, inst.TradingSymbol, inst.SymbolToken); err == nil && ltp > 0 {
-		p.Price = ltp
+	if tick, ok := s.live.GetLastTick(inst.Exchange, inst.SymbolToken); ok {
+		p.Price = tick.Price
 	}
 	return p, nil
 }

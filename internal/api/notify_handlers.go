@@ -41,9 +41,10 @@ func (s *Server) handleSignalRecipients(w http.ResponseWriter, r *http.Request) 
 
 // POST /v1/telegram/test — send a connectivity-check message. Bypasses the
 // signal pipeline (no window, no dedup). Body optional:
-//   {}                              -> sends to the env default/safety-net chat
-//   {"user_id":"<uuid>"}           -> sends via that user's saved bot/chat
-//   {"bot_token":"...","chat_id":"..."} -> sends to an ad-hoc bot/chat
+//
+//	{}                              -> sends to the env default/safety-net chat
+//	{"user_id":"<uuid>"}           -> sends via that user's saved bot/chat
+//	{"bot_token":"...","chat_id":"..."} -> sends to an ad-hoc bot/chat
 func (s *Server) handleTelegramTest(w http.ResponseWriter, r *http.Request) {
 	if s.notifier == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "notifications disabled (NOTIFY_ENABLED=false)"})

@@ -64,11 +64,11 @@ func (s *Server) handleCandleSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"instrument_id":  id,
-		"trading_symbol": inst.TradingSymbol,
-		"daily_fetched":  len(fetched),
-		"daily_stored":   stored,
-		"weekly_candles": weekly,
+		"instrument_id":   id,
+		"trading_symbol":  inst.TradingSymbol,
+		"daily_fetched":   len(fetched),
+		"daily_stored":    stored,
+		"weekly_candles":  weekly,
 		"monthly_candles": monthly,
 	})
 }
