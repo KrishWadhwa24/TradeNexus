@@ -128,12 +128,6 @@ func (r *Repo) RebuildAggregates(ctx context.Context, instrumentID int64) (weekl
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback is a no-op after commit
 
-	if _, err = tx.Exec(ctx, `DELETE FROM weekly_candles WHERE instrument_id=$1`, instrumentID); err != nil {
-		return 0, 0, err
-	}
-	if _, err = tx.Exec(ctx, `DELETE FROM monthly_candles WHERE instrument_id=$1`, instrumentID); err != nil {
-		return 0, 0, err
-	}
 	if err = insertAgg(ctx, tx, "weekly_candles", instrumentID, w); err != nil {
 		return 0, 0, err
 	}
@@ -150,7 +144,10 @@ func insertAgg(ctx context.Context, tx pgx.Tx, table string, instrumentID int64,
 	for _, c := range cs {
 		_, err := tx.Exec(ctx, fmt.Sprintf(`
 			INSERT INTO %s (instrument_id, period_start, period_end, open, high, low, close, volume, is_confirmed)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, table),
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			ON CONFLICT (instrument_id, period_start) DO UPDATE
+			SET period_end=EXCLUDED.period_end, open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low,
+			    close=EXCLUDED.close, volume=EXCLUDED.volume, is_confirmed=EXCLUDED.is_confirmed`, table),
 			instrumentID, c.PeriodStart, c.PeriodEnd, c.Open, c.High, c.Low, c.Close, c.Volume, c.IsConfirmed)
 		if err != nil {
 			return fmt.Errorf("insert %s: %w", table, err)
