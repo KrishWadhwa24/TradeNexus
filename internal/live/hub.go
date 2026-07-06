@@ -50,6 +50,9 @@ type Hub struct {
 	clients      map[chan Tick]map[string]instruments.Instrument
 	subs         map[string]*subscription
 	reconnecting bool
+
+	lastTickMu sync.RWMutex
+	lastTicks  map[string]Tick
 }
 
 type subscription struct {
@@ -61,11 +64,19 @@ type subscription struct {
 
 func NewHub(angelClient *angel.Client, log zerolog.Logger) *Hub {
 	return &Hub{
-		angel:   angelClient,
-		log:     log,
-		clients: map[chan Tick]map[string]instruments.Instrument{},
-		subs:    map[string]*subscription{},
+		angel:     angelClient,
+		log:       log,
+		clients:   map[chan Tick]map[string]instruments.Instrument{},
+		subs:      map[string]*subscription{},
+		lastTicks: map[string]Tick{},
 	}
+}
+
+func (h *Hub) GetLastTick(exchange, symbolToken string) (Tick, bool) {
+	h.lastTickMu.RLock()
+	defer h.lastTickMu.RUnlock()
+	tick, ok := h.lastTicks[key(exchange, symbolToken)]
+	return tick, ok
 }
 
 func (h *Hub) Subscribe(ctx context.Context, items []instruments.Instrument) (<-chan Tick, func(), error) {
@@ -426,9 +437,14 @@ func (h *Hub) parseTick(data []byte) (Tick, bool) {
 }
 
 func (h *Hub) broadcast(t Tick) {
+	k := key(t.Exchange, t.SymbolToken)
+
+	h.lastTickMu.Lock()
+	h.lastTicks[k] = t
+	h.lastTickMu.Unlock()
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	k := key(t.Exchange, t.SymbolToken)
 	for ch, wanted := range h.clients {
 		if _, ok := wanted[k]; !ok {
 			continue

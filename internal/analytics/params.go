@@ -11,7 +11,7 @@ import (
 type Params struct {
 	InstrumentID int64   `json:"instrument_id"`
 	Symbol       string  `json:"symbol"`
-	Price        float64 `json:"price"`          // live LTP if available, else last close
+	Price        float64 `json:"price"` // live LTP if available, else last close
 	LastClose    float64 `json:"last_close"`
 	PrevClose    float64 `json:"prev_close"`
 	PctChange    float64 `json:"pct_change"`

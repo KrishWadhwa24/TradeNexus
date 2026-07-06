@@ -1,0 +1,3 @@
+ALTER TABLE signals
+DROP COLUMN rsi,
+DROP COLUMN volume;

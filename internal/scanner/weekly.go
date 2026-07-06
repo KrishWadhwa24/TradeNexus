@@ -11,6 +11,8 @@ type WeeklyResult struct {
 	Confidence int             `json:"confidence"` // N of 4
 	Fired      []string        `json:"fired"`      // names of firing scanners
 	Details    map[string]bool `json:"details"`    // every scanner's result
+	RSI        *float64        `json:"rsi,omitempty"`
+	Volume     *float64        `json:"volume,omitempty"`
 }
 
 // weeklyIndicators holds the series shared by the four scanners.
@@ -59,6 +61,12 @@ func ScanWeekly(candles []market.Candle) WeeklyResult {
 			res.Confidence++
 			res.Fired = append(res.Fired, c.name)
 		}
+	}
+	if !nan(w.rsi[i]) {
+		res.RSI = &w.rsi[i]
+	}
+	if !nan(w.s.volume[i]) {
+		res.Volume = &w.s.volume[i]
 	}
 	return res
 }

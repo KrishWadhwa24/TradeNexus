@@ -200,12 +200,35 @@ func ScannerKeys(sig signals.Signal) []string {
 
 func formatMessage(sig signals.Signal, symbol string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s signal — %s\n", sig.Direction, symbol)
+
+	// Direction with emoji
+	direction := strings.ToUpper(sig.Direction)
+	if sig.Direction == "BUY" {
+		fmt.Fprintf(&b, "🟢 %s Signal — %s\n", direction, symbol)
+	} else {
+		fmt.Fprintf(&b, "🔴 %s Signal — %s\n", direction, symbol)
+	}
+
+	// Strategy, Timeframe
+	fmt.Fprintf(&b, "Strategy: %s (%s)\n", sig.Source, sig.ScannerName)
 	fmt.Fprintf(&b, "Timeframe: %s\n", sig.Timeframe)
-	fmt.Fprintf(&b, "Scanner(s): %s\n", sig.ScannerName)
-	if sig.Confidence != nil {
+
+	// Conviction/Confidence
+	if sig.Source == "weekly" && sig.Confidence != nil {
+		conviction := float64(*sig.Confidence) / 4.0 * 100
+		fmt.Fprintf(&b, "Conviction: %.0f%%\n", conviction)
+	} else if sig.Confidence != nil {
 		fmt.Fprintf(&b, "Confidence: %d/4\n", *sig.Confidence)
 	}
+
+	// RSI, Volume
+	if sig.RSI != nil {
+		fmt.Fprintf(&b, "RSI: %.2f\n", *sig.RSI)
+	}
+	if sig.Volume != nil {
+		fmt.Fprintf(&b, "Volume: %.0f\n", *sig.Volume)
+	}
+
 	fmt.Fprintf(&b, "Candle date: %s", sig.CandleDate.Format("2006-01-02"))
 	return b.String()
 }

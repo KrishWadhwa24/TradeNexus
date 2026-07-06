@@ -14,6 +14,7 @@ import (
 // added. It's sized to the deepest lookback across all strategies:
 //   - weekly EMA(200)  ≈ 200 weeks  ≈ 1000 daily bars
 //   - monthly EMA(50)  ≈ 50 months  ≈ 1050 daily bars
+//
 // plus warmup buffer. This stays under Angel's 2000-candle single-request cap.
 const RequiredDailyBars = 1300
 

@@ -36,8 +36,8 @@ type Config struct {
 	AngelTOTPSecret string `env:"ANGEL_TOTP_SECRET" envDefault:""`
 
 	// Angel rate limiting
-	AngelHistRate            float64       `env:"ANGEL_HIST_RATE" envDefault:"3"`
-	AngelHistBurst           int           `env:"ANGEL_HIST_BURST" envDefault:"3"`
+	AngelHistRate            float64       `env:"ANGEL_HIST_RATE" envDefault:"2"`
+	AngelHistBurst           int           `env:"ANGEL_HIST_BURST" envDefault:"2"`
 	AngelScripMasterTimeout  time.Duration `env:"ANGEL_SCRIPMASTER_TIMEOUT" envDefault:"5m"`
 	AngelScripMasterAttempts int           `env:"ANGEL_SCRIPMASTER_ATTEMPTS" envDefault:"3"`
 	AngelScripMasterURL      string        `env:"ANGEL_SCRIPMASTER_URL" envDefault:""`
