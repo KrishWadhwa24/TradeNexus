@@ -39,13 +39,13 @@ func TestDowntrendBreakoutAlgorithm(t *testing.T) {
 	}
 	close[40] = 62
 	volume[40] = 180
-	sig := scanDowntrendBreakout(highs, 40, close, volume, 100, 2)
+	sig := scanDowntrendBreakout(highs, 40, close, volume, 2)
 	if !sig.Buy {
 		t.Fatalf("expected buy, reasons=%+v", sig.Reasons)
 	}
 
 	highs[2].Price = 95
-	sig = scanDowntrendBreakout(highs, 40, close, volume, 100, 2)
+	sig = scanDowntrendBreakout(highs, 40, close, volume, 2)
 	if sig.Buy || sig.Reasons["lower_pivot_highs"] {
 		t.Fatalf("non-descending highs must fail: %+v", sig.Reasons)
 	}
@@ -77,13 +77,13 @@ func TestRectangleConsolidationAlgorithm(t *testing.T) {
 	close[30] = 103
 	volume[30] = 190
 
-	sig := scanRectangleConsolidation(uppers, lowers, 30, close, volume, 100)
+	sig := scanRectangleConsolidation(uppers, lowers, 30, close, volume)
 	if !sig.Buy {
 		t.Fatalf("expected buy, reasons=%+v", sig.Reasons)
 	}
 
 	uppers[1].Price = 106
-	sig = scanRectangleConsolidation(uppers, lowers, 30, close, volume, 100)
+	sig = scanRectangleConsolidation(uppers, lowers, 30, close, volume)
 	if sig.Buy || sig.Reasons["upper_flat"] {
 		t.Fatalf("wide upper band must fail: %+v", sig.Reasons)
 	}
@@ -111,13 +111,13 @@ func TestCupAndHandleAlgorithm(t *testing.T) {
 	close[30] = 102
 	volume[30] = 190
 
-	sig := scanCupAndHandle(pivots, 30, close, volume, 100)
+	sig := scanCupAndHandle(pivots, 30, close, volume)
 	if !sig.Buy {
 		t.Fatalf("expected buy, reasons=%+v", sig.Reasons)
 	}
 
 	pivots[3].Price = 70
-	sig = scanCupAndHandle(pivots, 30, close, volume, 100)
+	sig = scanCupAndHandle(pivots, 30, close, volume)
 	if sig.Buy || sig.Reasons["handle_depth"] {
 		t.Fatalf("deep handle must fail: %+v", sig.Reasons)
 	}
