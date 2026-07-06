@@ -61,10 +61,9 @@ func ScanDowntrendBreakout(candles []market.Candle) PatternSignal {
 	if current < 1 {
 		return sig
 	}
-	avgVol20 := avgAt(s.volume, current, 20)
 	rsSlope := priceSlope(s.close, current, 20)
 	highs := lastNPivots(FindPivotHighs(candles, 2, 2), 4, current, 0)
-	return scanDowntrendBreakout(highs, current, s.close, s.volume, avgVol20, rsSlope)
+	return scanDowntrendBreakout(highs, current, s.close, s.volume, rsSlope)
 }
 
 func ScanRectangleConsolidation(candles []market.Candle) PatternSignal {
@@ -74,11 +73,10 @@ func ScanRectangleConsolidation(candles []market.Candle) PatternSignal {
 	if current < 1 {
 		return sig
 	}
-	avgVol20 := avgAt(s.volume, current, 20)
 	start := maxInt(0, current-80)
 	uppers := lastNPivots(FindPivotHighs(candles, 2, 2), 3, current, start)
 	lowers := lastNPivots(FindPivotLows(candles, 2, 2), 3, current, start)
-	return scanRectangleConsolidation(uppers, lowers, current, s.close, s.volume, avgVol20)
+	return scanRectangleConsolidation(uppers, lowers, current, s.close, s.volume)
 }
 
 func ScanCupAndHandle(candles []market.Candle) PatternSignal {
@@ -88,12 +86,12 @@ func ScanCupAndHandle(candles []market.Candle) PatternSignal {
 	if current < 1 {
 		return sig
 	}
-	avgVol20 := avgAt(s.volume, current, 20)
-	pivots := lastNPivots(FindMajorPivots(candles, 2, 2), 4, current, 0)
-	return scanCupAndHandle(pivots, current, s.close, s.volume, avgVol20)
+	allPivots := FindMajorPivots(candles, 2, 2)
+	pivots := recentPivots(allPivots, current, 0)
+	return scanCupAndHandle(pivots, current, s.close, s.volume)
 }
 
-func scanDowntrendBreakout(highs []Pivot, current int, close, volume []float64, avgVol20, rsSlope float64) PatternSignal {
+func scanDowntrendBreakout(highs []Pivot, current int, close, volume []float64, rsSlope float64) PatternSignal {
 	sig := newPatternSignal()
 	sig.Reasons["enough_pivot_highs"] = len(highs) >= 4
 	if len(highs) < 4 || current < 0 || current >= len(close) || current >= len(volume) {
@@ -101,8 +99,14 @@ func scanDowntrendBreakout(highs []Pivot, current int, close, volume []float64, 
 	}
 	h := highs[len(highs)-4:]
 	desc := h[0].Price > h[1].Price && h[1].Price > h[2].Price && h[2].Price > h[3].Price
-	sig.Reasons["lower_pivot_highs"] = desc
-	if !desc || h[3].Index == h[0].Index {
+
+	// New check: The trend must have declined by at least 10%
+	trendDrop := (h[0].Price - h[3].Price) / h[0].Price
+	isStrongTrend := trendDrop >= 0.10
+
+	sig.Reasons["lower_pivot_highs"] = desc && isStrongTrend
+
+	if !desc || !isStrongTrend || h[3].Index == h[0].Index {
 		return sig
 	}
 	m := (h[3].Price - h[0].Price) / float64(h[3].Index-h[0].Index)
@@ -123,15 +127,17 @@ func scanDowntrendBreakout(highs []Pivot, current int, close, volume []float64, 
 	if duration < 20 {
 		return sig
 	}
-	resistance := m*float64(current) + b
-	sig.Reasons["close_breakout"] = close[current] > resistance*1.01
-	sig.Reasons["volume_breakout"] = avgVol20 > 0 && volume[current] > 1.5*avgVol20
+
+	getResistance := func(i int) float64 { return m*float64(i) + b }
+	breakout := findBreakoutCandle(1, current, close, volume, getResistance)
+	sig.Reasons["close_breakout"] = breakout
+	sig.Reasons["volume_breakout"] = breakout
 	sig.Reasons["rs_slope_positive"] = rsSlope > 0
-	sig.Buy = sig.Reasons["close_breakout"] && sig.Reasons["volume_breakout"] && sig.Reasons["rs_slope_positive"]
+	sig.Buy = breakout && sig.Reasons["rs_slope_positive"]
 	return sig
 }
 
-func scanRectangleConsolidation(uppers, lowers []Pivot, current int, close, volume []float64, avgVol20 float64) PatternSignal {
+func scanRectangleConsolidation(uppers, lowers []Pivot, current int, close, volume []float64) PatternSignal {
 	sig := newPatternSignal()
 	sig.Reasons["enough_upper_pivots"] = len(uppers) >= 3
 	sig.Reasons["enough_lower_pivots"] = len(lowers) >= 3
@@ -155,55 +161,61 @@ func scanRectangleConsolidation(uppers, lowers []Pivot, current int, close, volu
 	first5 := avgRange(volume, start, minInt(start+5, current))
 	last5 := avgRange(volume, maxInt(start, current-5), current)
 	sig.Reasons["volume_contraction"] = first5 > 0 && last5 < first5
-	sig.Reasons["close_breakout"] = close[current] > maxU*1.01
-	sig.Reasons["volume_breakout"] = avgVol20 > 0 && volume[current] > 1.5*avgVol20
+
+	getResistance := func(i int) float64 { return maxU }
+	breakout := findBreakoutCandle(1, current, close, volume, getResistance)
+	sig.Reasons["close_breakout"] = breakout
+	sig.Reasons["volume_breakout"] = breakout
 	sig.Buy = sig.Reasons["duration"] && sig.Reasons["box_height"] &&
-		sig.Reasons["volume_contraction"] && sig.Reasons["close_breakout"] && sig.Reasons["volume_breakout"]
+		sig.Reasons["volume_contraction"] && breakout
 	return sig
 }
 
-func scanCupAndHandle(pivots []Pivot, current int, close, volume []float64, avgVol20 float64) PatternSignal {
+func scanCupAndHandle(pivots []Pivot, current int, close, volume []float64) PatternSignal {
 	sig := newPatternSignal()
-	sig.Reasons["enough_major_pivots"] = len(pivots) >= 4
-	if len(pivots) < 4 || current < 0 || current >= len(close) || current >= len(volume) {
+	p := findCupAndHandlePivots(pivots, current)
+	sig.Reasons["enough_major_pivots"] = p != nil
+	if p == nil {
 		return sig
 	}
 
-	p := pivots[len(pivots)-4:]
 	shape := p[0].IsHigh && !p[1].IsHigh && p[2].IsHigh && !p[3].IsHigh
 	sig.Reasons["pivot_sequence"] = shape
 	if !shape {
 		return sig
 	}
 
-	sig.Reasons["rim_similarity"] = p[0].Price > 0 && math.Abs(p[0].Price-p[2].Price)/p[0].Price < 0.15
+	sig.Reasons["rim_similarity"] = p[0].Price > 0 && math.Abs(p[0].Price-p[2].Price)/p[0].Price < 0.10
 	sig.Reasons["right_rim_recovered"] = p[2].Price >= 0.90*p[0].Price
 	depth := (p[0].Price - p[1].Price) / p[0].Price
 	sig.Reasons["cup_depth"] = depth >= 0.20 && depth <= 0.70
 
 	leftDuration := p[1].Index - p[0].Index
 	rightDuration := p[2].Index - p[1].Index
-	sig.Reasons["left_duration"] = leftDuration > 3
-	sig.Reasons["right_duration"] = rightDuration > 3
+	sig.Reasons["left_duration"] = leftDuration >= 15
+	sig.Reasons["right_duration"] = rightDuration >= 15
 
 	longer := maxInt(leftDuration, rightDuration)
-	sig.Reasons["duration_symmetry"] = longer > 0 && float64(absInt(leftDuration-rightDuration))/float64(longer) < 0.50
+	sig.Reasons["duration_symmetry"] = longer > 0 && float64(absInt(leftDuration-rightDuration))/float64(longer) < 0.30
 	sig.Reasons["handle_above_midcup"] = p[3].Price > p[1].Price+0.50*(p[0].Price-p[1].Price)
 
 	handleDepth := (p[2].Price - p[3].Price) / p[2].Price
-	sig.Reasons["handle_depth"] = handleDepth < 0.20
+	sig.Reasons["handle_depth"] = handleDepth < 0.15
 
 	handleDuration := p[3].Index - p[2].Index
 	sig.Reasons["handle_duration"] = handleDuration >= 3 && handleDuration <= 15
 	avgCupVolume := avgRange(volume, p[0].Index, p[2].Index+1)
 	avgHandleVolume := avgRange(volume, p[2].Index, p[3].Index+1)
 	sig.Reasons["handle_volume_contraction"] = avgCupVolume > 0 && avgHandleVolume < avgCupVolume
-	sig.Reasons["close_breakout"] = close[current] > p[0].Price*1.01
-	sig.Reasons["volume_breakout"] = avgVol20 > 0 && volume[current] > 1.5*avgVol20
+
+	getResistance := func(i int) float64 { return p[0].Price }
+	breakout := findBreakoutCandle(1, current, close, volume, getResistance)
+	sig.Reasons["close_breakout"] = breakout
+	sig.Reasons["volume_breakout"] = breakout
 
 	sig.Buy = sig.Reasons["pivot_sequence"] && sig.Reasons["rim_similarity"] && sig.Reasons["cup_depth"] &&
 		sig.Reasons["duration_symmetry"] && sig.Reasons["handle_above_midcup"] && sig.Reasons["handle_depth"] &&
-		sig.Reasons["close_breakout"] && sig.Reasons["volume_breakout"]
+		breakout
 	return sig
 }
 
@@ -304,7 +316,7 @@ func lastNPivots(pivots []Pivot, n, current, start int) []Pivot {
 
 func avgAt(v []float64, i, look int) float64 {
 	if i-look+1 < 0 || i >= len(v) {
-		return math.NaN()
+		return 0 // Changed from math.NaN()
 	}
 	return avgRange(v, i-look+1, i+1)
 }
@@ -328,9 +340,97 @@ func avgRange(v []float64, start, end int) float64 {
 
 func priceSlope(close []float64, i, look int) float64 {
 	if i-look < 0 {
-		return math.NaN()
+		return 0 // Changed from math.NaN()
 	}
 	return close[i] - close[i-look]
+}
+
+func findBreakoutCandle(lookback, current int, close, volume []float64, getResistance func(i int) float64) bool {
+	for i := 0; i < lookback; i++ {
+		idx := current - i
+		if idx < 0 || idx >= len(close) || idx >= len(volume) {
+			continue
+		}
+
+		// Calculate the 20-period average volume for THIS specific candle
+		currentAvgVol := avgAt(volume, idx, 20)
+		res := getResistance(idx)
+
+		if close[idx] > res*1.01 && volume[idx] > 1.5*currentAvgVol {
+			return true
+		}
+	}
+	return false
+}
+
+func findCupAndHandlePivots(pivots []Pivot, currentIdx int) []Pivot {
+	limit := currentIdx - 250 // Max lookback boundary
+	if limit < 0 {
+		limit = 0
+	}
+
+	// 1. Find last pivot, should be a low (handle low, p3)
+	p3_idx := -1
+	for i := len(pivots) - 1; i >= 0; i-- {
+		if pivots[i].Index < limit {
+			break // Stop looking if we go too far back
+		}
+		if !pivots[i].IsHigh {
+			p3_idx = i
+			break
+		}
+	}
+	if p3_idx < 1 {
+		return nil
+	}
+
+	// 2. Find last high before p3 (handle rim, p2)
+	p2_idx := -1
+	for i := p3_idx - 1; i >= 0; i-- {
+		if pivots[i].Index < limit {
+			break
+		}
+		if pivots[i].IsHigh {
+			p2_idx = i
+			break
+		}
+	}
+	if p2_idx < 1 {
+		return nil
+	}
+
+	// 3. Find lowest low before p2 (cup bottom, p1)
+	p1_idx := -1
+	lowest_price := math.Inf(1)
+	for i := p2_idx - 1; i >= 0; i-- {
+		if pivots[i].Index < limit {
+			break
+		}
+		if !pivots[i].IsHigh && pivots[i].Price < lowest_price {
+			lowest_price = pivots[i].Price
+			p1_idx = i
+		}
+	}
+	if p1_idx < 1 {
+		return nil
+	}
+
+	// 4. Find last high before p1 (cup rim, p0)
+	p0_idx := -1
+	for i := p1_idx - 1; i >= 0; i-- {
+		if pivots[i].Index < limit {
+			break
+		}
+		if pivots[i].IsHigh {
+			p0_idx = i
+			break
+		}
+	}
+	if p0_idx == -1 {
+		return nil
+	}
+
+	return []Pivot{pivots[p0_idx], pivots[p1_idx], pivots[p2_idx], pivots[p3_idx]}
 }
 
 func pivotMaxMin(pivots []Pivot) (float64, float64) {
