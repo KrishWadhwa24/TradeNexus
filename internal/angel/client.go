@@ -94,7 +94,7 @@ func New(cfg Config, limiter *ratelimit.Limiter, log zerolog.Logger) *Client {
 	}
 	return &Client{
 		cfg:     cfg,
-		http:    &http.Client{Timeout: 30 * time.Second},
+		http:    &http.Client{Timeout: 180 * time.Second},
 		limiter: limiter,
 		log:     log,
 	}
