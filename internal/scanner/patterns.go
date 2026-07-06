@@ -168,25 +168,31 @@ func scanCupAndHandle(pivots []Pivot, current int, close, volume []float64, avgV
 	if len(pivots) < 4 || current < 0 || current >= len(close) || current >= len(volume) {
 		return sig
 	}
+
 	p := pivots[len(pivots)-4:]
 	shape := p[0].IsHigh && !p[1].IsHigh && p[2].IsHigh && !p[3].IsHigh
 	sig.Reasons["pivot_sequence"] = shape
 	if !shape {
 		return sig
 	}
-	sig.Reasons["rim_similarity"] = p[0].Price > 0 && math.Abs(p[0].Price-p[2].Price)/p[0].Price < 0.10
+
+	sig.Reasons["rim_similarity"] = p[0].Price > 0 && math.Abs(p[0].Price-p[2].Price)/p[0].Price < 0.15
 	sig.Reasons["right_rim_recovered"] = p[2].Price >= 0.90*p[0].Price
 	depth := (p[0].Price - p[1].Price) / p[0].Price
 	sig.Reasons["cup_depth"] = depth >= 0.20 && depth <= 0.70
+
 	leftDuration := p[1].Index - p[0].Index
 	rightDuration := p[2].Index - p[1].Index
 	sig.Reasons["left_duration"] = leftDuration > 3
 	sig.Reasons["right_duration"] = rightDuration > 3
+
 	longer := maxInt(leftDuration, rightDuration)
-	sig.Reasons["duration_symmetry"] = longer > 0 && float64(absInt(leftDuration-rightDuration))/float64(longer) < 0.30
+	sig.Reasons["duration_symmetry"] = longer > 0 && float64(absInt(leftDuration-rightDuration))/float64(longer) < 0.50
 	sig.Reasons["handle_above_midcup"] = p[3].Price > p[1].Price+0.50*(p[0].Price-p[1].Price)
+
 	handleDepth := (p[2].Price - p[3].Price) / p[2].Price
-	sig.Reasons["handle_depth"] = handleDepth < 0.15
+	sig.Reasons["handle_depth"] = handleDepth < 0.20
+
 	handleDuration := p[3].Index - p[2].Index
 	sig.Reasons["handle_duration"] = handleDuration >= 3 && handleDuration <= 15
 	avgCupVolume := avgRange(volume, p[0].Index, p[2].Index+1)
@@ -194,12 +200,10 @@ func scanCupAndHandle(pivots []Pivot, current int, close, volume []float64, avgV
 	sig.Reasons["handle_volume_contraction"] = avgCupVolume > 0 && avgHandleVolume < avgCupVolume
 	sig.Reasons["close_breakout"] = close[current] > p[0].Price*1.01
 	sig.Reasons["volume_breakout"] = avgVol20 > 0 && volume[current] > 1.5*avgVol20
-	for _, ok := range sig.Reasons {
-		if !ok {
-			return sig
-		}
-	}
-	sig.Buy = true
+
+	sig.Buy = sig.Reasons["pivot_sequence"] && sig.Reasons["rim_similarity"] && sig.Reasons["cup_depth"] &&
+		sig.Reasons["duration_symmetry"] && sig.Reasons["handle_above_midcup"] && sig.Reasons["handle_depth"] &&
+		sig.Reasons["close_breakout"] && sig.Reasons["volume_breakout"]
 	return sig
 }
 
