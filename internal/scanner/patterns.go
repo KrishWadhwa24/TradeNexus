@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"fmt"
 	"math"
 
 	"tradenexus/internal/market"
@@ -18,9 +19,16 @@ type Pivot struct {
 	IsHigh bool    `json:"is_high"`
 }
 
+type Reason struct {
+	Name     string `json:"name"`
+	Met      bool   `json:"met"`
+	Expected string `json:"expected"`
+	Actual   string `json:"actual"`
+}
+
 type PatternSignal struct {
-	Buy     bool            `json:"buy"`
-	Reasons map[string]bool `json:"reasons"`
+	Buy     bool     `json:"buy"`
+	Reasons []Reason `json:"reasons"`
 }
 
 type PatternTimeframeResult struct {
@@ -95,112 +103,155 @@ func ScanCupAndHandle(candles []market.Candle) PatternSignal {
 
 func scanDowntrendBreakout(highs []Pivot, current int, close, volume []float64, avgVol20, rsSlope float64) PatternSignal {
 	sig := newPatternSignal()
-	sig.Reasons["enough_pivot_highs"] = len(highs) >= 4
-	if len(highs) < 4 || current < 0 || current >= len(close) || current >= len(volume) {
+	enoughPivots := len(highs) >= 3
+	sig.Reasons = append(sig.Reasons, Reason{Name: "enough_pivot_highs", Met: enoughPivots, Expected: ">= 3", Actual: fmt.Sprintf("%d", len(highs))})
+	if !enoughPivots {
 		return sig
 	}
-	h := highs[len(highs)-4:]
-	desc := h[0].Price > h[1].Price && h[1].Price > h[2].Price && h[2].Price > h[3].Price
-	sig.Reasons["lower_pivot_highs"] = desc
-	if !desc || h[3].Index == h[0].Index {
+	m, b := pivotLine(highs)
+	isDowntrend := m < 0
+	sig.Reasons = append(sig.Reasons, Reason{Name: "downtrend_slope", Met: isDowntrend, Expected: "< 0", Actual: fmt.Sprintf("%.2f", m)})
+	if !isDowntrend {
 		return sig
 	}
-	m := (h[3].Price - h[0].Price) / float64(h[3].Index-h[0].Index)
-	b := h[0].Price - (m * float64(h[0].Index))
 	touches := 0
-	for _, p := range h {
+	for _, p := range highs {
 		expected := m*float64(p.Index) + b
-		if p.Price != 0 && math.Abs(p.Price-expected)/p.Price <= 0.03 {
+		if p.Price != 0 && math.Abs(p.Price-expected)/p.Price <= 0.05 {
 			touches++
 		}
 	}
-	sig.Reasons["three_trendline_touches"] = touches >= 3
-	if touches < 3 {
+	threeTouches := touches >= 3
+	sig.Reasons = append(sig.Reasons, Reason{Name: "three_trendline_touches", Met: threeTouches, Expected: ">= 3", Actual: fmt.Sprintf("%d", touches)})
+	if !threeTouches {
 		return sig
 	}
-	duration := h[3].Index - h[0].Index
-	sig.Reasons["trend_duration"] = duration >= 20
-	if duration < 20 {
+	firstPivot := highs[0]
+	lastPivot := highs[len(highs)-1]
+	duration := lastPivot.Index - firstPivot.Index
+	durationMet := duration >= 20
+	sig.Reasons = append(sig.Reasons, Reason{Name: "trend_duration", Met: durationMet, Expected: ">= 20", Actual: fmt.Sprintf("%d", duration)})
+	if !durationMet {
 		return sig
 	}
 	resistance := m*float64(current) + b
-	sig.Reasons["close_breakout"] = close[current] > resistance*1.01
-	sig.Reasons["volume_breakout"] = avgVol20 > 0 && volume[current] > 1.5*avgVol20
-	sig.Reasons["rs_slope_positive"] = rsSlope > 0
-	sig.Buy = sig.Reasons["close_breakout"] && sig.Reasons["volume_breakout"] && sig.Reasons["rs_slope_positive"]
+	closeBreakout := close[current] > resistance*1.01
+	sig.Reasons = append(sig.Reasons, Reason{Name: "close_breakout", Met: closeBreakout, Expected: fmt.Sprintf("> %.2f", resistance*1.01), Actual: fmt.Sprintf("%.2f", close[current])})
+	volumeBreakout := avgVol20 > 0 && volume[current] > 1.5*avgVol20
+	sig.Reasons = append(sig.Reasons, Reason{Name: "volume_breakout", Met: volumeBreakout, Expected: fmt.Sprintf("> %.2f", 1.5*avgVol20), Actual: fmt.Sprintf("%.2f", volume[current])})
+	rsSlopePositive := rsSlope > 0
+	sig.Reasons = append(sig.Reasons, Reason{Name: "rs_slope_positive", Met: rsSlopePositive, Expected: "> 0", Actual: fmt.Sprintf("%.2f", rsSlope)})
+	sig.Buy = closeBreakout && volumeBreakout && rsSlopePositive
 	return sig
 }
 
 func scanRectangleConsolidation(uppers, lowers []Pivot, current int, close, volume []float64, avgVol20 float64) PatternSignal {
 	sig := newPatternSignal()
-	sig.Reasons["enough_upper_pivots"] = len(uppers) >= 3
-	sig.Reasons["enough_lower_pivots"] = len(lowers) >= 3
-	if len(uppers) < 3 || len(lowers) < 3 || current < 0 || current >= len(close) || current >= len(volume) {
+	enoughUppers := len(uppers) >= 2
+	enoughLowers := len(lowers) >= 2
+	sig.Reasons = append(sig.Reasons, Reason{Name: "enough_upper_pivots", Met: enoughUppers, Expected: ">= 2", Actual: fmt.Sprintf("%d", len(uppers))})
+	sig.Reasons = append(sig.Reasons, Reason{Name: "enough_lower_pivots", Met: enoughLowers, Expected: ">= 2", Actual: fmt.Sprintf("%d", len(lowers))})
+	if !enoughUppers || !enoughLowers {
 		return sig
 	}
-	u := uppers
-	l := lowers
-	maxU, minU := pivotMaxMin(u)
-	maxL, minL := pivotMaxMin(l)
-	sig.Reasons["upper_flat"] = maxU > 0 && (maxU-minU)/maxU < 0.03
-	sig.Reasons["lower_flat"] = maxL > 0 && (maxL-minL)/maxL < 0.03
-	if !sig.Reasons["upper_flat"] || !sig.Reasons["lower_flat"] {
+	maxU, minU := pivotMaxMin(uppers)
+	maxL, minL := pivotMaxMin(lowers)
+	upperFlat := maxU > 0 && (maxU-minU)/maxU < 0.05
+	lowerFlat := maxL > 0 && (maxL-minL)/maxL < 0.05
+	sig.Reasons = append(sig.Reasons, Reason{Name: "upper_flat", Met: upperFlat, Expected: "< 5%", Actual: fmt.Sprintf("%.2f%%", (maxU-minU)/maxU*100)})
+	sig.Reasons = append(sig.Reasons, Reason{Name: "lower_flat", Met: lowerFlat, Expected: "< 5%", Actual: fmt.Sprintf("%.2f%%", (maxL-minL)/maxL*100)})
+	if !upperFlat || !lowerFlat {
 		return sig
 	}
-	start := minInt(u[0].Index, l[0].Index)
+	start := minInt(uppers[0].Index, lowers[0].Index)
 	duration := current - start
-	sig.Reasons["duration"] = duration >= 15
+	durationMet := duration >= 20
+	sig.Reasons = append(sig.Reasons, Reason{Name: "duration", Met: durationMet, Expected: ">= 20", Actual: fmt.Sprintf("%d", duration)})
 	boxHeight := maxU - minL
-	sig.Reasons["box_height"] = close[current] > 0 && boxHeight/close[current] >= 0.05
-	first5 := avgRange(volume, start, minInt(start+5, current))
-	last5 := avgRange(volume, maxInt(start, current-5), current)
-	sig.Reasons["volume_contraction"] = first5 > 0 && last5 < first5
-	sig.Reasons["close_breakout"] = close[current] > maxU*1.01
-	sig.Reasons["volume_breakout"] = avgVol20 > 0 && volume[current] > 1.5*avgVol20
-	sig.Buy = sig.Reasons["duration"] && sig.Reasons["box_height"] &&
-		sig.Reasons["volume_contraction"] && sig.Reasons["close_breakout"] && sig.Reasons["volume_breakout"]
+	boxHeightMet := close[current] > 0 && boxHeight/close[current] >= 0.05
+	sig.Reasons = append(sig.Reasons, Reason{Name: "box_height", Met: boxHeightMet, Expected: ">= 5%", Actual: fmt.Sprintf("%.2f%%", boxHeight/close[current]*100)})
+	firstVol := avgRange(volume, start, minInt(start+5, current))
+	lastVol := avgRange(volume, maxInt(start, current-5), current)
+	volumeContraction := firstVol > 0 && lastVol < firstVol
+	sig.Reasons = append(sig.Reasons, Reason{Name: "volume_contraction", Met: volumeContraction, Expected: fmt.Sprintf("< %.2f", firstVol), Actual: fmt.Sprintf("%.2f", lastVol)})
+	closeBreakout := close[current] > maxU*1.01
+	sig.Reasons = append(sig.Reasons, Reason{Name: "close_breakout", Met: closeBreakout, Expected: fmt.Sprintf("> %.2f", maxU*1.01), Actual: fmt.Sprintf("%.2f", close[current])})
+	volumeBreakout := avgVol20 > 0 && volume[current] > 1.5*avgVol20
+	sig.Reasons = append(sig.Reasons, Reason{Name: "volume_breakout", Met: volumeBreakout, Expected: fmt.Sprintf("> %.2f", 1.5*avgVol20), Actual: fmt.Sprintf("%.2f", volume[current])})
+	sig.Buy = durationMet && boxHeightMet && volumeContraction && closeBreakout && volumeBreakout
 	return sig
 }
 
 func scanCupAndHandle(pivots []Pivot, current int, close, volume []float64, avgVol20 float64) PatternSignal {
 	sig := newPatternSignal()
-	sig.Reasons["enough_major_pivots"] = len(pivots) >= 4
-	if len(pivots) < 4 || current < 0 || current >= len(close) || current >= len(volume) {
+	enoughPivots := len(pivots) >= 4
+	sig.Reasons = append(sig.Reasons, Reason{Name: "enough_major_pivots", Met: enoughPivots, Expected: ">= 4", Actual: fmt.Sprintf("%d", len(pivots))})
+	if !enoughPivots {
 		return sig
 	}
 	p := pivots[len(pivots)-4:]
 	shape := p[0].IsHigh && !p[1].IsHigh && p[2].IsHigh && !p[3].IsHigh
-	sig.Reasons["pivot_sequence"] = shape
+	sig.Reasons = append(sig.Reasons, Reason{Name: "pivot_sequence", Met: shape, Expected: "H-L-H-L", Actual: getPivotSequence(p)})
 	if !shape {
 		return sig
 	}
-	sig.Reasons["rim_similarity"] = p[0].Price > 0 && math.Abs(p[0].Price-p[2].Price)/p[0].Price < 0.10
-	sig.Reasons["right_rim_recovered"] = p[2].Price >= 0.90*p[0].Price
+	rimSimilarity := p[0].Price > 0 && math.Abs(p[0].Price-p[2].Price)/p[0].Price < 0.15
+	sig.Reasons = append(sig.Reasons, Reason{Name: "rim_similarity", Met: rimSimilarity, Expected: "< 15%", Actual: fmt.Sprintf("%.2f%%", math.Abs(p[0].Price-p[2].Price)/p[0].Price*100)})
+	rightRimRecovered := p[2].Price >= 0.85*p[0].Price
+	sig.Reasons = append(sig.Reasons, Reason{Name: "right_rim_recovered", Met: rightRimRecovered, Expected: ">= 85%", Actual: fmt.Sprintf("%.2f%%", p[2].Price/p[0].Price*100)})
 	depth := (p[0].Price - p[1].Price) / p[0].Price
-	sig.Reasons["cup_depth"] = depth >= 0.20 && depth <= 0.70
+	cupDepth := depth >= 0.15 && depth <= 0.80
+	sig.Reasons = append(sig.Reasons, Reason{Name: "cup_depth", Met: cupDepth, Expected: "15-80%", Actual: fmt.Sprintf("%.2f%%", depth*100)})
 	leftDuration := p[1].Index - p[0].Index
 	rightDuration := p[2].Index - p[1].Index
-	sig.Reasons["left_duration"] = leftDuration > 3
-	sig.Reasons["right_duration"] = rightDuration > 3
+	leftDurationMet := leftDuration > 5
+	rightDurationMet := rightDuration > 5
+	sig.Reasons = append(sig.Reasons, Reason{Name: "left_duration", Met: leftDurationMet, Expected: "> 5", Actual: fmt.Sprintf("%d", leftDuration)})
+	sig.Reasons = append(sig.Reasons, Reason{Name: "right_duration", Met: rightDurationMet, Expected: "> 5", Actual: fmt.Sprintf("%d", rightDuration)})
 	longer := maxInt(leftDuration, rightDuration)
-	sig.Reasons["duration_symmetry"] = longer > 0 && float64(absInt(leftDuration-rightDuration))/float64(longer) < 0.30
-	sig.Reasons["handle_above_midcup"] = p[3].Price > p[1].Price+0.50*(p[0].Price-p[1].Price)
-	handleDepth := (p[2].Price - p[3].Price) / p[2].Price
-	sig.Reasons["handle_depth"] = handleDepth < 0.15
-	handleDuration := p[3].Index - p[2].Index
-	sig.Reasons["handle_duration"] = handleDuration >= 3 && handleDuration <= 15
+	durationSymmetry := longer > 0 && float64(absInt(leftDuration-rightDuration))/float64(longer) < 0.50
+	sig.Reasons = append(sig.Reasons, Reason{Name: "duration_symmetry", Met: durationSymmetry, Expected: "< 50%", Actual: fmt.Sprintf("%.2f%%", float64(absInt(leftDuration-rightDuration))/float64(longer)*100)})
+	handleAboveMidCup := p[3].Price > p[1].Price+0.40*(p[0].Price-p[1].Price)
+	sig.Reasons = append(sig.Reasons, Reason{Name: "handle_above_midcup", Met: handleAboveMidCup, Expected: "above mid cup", Actual: fmt.Sprintf("%.2f vs %.2f", p[3].Price, p[1].Price+0.40*(p[0].Price-p[1].Price))})
+	handleDepthVal := (p[2].Price - p[3].Price) / p[2].Price
+	handleDepth := handleDepthVal < 0.20
+	sig.Reasons = append(sig.Reasons, Reason{Name: "handle_depth", Met: handleDepth, Expected: "< 20%", Actual: fmt.Sprintf("%.2f%%", handleDepthVal*100)})
+	handleDurationVal := p[3].Index - p[2].Index
+	handleDuration := handleDurationVal >= 4 && handleDurationVal <= 20
+	sig.Reasons = append(sig.Reasons, Reason{Name: "handle_duration", Met: handleDuration, Expected: "4-20", Actual: fmt.Sprintf("%d", handleDurationVal)})
 	avgCupVolume := avgRange(volume, p[0].Index, p[2].Index+1)
 	avgHandleVolume := avgRange(volume, p[2].Index, p[3].Index+1)
-	sig.Reasons["handle_volume_contraction"] = avgCupVolume > 0 && avgHandleVolume < avgCupVolume
-	sig.Reasons["close_breakout"] = close[current] > p[0].Price*1.01
-	sig.Reasons["volume_breakout"] = avgVol20 > 0 && volume[current] > 1.5*avgVol20
-	for _, ok := range sig.Reasons {
-		if !ok {
-			return sig
+	handleVolumeContraction := avgCupVolume > 0 && avgHandleVolume < avgCupVolume
+	sig.Reasons = append(sig.Reasons, Reason{Name: "handle_volume_contraction", Met: handleVolumeContraction, Expected: fmt.Sprintf("< %.2f", avgCupVolume), Actual: fmt.Sprintf("%.2f", avgHandleVolume)})
+	closeBreakout := close[current] > p[0].Price*1.01
+	sig.Reasons = append(sig.Reasons, Reason{Name: "close_breakout", Met: closeBreakout, Expected: fmt.Sprintf("> %.2f", p[0].Price*1.01), Actual: fmt.Sprintf("%.2f", close[current])})
+	volumeBreakout := avgVol20 > 0 && volume[current] > 1.5*avgVol20
+	sig.Reasons = append(sig.Reasons, Reason{Name: "volume_breakout", Met: volumeBreakout, Expected: fmt.Sprintf("> %.2f", 1.5*avgVol20), Actual: fmt.Sprintf("%.2f", volume[current])})
+
+	allMet := true
+	for _, r := range sig.Reasons {
+		if !r.Met {
+			allMet = false
+			break
 		}
 	}
-	sig.Buy = true
+	sig.Buy = allMet
 	return sig
+}
+
+func getPivotSequence(pivots []Pivot) string {
+	var s string
+	for i, p := range pivots {
+		if i > 0 {
+			s += "-"
+		}
+		if p.IsHigh {
+			s += "H"
+		} else {
+			s += "L"
+		}
+	}
+	return s
 }
 
 func FindPivotHighs(candles []market.Candle, left, right int) []Pivot {
@@ -277,7 +328,7 @@ func appendPivot(in []Pivot, p Pivot) []Pivot {
 }
 
 func newPatternSignal() PatternSignal {
-	return PatternSignal{Reasons: map[string]bool{}}
+	return PatternSignal{Reasons: []Reason{}}
 }
 
 func recentPivots(pivots []Pivot, current, start int) []Pivot {
@@ -341,6 +392,25 @@ func pivotMaxMin(pivots []Pivot) (float64, float64) {
 		}
 	}
 	return maxV, minV
+}
+
+func pivotLine(pivots []Pivot) (float64, float64) {
+	var sumX, sumY, sumXY, sumX2 float64
+	n := float64(len(pivots))
+	for _, p := range pivots {
+		x := float64(p.Index)
+		y := p.Price
+		sumX += x
+		sumY += y
+		sumXY += x * y
+		sumX2 += x * x
+	}
+	if denom := n*sumX2 - sumX*sumX; denom != 0 {
+		m := (n*sumXY - sumX*sumY) / denom
+		b := (sumY - m*sumX) / n
+		return m, b
+	}
+	return 0, 0
 }
 
 func minInt(a, b int) int {

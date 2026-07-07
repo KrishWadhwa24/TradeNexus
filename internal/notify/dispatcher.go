@@ -164,8 +164,8 @@ func (d *Dispatcher) alreadyDelivered(ctx context.Context, userID string, sig si
 	err := d.pool.QueryRow(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM signal_deliveries
-			WHERE user_id = $1::uuid AND signal_id = $2 AND channel = 'telegram')`,
-		userID, sig.ID).Scan(&exists)
+			WHERE user_id = $1::uuid AND instrument_id = $2 AND timeframe = $3 AND candle_date = $4)`,
+		userID, sig.InstrumentID, sig.Timeframe, dateOnly(sig.CandleDate)).Scan(&exists)
 	return exists, err
 }
 
@@ -173,8 +173,8 @@ func (d *Dispatcher) recordDelivery(ctx context.Context, userID string, sig sign
 	_, err := d.pool.Exec(ctx, `
 		INSERT INTO signal_deliveries (signal_id, user_id, instrument_id, timeframe, candle_date, channel)
 		VALUES ($1, $2::uuid, $3, $4, $5, 'telegram')
-		ON CONFLICT (user_id, signal_id, channel) DO NOTHING`,
-		sig.ID, userID, sig.InstrumentID, sig.Timeframe, sig.CandleDate)
+		ON CONFLICT (user_id, instrument_id, timeframe, candle_date) DO NOTHING`,
+		sig.ID, userID, sig.InstrumentID, sig.Timeframe, dateOnly(sig.CandleDate))
 	return err
 }
 

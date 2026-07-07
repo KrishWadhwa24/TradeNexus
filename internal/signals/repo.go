@@ -16,19 +16,19 @@ import (
 
 // Signal is one audit record.
 type Signal struct {
-	ID           int64           `json:"id"`
-	InstrumentID int64           `json:"instrument_id"`
-	Symbol       string          `json:"symbol,omitempty"`
-	Source       string          `json:"source"`
-	ScannerName  string          `json:"scanner_name"`
-	Timeframe    string          `json:"timeframe"`
-	Direction    string          `json:"direction"`
-	CandleDate   time.Time       `json:"candle_date"`
-	Confidence   *int            `json:"confidence,omitempty"`
-	RSI          *float64        `json:"rsi,omitempty"`
-	Volume       *float64        `json:"volume,omitempty"`
-	Reasons      map[string]bool `json:"reasons"`
-	CreatedAt    time.Time       `json:"created_at"`
+	ID           int64       `json:"id"`
+	InstrumentID int64       `json:"instrument_id"`
+	Symbol       string      `json:"symbol,omitempty"`
+	Source       string      `json:"source"`
+	ScannerName  string      `json:"scanner_name"`
+	Timeframe    string      `json:"timeframe"`
+	Direction    string      `json:"direction"`
+	CandleDate   time.Time   `json:"candle_date"`
+	Confidence   *int        `json:"confidence,omitempty"`
+	RSI          *float64    `json:"rsi,omitempty"`
+	Volume       *float64    `json:"volume,omitempty"`
+	Reasons      interface{} `json:"reasons"`
+	CreatedAt    time.Time   `json:"created_at"`
 }
 
 // Filter narrows a List query. Zero values mean "no filter".

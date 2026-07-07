@@ -54,6 +54,7 @@ type Client struct {
 	log     zerolog.Logger
 
 	mu        sync.RWMutex
+	loginMu   sync.Mutex
 	tokens    tokenData
 	tokenTime time.Time
 }

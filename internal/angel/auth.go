@@ -117,6 +117,11 @@ func (c *Client) ensureLogin(ctx context.Context) error {
 	if c.LoggedIn() {
 		return nil
 	}
+	c.loginMu.Lock()
+	defer c.loginMu.Unlock()
+	if c.LoggedIn() {
+		return nil
+	}
 	return c.Login(ctx)
 }
 

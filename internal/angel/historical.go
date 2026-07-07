@@ -127,11 +127,27 @@ func (c *Client) doHistoricalRequest(ctx context.Context, reqBody []byte) ([]byt
 		return nil, 0, fmt.Errorf("angel historical: %w", err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("angel historical body read: %w", err)
+	}
 	return raw, resp.StatusCode, nil
 }
 
 func (c *Client) refreshOrLogin(ctx context.Context) error {
+	c.loginMu.Lock()
+	defer c.loginMu.Unlock()
+
+	// Re-check logged-in status after acquiring lock in case another goroutine
+	// just finished a full login cycle. We can't use c.LoggedIn() because the
+	// token might be expired; instead, we check that a token exists at all.
+	c.mu.RLock()
+	hasToken := c.tokens.JWTToken != ""
+	c.mu.RUnlock()
+	if !hasToken {
+		return c.Login(ctx)
+	}
+
 	if err := c.RefreshTokens(ctx); err == nil {
 		return nil
 	}
