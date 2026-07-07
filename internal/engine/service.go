@@ -202,32 +202,58 @@ func lastTimeOrZero(c []market.Candle) time.Time {
 	return lastTime(c)
 }
 
-// SyncAndScan fetches `days` of daily history from Angel, stores it, rebuilds
-// aggregates, and scans.
+// SyncAndScan intelligently fetches missing daily history from Angel, stores it,
+// rebuilds aggregates, and scans. It's the efficient engine for the "Scan Now"
+// button.
 func (s *Service) SyncAndScan(ctx context.Context, instrumentID, days int) (ScanResult, error) {
 	inst, err := s.inst.GetByID(ctx, int64(instrumentID))
 	if err != nil {
 		return ScanResult{}, err
 	}
-	if days <= 0 {
-		days = candles.RequiredDailyBars
+
+	// Check what data we already have.
+	set, first, _, ok, err := s.candles.DailyDateSet(ctx, int64(instrumentID))
+	if err != nil {
+		return ScanResult{}, err
 	}
-	if days > 2000 {
-		days = 2000
-	}
+
 	to := time.Now().In(market.IST)
-	from := to.AddDate(0, 0, -(days*7/5 + 10))
+	var from time.Time
+
+	// If no data exists, bootstrap the full history.
+	if !ok {
+		if days <= 0 {
+			days = candles.RequiredDailyBars
+		}
+		if days > 2000 {
+			days = 2000
+		}
+		from = to.AddDate(0, 0, -(days*7/5 + 10))
+	} else {
+		// Data exists, find what's missing.
+		missing := s.cal.Cal().MissingTradingDays(first.AddDate(0, 0, -1), to, set)
+		if len(missing) > 0 {
+			from = missing[0] // Fetch from the first missing day.
+		} else {
+			from = to // Nothing's missing, just fetch today's update.
+		}
+	}
 
 	fetched, err := s.angel.GetDailyCandles(ctx, inst.Exchange, inst.SymbolToken, from, to)
 	if err != nil {
 		return ScanResult{}, err
 	}
-	if _, err := s.candles.UpsertDaily(ctx, int64(instrumentID), fetched); err != nil {
-		return ScanResult{}, err
+
+	// Only proceed if we actually got new data.
+	if len(fetched) > 0 {
+		if _, err := s.candles.UpsertDaily(ctx, int64(instrumentID), fetched); err != nil {
+			return ScanResult{}, err
+		}
+		if _, _, err := s.candles.RebuildAggregates(ctx, int64(instrumentID)); err != nil {
+			return ScanResult{}, err
+		}
 	}
-	if _, _, err := s.candles.RebuildAggregates(ctx, int64(instrumentID)); err != nil {
-		return ScanResult{}, err
-	}
+
 	return s.ScanStored(ctx, int64(instrumentID))
 }
 

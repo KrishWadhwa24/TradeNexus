@@ -27,6 +27,9 @@ func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken stri
 	if err := c.ensureLogin(ctx); err != nil {
 		return nil, err
 	}
+	if err := c.rateLimitWait(ctx); err != nil {
+		return nil, err
+	}
 	if c.limiter != nil {
 		if err := c.limiter.Wait(ctx, 1); err != nil {
 			return nil, fmt.Errorf("angel historical rate wait: %w", err)
@@ -41,25 +44,14 @@ func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken stri
 		ToDate:      to.In(market.IST).Format(angelDateLayout),
 	})
 
-	raw, status, err := c.doHistoricalRequest(ctx, reqBody)
+	raw, err := c.doHistoricalRequestWithRetry(ctx, reqBody)
 	if err != nil {
 		return nil, err
-	}
-	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		if err := c.refreshOrLogin(ctx); err == nil {
-			raw, status, err = c.doHistoricalRequest(ctx, reqBody)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	if status < http.StatusOK || status >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("angel historical HTTP %d: %s", status, bodyPreview(raw))
 	}
 
 	var hr histResponse
 	if err := json.Unmarshal(raw, &hr); err != nil {
-		return nil, fmt.Errorf("angel historical decode (status %d): %w", status, err)
+		return nil, fmt.Errorf("angel historical decode (body: %q): %w", bodyPreview(raw), err)
 	}
 	if !hr.Status {
 		return nil, fmt.Errorf("angel historical failed: %s (%s)", hr.Message, hr.ErrorCode)
@@ -70,6 +62,55 @@ func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken stri
 		return nil, fmt.Errorf("angel historical failed: %s", err)
 	}
 	return parseCandles(rows)
+}
+
+func (c *Client) rateLimitWait(ctx context.Context) error {
+	if c.limiter != nil {
+		if err := c.limiter.Wait(ctx, 1); err != nil {
+			return fmt.Errorf("angel historical rate wait: %w", err)
+		}
+	}
+	return nil
+}
+
+func (c *Client) doHistoricalRequestWithRetry(ctx context.Context, reqBody []byte) ([]byte, error) {
+	const maxAttempts = 3
+	var lastErr error
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		raw, status, err := c.doHistoricalRequest(ctx, reqBody)
+		if err != nil {
+			// This is a network error or client timeout.
+			lastErr = err
+			if attempt < maxAttempts {
+				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond) // Simple backoff
+				continue
+			}
+			return nil, err
+		}
+
+		if status == http.StatusUnauthorized || status == http.StatusForbidden {
+			if err := c.refreshOrLogin(ctx); err == nil {
+				// After successful re-login, retry the request immediately.
+				return c.doHistoricalRequestWithRetry(ctx, reqBody)
+			}
+			return nil, fmt.Errorf("angel auth failed and could not be refreshed")
+		}
+
+		if status >= http.StatusMultipleChoices {
+			lastErr = fmt.Errorf("angel historical HTTP %d: %s", status, bodyPreview(raw))
+			// Don't retry on definitive client/server errors (4xx/5xx) other than auth.
+			return nil, lastErr
+		}
+
+		if len(raw) == 0 {
+			lastErr = fmt.Errorf("angel historical received empty body with status %d", status)
+			continue // Retry on empty body
+		}
+
+		return raw, nil // Success
+	}
+	return nil, fmt.Errorf("angel historical request failed after %d attempts: %w", maxAttempts, lastErr)
 }
 
 func (c *Client) doHistoricalRequest(ctx context.Context, reqBody []byte) ([]byte, int, error) {

@@ -112,7 +112,7 @@ func (r *Repo) DailyDateSet(ctx context.Context, instrumentID int64) (set map[st
 	return set, first, last, ok, rows.Err()
 }
 
-// RebuildAggregates recomputes and replaces weekly + monthly candles for an
+// RebuildAggregates recomputes and upserts weekly + monthly candles for an
 // instrument from its stored daily candles. Called after any daily upsert.
 func (r *Repo) RebuildAggregates(ctx context.Context, instrumentID int64) (weekly, monthly int, err error) {
 	daily, err := r.GetDaily(ctx, instrumentID)
@@ -122,38 +122,44 @@ func (r *Repo) RebuildAggregates(ctx context.Context, instrumentID int64) (weekl
 	w := Weekly(daily)
 	m := Monthly(daily)
 
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
+	if err = r.upsertAgg(ctx, "weekly_candles", instrumentID, w); err != nil {
 		return 0, 0, err
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // rollback is a no-op after commit
-
-	if _, err = tx.Exec(ctx, `DELETE FROM weekly_candles WHERE instrument_id=$1`, instrumentID); err != nil {
-		return 0, 0, err
-	}
-	if _, err = tx.Exec(ctx, `DELETE FROM monthly_candles WHERE instrument_id=$1`, instrumentID); err != nil {
-		return 0, 0, err
-	}
-	if err = insertAgg(ctx, tx, "weekly_candles", instrumentID, w); err != nil {
-		return 0, 0, err
-	}
-	if err = insertAgg(ctx, tx, "monthly_candles", instrumentID, m); err != nil {
-		return 0, 0, err
-	}
-	if err = tx.Commit(ctx); err != nil {
+	if err = r.upsertAgg(ctx, "monthly_candles", instrumentID, m); err != nil {
 		return 0, 0, err
 	}
 	return len(w), len(m), nil
 }
 
-func insertAgg(ctx context.Context, tx pgx.Tx, table string, instrumentID int64, cs []market.AggCandle) error {
+// upsertAgg atomically inserts/updates aggregate candles for an instrument.
+func (r *Repo) upsertAgg(ctx context.Context, table string, instrumentID int64, cs []market.AggCandle) error {
+	if len(cs) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	query := fmt.Sprintf(`
+		INSERT INTO %s (instrument_id, period_start, period_end, open, high, low, close, volume, is_confirmed)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (instrument_id, period_start) DO UPDATE
+		SET period_end = EXCLUDED.period_end,
+			open = EXCLUDED.open,
+			high = EXCLUDED.high,
+			low = EXCLUDED.low,
+			close = EXCLUDED.close,
+			volume = EXCLUDED.volume,
+			is_confirmed = EXCLUDED.is_confirmed`, table)
+
 	for _, c := range cs {
-		_, err := tx.Exec(ctx, fmt.Sprintf(`
-			INSERT INTO %s (instrument_id, period_start, period_end, open, high, low, close, volume, is_confirmed)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, table),
+		batch.Queue(query,
 			instrumentID, c.PeriodStart, c.PeriodEnd, c.Open, c.High, c.Low, c.Close, c.Volume, c.IsConfirmed)
-		if err != nil {
-			return fmt.Errorf("insert %s: %w", table, err)
+	}
+
+	br := r.pool.SendBatch(ctx, batch)
+	defer br.Close()
+
+	for i := 0; i < len(cs); i++ {
+		if _, err := br.Exec(); err != nil {
+			return fmt.Errorf("upsert agg %s: %w", table, err)
 		}
 	}
 	return nil
