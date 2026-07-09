@@ -5,7 +5,7 @@ package calendar
 
 import "time"
 
-const dateKey = "2006-01-02"
+const DateKey = "2006-01-02"
 
 // Calendar answers trading-day questions given a fixed holiday set.
 type Calendar struct {
@@ -16,7 +16,7 @@ type Calendar struct {
 func New(holidays []time.Time) *Calendar {
 	m := make(map[string]bool, len(holidays))
 	for _, h := range holidays {
-		m[h.Format(dateKey)] = true
+		m[h.Format(DateKey)] = true
 	}
 	return &Calendar{holidays: m}
 }
@@ -32,7 +32,7 @@ func (c *Calendar) IsTradingDay(d time.Time) bool {
 	if IsWeekend(d) {
 		return false
 	}
-	return !c.holidays[d.Format(dateKey)]
+	return !c.holidays[d.Format(DateKey)]
 }
 
 // IsMarketOpen reports whether NSE cash is open at time t (a trading day and
@@ -65,7 +65,7 @@ func (c *Calendar) TradingDays(from, to time.Time) []time.Time {
 func (c *Calendar) MissingTradingDays(after, to time.Time, have map[string]bool) []time.Time {
 	var missing []time.Time
 	for _, d := range c.TradingDays(after.AddDate(0, 0, 1), to) {
-		if !have[d.Format(dateKey)] {
+		if !have[d.Format(DateKey)] {
 			missing = append(missing, d)
 		}
 	}

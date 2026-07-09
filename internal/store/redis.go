@@ -2,10 +2,18 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+)
+
+const (
+	// keyCachePopulating is a flag that is true while the cacher is running.
+	keyCachePopulating = "cache:populating"
+	// keyCacheInstrumentCandles is the key for a single instrument's candles.
+	keyCacheInstrumentCandles = "cache:instrument:%d:candles"
 )
 
 // Redis wraps a go-redis client.
@@ -44,4 +52,56 @@ func (r *Redis) Close() error {
 		return r.Client.Close()
 	}
 	return nil
+}
+
+// SetCachedCandles stores the serialized candle data for an instrument.
+func (r *Redis) SetCachedCandles(ctx context.Context, instrumentID int64, data []byte, ttl time.Duration) error {
+	key := fmt.Sprintf(keyCacheInstrumentCandles, instrumentID)
+	return r.Client.Set(ctx, key, data, ttl).Err()
+}
+
+// GetCachedCandles retrieves the serialized candle data for an instrument.
+// It returns redis.Nil if the key does not exist.
+func (r *Redis) GetCachedCandles(ctx context.Context, instrumentID int64) ([]byte, error) {
+	key := fmt.Sprintf(keyCacheInstrumentCandles, instrumentID)
+	return r.Client.Get(ctx, key).Bytes()
+}
+
+// SetCachePopulating sets or clears the cache populating flag.
+func (r *Redis) SetCachePopulating(ctx context.Context, status bool, ttl time.Duration) error {
+	if !status {
+		return r.Client.Del(ctx, keyCachePopulating).Err()
+	}
+	return r.Client.Set(ctx, keyCachePopulating, "true", ttl).Err()
+}
+
+// IsCachePopulating checks if the cache populating flag is set.
+func (r *Redis) IsCachePopulating(ctx context.Context) (bool, error) {
+	val, err := r.Client.Get(ctx, keyCachePopulating).Result()
+	if err == redis.Nil {
+		return false, nil // Not found means not populating.
+	}
+	if err != nil {
+		return false, err
+	}
+	return val == "true", nil
+}
+
+// Get retrieves a value from Redis. It returns redis.Nil if the key does not exist.
+func (r *Redis) Get(ctx context.Context, key string) ([]byte, error) {
+	return r.Client.Get(ctx, key).Bytes()
+}
+
+// Set stores a value in Redis. The value is marshaled to JSON.
+func (r *Redis) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+	p, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("marshal json: %w", err)
+	}
+	return r.Client.Set(ctx, key, p, ttl).Err()
+}
+
+// SetBytes stores raw bytes in Redis.
+func (r *Redis) SetBytes(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	return r.Client.Set(ctx, key, value, ttl).Err()
 }

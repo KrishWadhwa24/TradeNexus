@@ -60,6 +60,11 @@ func (s *Service) Cal() *Calendar {
 	return s.cal
 }
 
+// IsMarketOpen reports whether the market is open at time t.
+func (s *Service) IsMarketOpen(t time.Time) bool {
+	return s.Cal().IsMarketOpen(t)
+}
+
 // AddHolidays upserts holiday dates then reloads the cache.
 func (s *Service) AddHolidays(ctx context.Context, dates []time.Time) (int, error) {
 	batch := &pgx.Batch{}

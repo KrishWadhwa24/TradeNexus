@@ -4,10 +4,15 @@
 package engine
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 
 	"tradenexus/internal/angel"
@@ -22,24 +27,39 @@ import (
 
 // Service coordinates scanning and reconciliation.
 type Service struct {
-	candles   *candles.Repo
-	signals   *signals.Repo
-	inst      *instruments.Repo
-	angel     *angel.Client
-	cal       *calendar.Service
-	notifier  *notify.Dispatcher // optional; nil disables notifications
+	candles   Candler
+	signals   Signaler
+	inst      *instruments.Repo // Assuming not all methods are needed for an interface yet
+	angel     *angel.Client     // Assuming not all methods are needed for an interface yet
+	cal       CalendarProvider  // Use an interface for testability
+	notifier  *notify.Dispatcher
+	redis     Redis
 	pineCfg   scanner.PineConfig
 	retention time.Duration
 	log       zerolog.Logger
 }
 
+// CalendarProvider defines the interface for calendar operations needed by the engine.
+type CalendarProvider interface {
+	IsMarketOpen(time.Time) bool
+	Cal() *calendar.Calendar
+}
+
 // New builds the engine service. notifier may be nil to disable fan-out.
-func New(c *candles.Repo, sig *signals.Repo, inst *instruments.Repo, ang *angel.Client,
-	cal *calendar.Service, notifier *notify.Dispatcher, pineCfg scanner.PineConfig,
+func New(c Candler, sig Signaler, inst *instruments.Repo, ang *angel.Client,
+	cal CalendarProvider, notifier *notify.Dispatcher, redis Redis, pineCfg scanner.PineConfig,
 	retention time.Duration, log zerolog.Logger) *Service {
 	return &Service{
-		candles: c, signals: sig, inst: inst, angel: ang, cal: cal,
-		notifier: notifier, pineCfg: pineCfg, retention: retention, log: log,
+		candles:   c,
+		signals:   sig,
+		inst:      inst,
+		angel:     ang,
+		cal:       cal,
+		notifier:  notifier,
+		redis:     redis,
+		pineCfg:   pineCfg,
+		retention: retention,
+		log:       log,
 	}
 }
 
@@ -51,22 +71,82 @@ type ScanResult struct {
 }
 
 // ScanStored runs the scanner on already-stored candles and persists signals.
+// During market hours, it prioritizes fetching today's candle from Redis and
+// merging it with historical data from the database. After market hours, it
+// bypasses Redis and uses only the database.
 func (s *Service) ScanStored(ctx context.Context, instrumentID int64) (ScanResult, error) {
-	daily, err := s.candles.GetDaily(ctx, instrumentID)
-	if err != nil {
-		return ScanResult{}, err
-	}
-	weeklyAgg, err := s.candles.GetAggregates(ctx, instrumentID, market.TF1W)
-	if err != nil {
-		return ScanResult{}, err
-	}
-	monthlyAgg, err := s.candles.GetAggregates(ctx, instrumentID, market.TF1M)
-	if err != nil {
-		return ScanResult{}, err
+	// Before proceeding, wait for any active cache population to finish.
+	if s.cal.IsMarketOpen(time.Now()) {
+		if err := s.waitForCache(ctx); err != nil {
+			return ScanResult{}, fmt.Errorf("failed while waiting for cache: %w", err)
+		}
 	}
 
-	weekly := market.AggToCandles(weeklyAgg)
-	monthly := market.AggToCandles(monthlyAgg)
+	var (
+		daily   []market.Candle
+		weekly  []market.Candle
+		monthly []market.Candle
+		err     error
+	)
+
+	if s.cal.IsMarketOpen(time.Now()) {
+		// Market is OPEN: Use Redis for today's candle + DB for history.
+		s.log.Debug().Int64("instrument_id", instrumentID).Msg("market open, scanning with intraday cache")
+
+		// 1. Get historical data from the database.
+		dbCandles, err := s.candles.GetDaily(ctx, instrumentID)
+		if err != nil {
+			return ScanResult{}, fmt.Errorf("failed to get db candles: %w", err)
+		}
+
+		// 2. Try to get today's candle from Redis.
+		cachedData, err := s.redis.GetCachedCandles(ctx, instrumentID)
+		if err != nil && err != redis.Nil {
+			s.log.Warn().Err(err).Int64("instrument_id", instrumentID).Msg("failed to get cached candles")
+		}
+
+		var intraDayCandle []market.Candle
+		if len(cachedData) > 0 {
+			s.log.Debug().Int64("instrument_id", instrumentID).Msg("using cached intraday candle")
+			if err := json.Unmarshal(cachedData, &intraDayCandle); err != nil {
+				s.log.Error().Err(err).Int64("instrument_id", instrumentID).Msg("failed to unmarshal cached intraday candle")
+				// Don't fail the whole scan, just proceed with DB data.
+			}
+		} else {
+			s.log.Debug().Int64("instrument_id", instrumentID).Msg("intraday cache miss")
+		}
+
+		// 3. Merge historical and intraday data.
+		daily = mergeCandles(dbCandles, intraDayCandle)
+
+		// 4. Aggregates are not stored directly, so we derive them from the merged daily data.
+		weeklyAgg := candles.Weekly(daily)
+		weekly = market.AggToCandles(weeklyAgg)
+		monthlyAgg := candles.Monthly(daily)
+		monthly = market.AggToCandles(monthlyAgg)
+
+	} else {
+		// Market is CLOSED: Use database only.
+		daily, err = s.candles.GetDaily(ctx, instrumentID)
+		if err != nil {
+			return ScanResult{}, err
+		}
+		s.log.Debug().Int64("instrument_id", instrumentID).Int("candle_count", len(daily)).Msg("market closed, scanning from database only")
+
+		// Also fetch aggregates from DB.
+		weeklyAgg, err := s.candles.GetAggregates(ctx, instrumentID, market.TF1W)
+		if err != nil {
+			return ScanResult{}, err
+		}
+		monthlyAgg, err := s.candles.GetAggregates(ctx, instrumentID, market.TF1M)
+		if err != nil {
+			return ScanResult{}, err
+		}
+		weekly = market.AggToCandles(weeklyAgg)
+		monthly = market.AggToCandles(monthlyAgg)
+	}
+
+	// With data now loaded, run the scanner.
 	report := scanner.Run(daily, weekly, monthly, s.pineCfg)
 
 	inserted, err := s.persist(ctx, instrumentID, report, daily, weekly, monthly)
@@ -74,6 +154,33 @@ func (s *Service) ScanStored(ctx context.Context, instrumentID int64) (ScanResul
 		return ScanResult{}, err
 	}
 	return ScanResult{InstrumentID: instrumentID, Report: report, SignalsInserted: inserted}, nil
+}
+
+// mergeCandles combines two slices of candles. Candles from the `new` slice
+// overwrite candles from the `old` slice for the same date. The final slice is
+// sorted.
+func mergeCandles(old, new []market.Candle) []market.Candle {
+	// Use a map for efficient lookup and replacement of candles.
+	merged := make(map[time.Time]market.Candle)
+	for _, c := range old {
+		merged[c.Time.Truncate(24 * time.Hour)] = c
+	}
+	for _, c := range new {
+		merged[c.Time.Truncate(24 * time.Hour)] = c
+	}
+
+	// Convert map back to slice.
+	result := make([]market.Candle, 0, len(merged))
+	for _, c := range merged {
+		result = append(result, c)
+	}
+
+	// Sort by date to ensure the series is correct.
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Time.Before(result[j].Time)
+	})
+
+	return result
 }
 
 // persist writes any fired signals to the audit store (idempotent).
@@ -374,4 +481,60 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// waitForCache polls Redis to see if the cache is being populated and waits
+// until the process is complete or a timeout is reached.
+func (s *Service) waitForCache(ctx context.Context) error {
+	const (
+		pollInterval = 500 * time.Millisecond
+		maxWait      = 2 * time.Minute // Don't wait forever.
+	)
+
+	waitCtx, cancel := context.WithTimeout(ctx, maxWait)
+	defer cancel()
+
+	for {
+		populating, err := s.redis.IsCachePopulating(waitCtx)
+		if err != nil {
+			return fmt.Errorf("could not check cache status: %w", err)
+		}
+		if !populating {
+			return nil // Cache is ready.
+		}
+
+		s.log.Debug().Msg("cache is being populated, waiting...")
+		select {
+		case <-time.After(pollInterval):
+			// Continue loop.
+		case <-waitCtx.Done():
+			return fmt.Errorf("timed out waiting for cache to be ready: %w", waitCtx.Err())
+		}
+	}
+}
+
+// GetCachedScanResult retrieves a scan result from the cache.
+func (s *Service) GetCachedScanResult(ctx context.Context, key string) (*ScanResult, error) {
+	data, err := s.redis.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	var result ScanResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		s.log.Error().Err(err).Str("key", key).Bytes("data", data).Msg("failed to unmarshal cached scan result")
+		return nil, fmt.Errorf("unmarshal scan result: %w", err)
+	}
+	return &result, nil
+}
+
+// CacheScanResult stores a scan result in the cache. It sanitizes NaN values
+// to nulls to ensure JSON compatibility.
+func (s *Service) CacheScanResult(ctx context.Context, key string, result ScanResult, ttl time.Duration) error {
+	b, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("marshal scan result: %w", err)
+	}
+	// NaN is not valid in standard JSON. Replace it with null.
+	b = bytes.ReplaceAll(b, []byte("NaN"), []byte("null"))
+	return s.redis.SetBytes(ctx, key, b, ttl)
 }

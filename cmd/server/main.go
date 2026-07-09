@@ -30,6 +30,7 @@ import (
 	"tradenexus/internal/signals"
 	"tradenexus/internal/store"
 	"tradenexus/internal/users"
+	"tradenexus/internal/cacher"
 )
 
 func main() {
@@ -104,7 +105,7 @@ func main() {
 
 	// 8) Engine service (scan pipeline + reconciliation + notify).
 	engineSvc := engine.New(
-		candleRepo, signalRepo, instRepo, angelClient, calSvc, dispatcher,
+		candleRepo, signalRepo, instRepo, angelClient, calSvc, dispatcher, rdb,
 		scanner.DefaultPineConfig(),
 		time.Duration(cfg.RetentionDays)*24*time.Hour,
 		log,
@@ -119,6 +120,11 @@ func main() {
 
 	// Paper-trading service.
 	paperSvc := paper.New(pg.Pool, angelClient, candleRepo, instRepo, signalRepo, calSvc, log)
+
+	// Cacher service.
+	cacherSvc := cacher.New(*cfg, log, instRepo, candleRepo, angelClient, rdb, calSvc)
+	cacherSvc.Start()
+	defer cacherSvc.Stop()
 
 	// 8) Scheduler (daily scan + cleanup + startup reconciliation + fill).
 	sched := scheduler.New(engineSvc, paperSvc, scheduler.Config{

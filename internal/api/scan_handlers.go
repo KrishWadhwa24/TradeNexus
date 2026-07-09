@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -34,12 +35,33 @@ func (s *Server) handleSyncScan(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid instrument id"})
 		return
 	}
+
+	// Check cache first.
+	cacheKey := "scan_result:" + strconv.FormatInt(id, 10)
+	if cached, err := s.engine.GetCachedScanResult(r.Context(), cacheKey); err == nil {
+		s.log.Debug().Int64("instrument", id).Msg("scan result cache hit")
+		writeJSON(w, http.StatusOK, cached)
+		return
+	}
+	s.log.Debug().Int64("instrument", id).Msg("scan result cache miss")
+
 	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
-	res, err := s.engine.SyncAndScan(r.Context(), int(id), days)
+
+	// Create a new context with a longer timeout for this specific, long-running operation.
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+
+	res, err := s.engine.SyncAndScan(ctx, int(id), days)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Cache the result for 10 minutes.
+	if err := s.engine.CacheScanResult(r.Context(), cacheKey, res, 10*time.Minute); err != nil {
+		s.log.Error().Err(err).Int64("instrument", id).Msg("failed to cache scan result")
+	}
+
 	writeJSON(w, http.StatusOK, res)
 }
 

@@ -50,7 +50,7 @@ type Config struct {
 
 	// Scanner / scheduler
 	SchedulerEnabled   bool   `env:"SCHEDULER_ENABLED" envDefault:"true"`
-	DailyScanCron      string `env:"DAILY_SCAN_CRON" envDefault:"20 15 * * 1-5"`
+	DailyScanCron      string `env:"DAILY_SCAN_CRON" envDefault:"35 15 * * 1-5"`
 	CleanupCron        string `env:"CLEANUP_CRON" envDefault:"0 1 * * *"`
 	FillScheduledCron  string `env:"FILL_SCHEDULED_CRON" envDefault:"16 9 * * 1-5"`
 	RetentionDays      int    `env:"RETENTION_DAYS" envDefault:"30"`
@@ -65,6 +65,14 @@ type Config struct {
 	// stock+timeframe+day) even if a user hasn't configured their own bot.
 	TelegramDefaultBotToken string `env:"TELEGRAM_DEFAULT_BOT_TOKEN" envDefault:""`
 	TelegramDefaultChatID   string `env:"TELEGRAM_DEFAULT_CHAT_ID" envDefault:""`
+
+	// Caching
+	CacheEnabled      bool          `env:"CACHE_ENABLED" envDefault:"true"`
+	CacheInterval     time.Duration `env:"CACHE_INTERVAL" envDefault:"20m"`
+	CacheTTL          time.Duration `env:"CACHE_TTL" envDefault:"25m"`
+	CacheRequestDelay time.Duration `env:"CACHE_REQUEST_DELAY" envDefault:"300ms"`
+	CacheRetryAmnt    int           `env:"CACHE_RETRY_AMOUNT" envDefault:"3"`
+	CacheRetryDelay   time.Duration `env:"CACHE_RETRY_DELAY" envDefault:"2s"`
 }
 
 // IsLocal reports whether we're running in the local dev profile.
