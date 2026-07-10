@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -68,6 +69,9 @@ type Server struct {
 	paper     *paper.Service
 	live      *live.Hub
 	jwtSecret string
+
+	// scanRunning guards manual scan-all so repeated clicks don't stack.
+	scanRunning atomic.Bool
 }
 
 // NewServer constructs the API server with its dependencies.
@@ -167,7 +171,7 @@ func (s *Server) Router() http.Handler {
 
 			// Admin / ops (Module 6)
 			r.With(middleware.Timeout(35*time.Minute)).Post("/admin/reconcile", s.handleReconcile)
-			r.Post("/admin/scan-all", s.handleScanAll)
+			r.With(middleware.Timeout(35*time.Minute)).Post("/admin/scan-all", s.handleScanAll)
 			r.Post("/admin/cleanup", s.handleCleanup)
 			r.Post("/admin/holidays", s.handleAddHolidays)
 

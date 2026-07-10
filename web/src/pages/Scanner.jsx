@@ -33,11 +33,15 @@ export default function Scanner({ source, pattern, userId }) {
   useEffect(() => { load(); }, [load]);
 
   async function runScan() {
-    setMsg("Reconciling candles and scanning all tracked stocks…");
+    setMsg("Starting scan in background…");
     try {
-      const r = await api.post("/v1/admin/reconcile", {});
-      setMsg(`Reconcile and scan complete (${r.count} stocks). Refreshing…`);
-      load();
+      const r = await api.post("/v1/admin/scan-all", {});
+      if (r.status === "already_running") {
+        setMsg("A scan is already running — hang tight.");
+      } else {
+        setMsg("Scan started. Signals will appear shortly — refreshing in 8s…");
+        setTimeout(load, 8000);
+      }
     } catch (e) {
       setMsg("Scan failed: " + e.message);
     }

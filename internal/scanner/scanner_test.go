@@ -85,7 +85,7 @@ func TestScanPine_ShortSeriesSafe(t *testing.T) {
 
 func TestRun_WiresAllTimeframes(t *testing.T) {
 	c := continuationCandles()
-	rep := Run(c, c, c, DefaultPineConfig())
+	rep := Run(c, c, c, DefaultPineConfig(), true, true, true)
 	if len(rep.Weekly.Details) != 4 {
 		t.Fatalf("engine should populate 4 weekly scanner results")
 	}

@@ -19,8 +19,25 @@ type Pivot struct {
 }
 
 type PatternSignal struct {
-	Buy     bool            `json:"buy"`
-	Reasons map[string]bool `json:"reasons"`
+	Buy        bool            `json:"buy"`
+	Conviction int             `json:"conviction"` // 0-100: share of checks that passed
+	Reasons    map[string]bool `json:"reasons"`
+}
+
+// convictionPct returns the percentage of checks that passed — a strength score
+// surfaced in alerts. A confirmed Buy will always be high; this lets the UI and
+// Telegram show how strongly the pattern matched.
+func convictionPct(reasons map[string]bool) int {
+	if len(reasons) == 0 {
+		return 0
+	}
+	passed := 0
+	for _, ok := range reasons {
+		if ok {
+			passed++
+		}
+	}
+	return int(math.Round(float64(passed) / float64(len(reasons)) * 100))
 }
 
 type PatternTimeframeResult struct {
@@ -35,7 +52,19 @@ type PatternReport struct {
 	Monthly PatternTimeframeResult `json:"monthly"`
 }
 
-func ScanPatternTimeframe(candles []market.Candle, includeRectangle, includeCupHandle bool) PatternTimeframeResult {
+// patternBreakoutIndex returns the bar to treat as the breakout candle. Chart
+// patterns require a CONFIRMED (closed) breakout, so when the last candle is
+// still forming (today's intraday bar, or the current weekly/monthly period)
+// we step back to the last closed bar. Daily Pine and the weekly scanners are
+// unaffected — only these three pattern scanners gate on confirmation.
+func patternBreakoutIndex(n int, lastConfirmed bool) int {
+	if lastConfirmed {
+		return n - 1
+	}
+	return n - 2
+}
+
+func ScanPatternTimeframe(candles []market.Candle, includeRectangle, includeCupHandle, lastConfirmed bool) PatternTimeframeResult {
 	res := PatternTimeframeResult{
 		DowntrendBreakout: newPatternSignal(),
 		Rectangle:         newPatternSignal(),
@@ -44,20 +73,20 @@ func ScanPatternTimeframe(candles []market.Candle, includeRectangle, includeCupH
 	if len(candles) == 0 {
 		return res
 	}
-	res.DowntrendBreakout = ScanDowntrendBreakout(candles)
+	res.DowntrendBreakout = ScanDowntrendBreakout(candles, lastConfirmed)
 	if includeRectangle {
-		res.Rectangle = ScanRectangleConsolidation(candles)
+		res.Rectangle = ScanRectangleConsolidation(candles, lastConfirmed)
 	}
 	if includeCupHandle {
-		res.CupHandle = ScanCupAndHandle(candles)
+		res.CupHandle = ScanCupAndHandle(candles, lastConfirmed)
 	}
 	return res
 }
 
-func ScanDowntrendBreakout(candles []market.Candle) PatternSignal {
+func ScanDowntrendBreakout(candles []market.Candle, lastConfirmed bool) PatternSignal {
 	sig := newPatternSignal()
 	s := toSeries(candles)
-	current := s.n - 1
+	current := patternBreakoutIndex(s.n, lastConfirmed)
 	if current < 1 {
 		return sig
 	}
@@ -66,10 +95,10 @@ func ScanDowntrendBreakout(candles []market.Candle) PatternSignal {
 	return scanDowntrendBreakout(highs, current, s.close, s.volume, rsSlope)
 }
 
-func ScanRectangleConsolidation(candles []market.Candle) PatternSignal {
+func ScanRectangleConsolidation(candles []market.Candle, lastConfirmed bool) PatternSignal {
 	sig := newPatternSignal()
 	s := toSeries(candles)
-	current := s.n - 1
+	current := patternBreakoutIndex(s.n, lastConfirmed)
 	if current < 1 {
 		return sig
 	}
@@ -79,10 +108,10 @@ func ScanRectangleConsolidation(candles []market.Candle) PatternSignal {
 	return scanRectangleConsolidation(uppers, lowers, current, s.close, s.volume)
 }
 
-func ScanCupAndHandle(candles []market.Candle) PatternSignal {
+func ScanCupAndHandle(candles []market.Candle, lastConfirmed bool) PatternSignal {
 	sig := newPatternSignal()
 	s := toSeries(candles)
-	current := s.n - 1
+	current := patternBreakoutIndex(s.n, lastConfirmed)
 	if current < 1 {
 		return sig
 	}
@@ -134,6 +163,7 @@ func scanDowntrendBreakout(highs []Pivot, current int, close, volume []float64, 
 	sig.Reasons["volume_breakout"] = breakout
 	sig.Reasons["rs_slope_positive"] = rsSlope > 0
 	sig.Buy = breakout && sig.Reasons["rs_slope_positive"]
+	sig.Conviction = convictionPct(sig.Reasons)
 	return sig
 }
 
@@ -168,6 +198,7 @@ func scanRectangleConsolidation(uppers, lowers []Pivot, current int, close, volu
 	sig.Reasons["volume_breakout"] = breakout
 	sig.Buy = sig.Reasons["duration"] && sig.Reasons["box_height"] &&
 		sig.Reasons["volume_contraction"] && breakout
+	sig.Conviction = convictionPct(sig.Reasons)
 	return sig
 }
 
@@ -216,6 +247,7 @@ func scanCupAndHandle(pivots []Pivot, current int, close, volume []float64) Patt
 	sig.Buy = sig.Reasons["pivot_sequence"] && sig.Reasons["rim_similarity"] && sig.Reasons["cup_depth"] &&
 		sig.Reasons["duration_symmetry"] && sig.Reasons["handle_above_midcup"] && sig.Reasons["handle_depth"] &&
 		breakout
+	sig.Conviction = convictionPct(sig.Reasons)
 	return sig
 }
 
@@ -348,15 +380,22 @@ func priceSlope(close []float64, i, look int) float64 {
 func findBreakoutCandle(lookback, current int, close, volume []float64, getResistance func(i int) float64) bool {
 	for i := 0; i < lookback; i++ {
 		idx := current - i
-		if idx < 0 || idx >= len(close) || idx >= len(volume) {
+		if idx < 1 || idx >= len(close) || idx >= len(volume) {
 			continue
 		}
-
-		// Calculate the 20-period average volume for THIS specific candle
-		currentAvgVol := avgAt(volume, idx, 20)
 		res := getResistance(idx)
+		if res <= 0 {
+			continue
+		}
+		// Baseline = average volume of the 20 bars BEFORE the breakout bar, so a
+		// genuine volume expansion is measured against the prior range, not diluted
+		// by the breakout bar itself.
+		priorAvgVol := avgRange(volume, idx-20, idx)
+		// Fresh cross: the previous bar was at/below resistance, so this is an
+		// actual breakout and not a stock already extended above the level.
+		freshCross := close[idx-1] <= getResistance(idx-1)
 
-		if close[idx] > res*1.01 && volume[idx] > 1.5*currentAvgVol {
+		if close[idx] > res*1.01 && freshCross && priorAvgVol > 0 && volume[idx] > 1.5*priorAvgVol {
 			return true
 		}
 	}

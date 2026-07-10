@@ -14,6 +14,7 @@ import (
 	"tradenexus/internal/calendar"
 	"tradenexus/internal/candles"
 	"tradenexus/internal/instruments"
+	"tradenexus/internal/intraday"
 	"tradenexus/internal/market"
 	"tradenexus/internal/notify"
 	"tradenexus/internal/scanner"
@@ -28,18 +29,20 @@ type Service struct {
 	angel     *angel.Client
 	cal       *calendar.Service
 	notifier  *notify.Dispatcher // optional; nil disables notifications
+	intraday  *intraday.Cache    // optional; nil disables intraday cache
 	pineCfg   scanner.PineConfig
 	retention time.Duration
 	log       zerolog.Logger
 }
 
-// New builds the engine service. notifier may be nil to disable fan-out.
+// New builds the engine service. notifier and intradayCache may be nil.
 func New(c *candles.Repo, sig *signals.Repo, inst *instruments.Repo, ang *angel.Client,
-	cal *calendar.Service, notifier *notify.Dispatcher, pineCfg scanner.PineConfig,
-	retention time.Duration, log zerolog.Logger) *Service {
+	cal *calendar.Service, notifier *notify.Dispatcher, intradayCache *intraday.Cache,
+	pineCfg scanner.PineConfig, retention time.Duration, log zerolog.Logger) *Service {
 	return &Service{
 		candles: c, signals: sig, inst: inst, angel: ang, cal: cal,
-		notifier: notifier, pineCfg: pineCfg, retention: retention, log: log,
+		notifier: notifier, intraday: intradayCache, pineCfg: pineCfg,
+		retention: retention, log: log,
 	}
 }
 
@@ -50,24 +53,38 @@ type ScanResult struct {
 	SignalsInserted int            `json:"signals_inserted"`
 }
 
-// ScanStored runs the scanner on already-stored candles and persists signals.
+// ScanStored runs the scanner and persists signals. During market hours it
+// appends today's forming candle from the intraday cache to the confirmed daily
+// history, then derives weekly/monthly in-memory so the scan reflects live data.
 func (s *Service) ScanStored(ctx context.Context, instrumentID int64) (ScanResult, error) {
 	daily, err := s.candles.GetDaily(ctx, instrumentID)
 	if err != nil {
 		return ScanResult{}, err
 	}
-	weeklyAgg, err := s.candles.GetAggregates(ctx, instrumentID, market.TF1W)
-	if err != nil {
-		return ScanResult{}, err
-	}
-	monthlyAgg, err := s.candles.GetAggregates(ctx, instrumentID, market.TF1M)
-	if err != nil {
-		return ScanResult{}, err
+
+	// Intraday: while the market is open, splice today's forming candle in.
+	dailyForming := false
+	if s.intraday != nil && s.intraday.MarketOpen(time.Now().In(market.IST)) {
+		if cd, ok, gerr := s.intraday.Get(ctx, instrumentID); gerr == nil && ok {
+			daily = appendToday(daily, cd)
+			dailyForming = true
+		}
 	}
 
+	// Derive higher timeframes from the (possibly intraday-augmented) daily set.
+	weeklyAgg := candles.Weekly(daily)
+	monthlyAgg := candles.Monthly(daily)
 	weekly := market.AggToCandles(weeklyAgg)
 	monthly := market.AggToCandles(monthlyAgg)
-	report := scanner.Run(daily, weekly, monthly, s.pineCfg)
+
+	// Confirmation flags for the pattern scanners (Pine/weekly ignore these):
+	// the daily bar is "confirmed" unless we appended today's forming candle;
+	// the last weekly/monthly bar is confirmed only once its period has closed.
+	dailyConfirmed := !dailyForming
+	weeklyConfirmed := len(weeklyAgg) > 0 && weeklyAgg[len(weeklyAgg)-1].IsConfirmed
+	monthlyConfirmed := len(monthlyAgg) > 0 && monthlyAgg[len(monthlyAgg)-1].IsConfirmed
+
+	report := scanner.Run(daily, weekly, monthly, s.pineCfg, dailyConfirmed, weeklyConfirmed, monthlyConfirmed)
 
 	inserted, err := s.persist(ctx, instrumentID, report, daily, weekly, monthly)
 	if err != nil {
@@ -162,6 +179,7 @@ func (s *Service) persistPatternSignals(add func(signals.Signal) error, instID i
 		if !p.sig.Buy {
 			continue
 		}
+		conv := p.sig.Conviction
 		if err := add(signals.Signal{
 			InstrumentID: instID,
 			Source:       "patterns",
@@ -169,6 +187,7 @@ func (s *Service) persistPatternSignals(add func(signals.Signal) error, instID i
 			Timeframe:    tf,
 			Direction:    "BUY",
 			CandleDate:   date,
+			Confidence:   &conv, // pattern conviction (0-100), shown in alerts
 			Reasons:      p.sig.Reasons,
 		}); err != nil {
 			return err
@@ -200,6 +219,23 @@ func lastTimeOrZero(c []market.Candle) time.Time {
 		return time.Time{}
 	}
 	return lastTime(c)
+}
+
+// appendToday splices today's forming candle onto the confirmed daily history.
+// If the DB already has a bar for today's date it's replaced with the fresher
+// cached value; otherwise the candle is appended.
+func appendToday(daily []market.Candle, today market.Candle) []market.Candle {
+	if len(daily) == 0 {
+		return []market.Candle{today}
+	}
+	last := daily[len(daily)-1]
+	if today.Time.After(last.Time) {
+		return append(daily, today)
+	}
+	if today.Time.Equal(last.Time) {
+		daily[len(daily)-1] = today
+	}
+	return daily
 }
 
 // SyncAndScan fetches `days` of daily history from Angel, stores it, rebuilds
@@ -298,6 +334,13 @@ func (s *Service) Reconcile(ctx context.Context, instrumentID int64) (ReconcileR
 
 // ScanAll scans every tracked instrument from stored candles (no Angel calls).
 func (s *Service) ScanAll(ctx context.Context) ([]ScanResult, error) {
+	// If the market is open and the intraday cache is empty, fill it once first
+	// so this scan uses today's live candle (rather than only DB history).
+	if s.intraday != nil && s.intraday.MarketOpen(time.Now().In(market.IST)) {
+		if err := s.intraday.EnsureBuilt(ctx); err != nil {
+			s.log.Warn().Err(err).Msg("scan-all: intraday cache build failed; using DB only")
+		}
+	}
 	ids, err := s.candles.ListInstrumentIDsWithData(ctx)
 	if err != nil {
 		return nil, err

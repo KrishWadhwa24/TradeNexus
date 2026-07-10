@@ -76,7 +76,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, sig signals.Signal) (Dispatch
 	}
 
 	res := DispatchResult{Recipients: len(recips)}
-	text := formatMessage(sig, symbol)
+	text := formatMessage(sig, symbol, d.cmp(ctx, sig.InstrumentID))
 
 	for _, r := range recips {
 		dup, err := d.alreadyDelivered(ctx, r.UserID, sig)
@@ -178,6 +178,15 @@ func (d *Dispatcher) recordDelivery(ctx context.Context, userID string, sig sign
 	return err
 }
 
+// cmp returns the latest stored daily close as an approximate current price.
+func (d *Dispatcher) cmp(ctx context.Context, instrumentID int64) float64 {
+	var px float64
+	_ = d.pool.QueryRow(ctx,
+		`SELECT close FROM daily_candles WHERE instrument_id = $1 ORDER BY trade_date DESC LIMIT 1`,
+		instrumentID).Scan(&px)
+	return px
+}
+
 func (d *Dispatcher) symbol(ctx context.Context, instrumentID int64) string {
 	var sym string
 	_ = d.pool.QueryRow(ctx, `SELECT trading_symbol FROM instruments WHERE id = $1`, instrumentID).Scan(&sym)
@@ -198,39 +207,72 @@ func ScannerKeys(sig signals.Signal) []string {
 	return strings.Split(sig.ScannerName, ",") // weekly_1..weekly_4
 }
 
-func formatMessage(sig signals.Signal, symbol string) string {
+// tfLabel maps 1D/1W/1M to a readable timeframe name.
+func tfLabel(tf string) string {
+	switch tf {
+	case "1D":
+		return "Daily"
+	case "1W":
+		return "Weekly"
+	case "1M":
+		return "Monthly"
+	default:
+		return tf
+	}
+}
+
+// formatMessage builds a clean, lightly-decorated Telegram alert.
+func formatMessage(sig signals.Signal, symbol string, cmp float64) string {
 	var b strings.Builder
 
-	// Direction with emoji
-	direction := strings.ToUpper(sig.Direction)
-	if sig.Direction == "BUY" {
-		fmt.Fprintf(&b, "🟢 %s Signal — %s\n", direction, symbol)
-	} else {
-		fmt.Fprintf(&b, "🔴 %s Signal — %s\n", direction, symbol)
+	mark := "🟢"
+	if strings.ToUpper(sig.Direction) != "BUY" {
+		mark = "🔴"
+	}
+	fmt.Fprintf(&b, "%s  %s  ·  %s  ·  %s\n", mark, strings.ToUpper(sig.Direction), symbol, tfLabel(sig.Timeframe))
+	b.WriteString("──────────────\n")
+
+	fmt.Fprintf(&b, "Scanner   : %s\n", prettyScanner(sig))
+	if cmp > 0 {
+		fmt.Fprintf(&b, "CMP       : ₹%.2f\n", cmp)
 	}
 
-	// Strategy, Timeframe
-	fmt.Fprintf(&b, "Strategy: %s (%s)\n", sig.Source, sig.ScannerName)
-	fmt.Fprintf(&b, "Timeframe: %s\n", sig.Timeframe)
-
-	// Conviction/Confidence
+	// Conviction: weekly = N/4, patterns/others = confidence if present.
 	if sig.Source == "weekly" && sig.Confidence != nil {
-		conviction := float64(*sig.Confidence) / 4.0 * 100
-		fmt.Fprintf(&b, "Conviction: %.0f%%\n", conviction)
+		fmt.Fprintf(&b, "Conviction: %d/4  (%.0f%%)\n", *sig.Confidence, float64(*sig.Confidence)/4.0*100)
 	} else if sig.Confidence != nil {
-		fmt.Fprintf(&b, "Confidence: %d/4\n", *sig.Confidence)
+		fmt.Fprintf(&b, "Conviction: %d\n", *sig.Confidence)
 	}
-
-	// RSI, Volume
 	if sig.RSI != nil {
-		fmt.Fprintf(&b, "RSI: %.2f\n", *sig.RSI)
+		fmt.Fprintf(&b, "RSI(14)   : %.1f\n", *sig.RSI)
 	}
 	if sig.Volume != nil {
-		fmt.Fprintf(&b, "Volume: %.0f\n", *sig.Volume)
+		fmt.Fprintf(&b, "Volume    : %s\n", humanVol(*sig.Volume))
 	}
-
-	fmt.Fprintf(&b, "Candle date: %s", sig.CandleDate.Format("2006-01-02"))
+	fmt.Fprintf(&b, "Candle    : %s", sig.CandleDate.Format("02 Jan 2006"))
 	return b.String()
+}
+
+// prettyScanner renders a friendly scanner label.
+func prettyScanner(sig signals.Signal) string {
+	if sig.Source == "pine" {
+		return "Chase Momentum (Pine)"
+	}
+	return sig.ScannerName
+}
+
+// humanVol formats large volumes compactly (e.g. 1.2M, 845K).
+func humanVol(v float64) string {
+	switch {
+	case v >= 1e7:
+		return fmt.Sprintf("%.2fCr", v/1e7)
+	case v >= 1e5:
+		return fmt.Sprintf("%.2fL", v/1e5)
+	case v >= 1e3:
+		return fmt.Sprintf("%.1fK", v/1e3)
+	default:
+		return fmt.Sprintf("%.0f", v)
+	}
 }
 
 func dateOnly(t time.Time) time.Time {

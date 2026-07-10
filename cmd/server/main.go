@@ -20,6 +20,7 @@ import (
 	"tradenexus/internal/config"
 	"tradenexus/internal/engine"
 	"tradenexus/internal/instruments"
+	"tradenexus/internal/intraday"
 	"tradenexus/internal/live"
 	"tradenexus/internal/logger"
 	"tradenexus/internal/notify"
@@ -102,9 +103,18 @@ func main() {
 		)
 	}
 
-	// 8) Engine service (scan pipeline + reconciliation + notify).
+	// Intraday cache (today's forming candle in Redis, market hours only).
+	var intradayCache *intraday.Cache
+	if cfg.IntradayCacheEnabled {
+		intradayCache = intraday.New(
+			rdb.Client, angelClient, instRepo, candleRepo, calSvc,
+			cfg.IntradayCacheInterval+5*time.Minute, log,
+		)
+	}
+
+	// 8) Engine service (scan pipeline + reconciliation + notify + intraday).
 	engineSvc := engine.New(
-		candleRepo, signalRepo, instRepo, angelClient, calSvc, dispatcher,
+		candleRepo, signalRepo, instRepo, angelClient, calSvc, dispatcher, intradayCache,
 		scanner.DefaultPineConfig(),
 		time.Duration(cfg.RetentionDays)*24*time.Hour,
 		log,
@@ -121,11 +131,12 @@ func main() {
 	paperSvc := paper.New(pg.Pool, angelClient, candleRepo, instRepo, signalRepo, calSvc, log)
 
 	// 8) Scheduler (daily scan + cleanup + startup reconciliation + fill).
-	sched := scheduler.New(engineSvc, paperSvc, scheduler.Config{
+	sched := scheduler.New(engineSvc, paperSvc, intradayCache, scheduler.Config{
 		Enabled:            cfg.SchedulerEnabled,
 		DailyScanCron:      cfg.DailyScanCron,
 		CleanupCron:        cfg.CleanupCron,
 		FillScheduledCron:  cfg.FillScheduledCron,
+		IntradayInterval:   cfg.IntradayCacheInterval,
 		RunReconcileOnBoot: cfg.ReconcileOnStartup,
 	}, log)
 	if err := sched.Start(ctx); err != nil {

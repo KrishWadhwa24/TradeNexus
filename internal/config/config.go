@@ -50,11 +50,15 @@ type Config struct {
 
 	// Scanner / scheduler
 	SchedulerEnabled   bool   `env:"SCHEDULER_ENABLED" envDefault:"true"`
-	DailyScanCron      string `env:"DAILY_SCAN_CRON" envDefault:"20 15 * * 1-5"`
+	DailyScanCron      string `env:"DAILY_SCAN_CRON" envDefault:"0 16 * * 1-5"`
 	CleanupCron        string `env:"CLEANUP_CRON" envDefault:"0 1 * * *"`
 	FillScheduledCron  string `env:"FILL_SCHEDULED_CRON" envDefault:"16 9 * * 1-5"`
 	RetentionDays      int    `env:"RETENTION_DAYS" envDefault:"30"`
 	ReconcileOnStartup bool   `env:"RECONCILE_ON_STARTUP" envDefault:"true"`
+
+	// Intraday cache (today's forming candle in Redis, market hours only)
+	IntradayCacheEnabled  bool          `env:"INTRADAY_CACHE_ENABLED" envDefault:"true"`
+	IntradayCacheInterval time.Duration `env:"INTRADAY_CACHE_INTERVAL" envDefault:"20m"`
 
 	// Notifications (Module 7)
 	NotifyEnabled    bool   `env:"NOTIFY_ENABLED" envDefault:"true"`
