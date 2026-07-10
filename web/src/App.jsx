@@ -40,7 +40,7 @@ const TITLES = {
 
 export default function App() {
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "dark");
-  const [view, setView] = useState("home");
+  const [view, setView] = useState(localStorage.getItem("view") || "home");
   const [menuOpen, setMenuOpen] = useState(false);
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem("user") || "null"); } catch { return null; }
@@ -51,6 +51,11 @@ export default function App() {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("theme", theme);
   }, [theme]);
+
+  // Remember the active page so a refresh reopens where you were.
+  useEffect(() => {
+    localStorage.setItem("view", view);
+  }, [view]);
 
   useEffect(() => {
     const onExpire = () => { setUser(null); localStorage.removeItem("user"); };
