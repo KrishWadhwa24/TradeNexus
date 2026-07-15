@@ -238,8 +238,25 @@ func appendToday(daily []market.Candle, today market.Candle) []market.Candle {
 	return daily
 }
 
-// SyncAndScan fetches `days` of daily history from Angel, stores it, rebuilds
-// aggregates, and scans.
+// marketCloseBufferMin is the grace period after the 15:30 IST close before a
+// daily candle is treated as finalized (Angel's EOD data can lag the bell).
+const marketCloseBufferMin = 15
+
+// dropAfter removes any candle whose date is after cutoff. Used so a still-
+// forming (intraday) candle is never persisted to Postgres — today's live
+// candle lives only in the Redis intraday cache until the session closes.
+func dropAfter(cs []market.Candle, cutoff time.Time) []market.Candle {
+	out := make([]market.Candle, 0, len(cs))
+	for _, c := range cs {
+		if !c.Time.After(cutoff) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// SyncAndScan fetches `days` of daily history from Angel, stores only the
+// finalized (closed) candles, rebuilds aggregates, and scans.
 func (s *Service) SyncAndScan(ctx context.Context, instrumentID, days int) (ScanResult, error) {
 	inst, err := s.inst.GetByID(ctx, int64(instrumentID))
 	if err != nil {
@@ -251,13 +268,15 @@ func (s *Service) SyncAndScan(ctx context.Context, instrumentID, days int) (Scan
 	if days > 2000 {
 		days = 2000
 	}
-	to := time.Now().In(market.IST)
-	from := to.AddDate(0, 0, -(days*7/5 + 10))
+	now := time.Now().In(market.IST)
+	from := now.AddDate(0, 0, -(days*7/5 + 10))
 
-	fetched, err := s.angel.GetDailyCandles(ctx, inst.Exchange, inst.SymbolToken, from, to)
+	fetched, err := s.angel.GetDailyCandles(ctx, inst.Exchange, inst.SymbolToken, from, now)
 	if err != nil {
 		return ScanResult{}, err
 	}
+	// Never store today's unclosed candle — keep only finalized bars.
+	fetched = dropAfter(fetched, s.cal.Cal().LastFinalizedTradingDay(now, marketCloseBufferMin))
 	if _, err := s.candles.UpsertDaily(ctx, int64(instrumentID), fetched); err != nil {
 		return ScanResult{}, err
 	}
@@ -297,8 +316,12 @@ func (s *Service) Reconcile(ctx context.Context, instrumentID int64) (ReconcileR
 		return ReconcileResult{InstrumentID: instrumentID, Fetched: -1, SignalsInserted: res.SignalsInserted, Bootstrapped: true}, nil
 	}
 
-	today := time.Now().In(market.IST)
-	missing := s.cal.Cal().MissingTradingDays(first.AddDate(0, 0, -1), today, set)
+	now := time.Now().In(market.IST)
+	// Only consider days whose session has fully closed. Today (while the market
+	// is open, or before the close buffer) is deliberately excluded so a partial
+	// candle is never treated as missing nor persisted.
+	cutoff := s.cal.Cal().LastFinalizedTradingDay(now, marketCloseBufferMin)
+	missing := s.cal.Cal().MissingTradingDays(first.AddDate(0, 0, -1), cutoff, set)
 
 	// Nothing missing — still re-scan so the forming weekly/monthly bar updates.
 	if len(missing) == 0 {
@@ -310,10 +333,12 @@ func (s *Service) Reconcile(ctx context.Context, instrumentID int64) (ReconcileR
 	}
 
 	from := missing[0]
-	fetched, err := s.angel.GetDailyCandles(ctx, inst.Exchange, inst.SymbolToken, from, today)
+	fetched, err := s.angel.GetDailyCandles(ctx, inst.Exchange, inst.SymbolToken, from, now)
 	if err != nil {
 		return ReconcileResult{}, err
 	}
+	// Store only finalized candles — drop today's forming bar if present.
+	fetched = dropAfter(fetched, cutoff)
 	if _, err := s.candles.UpsertDaily(ctx, instrumentID, fetched); err != nil {
 		return ReconcileResult{}, err
 	}
