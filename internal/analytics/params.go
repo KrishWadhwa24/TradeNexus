@@ -23,6 +23,7 @@ type Params struct {
 	RSI14        float64 `json:"rsi14"`
 	ATR14        float64 `json:"atr14"`
 	VolSMA20     float64 `json:"vol_sma20"`
+	HasData      bool    `json:"has_data"` // false when no daily candles are stored
 }
 
 // ComputeParams derives the latest daily indicator values from daily candles.
@@ -31,8 +32,9 @@ func ComputeParams(daily []market.Candle) Params {
 	var p Params
 	n := len(daily)
 	if n == 0 {
-		return p
+		return p // HasData stays false
 	}
+	p.HasData = true
 	closes := make([]float64, n)
 	highs := make([]float64, n)
 	lows := make([]float64, n)

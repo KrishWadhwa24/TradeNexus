@@ -12,6 +12,13 @@ export default function Admin() {
   const [busy, setBusy] = useState("");     // "" | "count" | "delete" | "refetch"
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  // Stock candle lookup
+  const [sq, setSq] = useState("");
+  const [sresults, setSresults] = useState([]);
+  const [cov, setCov] = useState(null);
+  const [covErr, setCovErr] = useState("");
+  const [covBusy, setCovBusy] = useState(false);
+
   async function check() {
     setBusy("count"); setErr(""); setMsg("");
     try {
@@ -44,8 +51,71 @@ export default function Admin() {
     finally { setBusy(""); }
   }
 
+  async function searchStock(e) {
+    const v = e.target.value;
+    setSq(v);
+    if (v.trim().length < 1) { setSresults([]); return; }
+    try {
+      const r = await api.get(`/v1/instruments/search?q=${encodeURIComponent(v)}&limit=12`);
+      setSresults(r.instruments || []);
+    } catch { setSresults([]); }
+  }
+
+  async function lookup(inst) {
+    setCovBusy(true); setCovErr(""); setCov(null);
+    setSq(inst.trading_symbol); setSresults([]);
+    try {
+      const c = await api.get(`/v1/instruments/${inst.id}/coverage`);
+      setCov({ ...c, _symbol: inst.trading_symbol, _name: inst.name, _exchange: inst.exchange });
+    } catch (e) { setCovErr(e.message); }
+    finally { setCovBusy(false); }
+  }
+
   return (
     <div>
+      <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+        <div className="section-title" style={{ margin: "0 0 6px" }}>Stock candle lookup</div>
+        <div className="subtle" style={{ marginBottom: 14 }}>
+          Search a stock to see how many candles are stored for it and the date range covered.
+        </div>
+        <input
+          style={{ width: "100%", maxWidth: 460 }}
+          placeholder="Search NSE/BSE stocks (e.g. RELI, TATA)…"
+          value={sq}
+          onChange={searchStock}
+        />
+        {covBusy && <span className="subtle" style={{ marginLeft: 10 }}>loading…</span>}
+        {sresults.length > 0 && (
+          <div className="search-results" style={{ maxWidth: 460 }}>
+            {sresults.map((r) => (
+              <div className="search-row" key={r.id}>
+                <div><b>{r.trading_symbol}</b> <span className="subtle">{r.name}</span></div>
+                <button className="btn-sm pill" onClick={() => lookup(r)}>Lookup</button>
+              </div>
+            ))}
+          </div>
+        )}
+        {covErr && <div className="err" style={{ marginTop: 12 }}>{covErr}</div>}
+        {cov && (
+          <div style={{ marginTop: 16 }}>
+            <div className="section-title" style={{ margin: "0 0 10px" }}>
+              {cov._symbol} <span className="subtle">{cov._exchange}{cov._name ? " · " + cov._name : ""}</span>
+            </div>
+            <div className="cards">
+              <div className="card"><div className="label">Daily candles</div><div className="value">{cov.daily_candles ?? 0}</div></div>
+              <div className="card"><div className="label">Weekly</div><div className="value">{cov.weekly_candles ?? 0}</div></div>
+              <div className="card"><div className="label">Monthly</div><div className="value">{cov.monthly_candles ?? 0}</div></div>
+              <div className="card"><div className="label">Missing days</div><div className="value">{cov.missing_trading_days ?? 0}</div></div>
+            </div>
+            <div className="subtle" style={{ marginTop: 12 }}>
+              {cov.has_data
+                ? `Range: ${cov.first_date || "—"} → ${cov.last_date || "—"} (target ${cov.target_daily_bars} bars)`
+                : "No candles stored yet for this stock."}
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
         <div className="section-title" style={{ margin: "0 0 6px" }}>Candle tools</div>
         <div className="subtle" style={{ marginBottom: 16 }}>

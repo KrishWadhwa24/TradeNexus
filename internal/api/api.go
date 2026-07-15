@@ -144,7 +144,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(s.requestLogger)
 	r.Use(middleware.Recoverer)
-	r.Use(timeoutExcept(30*time.Second, "/live-prices", "/admin/reconcile"))
+	r.Use(timeoutExcept(30*time.Second, "/live-prices", "/admin/reconcile", "/candles/sync", "/sync-scan", "/admin/candles/refetch"))
 
 	r.Get("/health", s.handleHealth)
 	r.Get("/health/ready", s.handleReady)
@@ -174,13 +174,14 @@ func (s *Server) Router() http.Handler {
 			r.Get("/instruments/search", s.handleInstrumentSearch)
 			r.Get("/instruments/{id}", s.handleInstrumentGet)
 
-			// Candles (Module 3)
-			r.Post("/instruments/{id}/candles/sync", s.handleCandleSync)
+			// Candles (Module 3). Sync fetches from Angel (rate-limited) so it gets
+			// a longer timeout than the 30s default.
+			r.With(middleware.Timeout(3*time.Minute)).Post("/instruments/{id}/candles/sync", s.handleCandleSync)
 			r.Get("/instruments/{id}/candles", s.handleCandleGet)
 
 			// Scanning + signals (Modules 4-6)
 			r.Post("/instruments/{id}/scan", s.handleScanInstrument)
-			r.Post("/instruments/{id}/sync-scan", s.handleSyncScan)
+			r.With(middleware.Timeout(3*time.Minute)).Post("/instruments/{id}/sync-scan", s.handleSyncScan)
 			r.Get("/signals", s.handleSignalsList)
 
 			// Calendar (Module 6)

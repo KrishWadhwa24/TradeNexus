@@ -56,6 +56,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
+			// Skip stocks with no stored candles (e.g. a failed history fetch) —
+			// they'd otherwise show as all-zero rows in the dashboard.
+			if !p.HasData {
+				continue
+			}
 			out = append(out, p)
 		}
 	}

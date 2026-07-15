@@ -86,7 +86,16 @@ async function req(method, path, body) {
   } catch {
     data = text;
   }
-  if (!res.ok) throw new Error((data && data.error) || res.statusText || "request failed");
+  if (!res.ok) {
+    // Surface the most specific detail we have: server {error}, raw body text,
+    // or the HTTP status — never a bare "request failed" that hides the cause.
+    const detail =
+      (data && data.error) ||
+      (typeof data === "string" && data.trim()) ||
+      res.statusText ||
+      "request failed";
+    throw new Error(`HTTP ${res.status}: ${detail}`);
+  }
   return data;
 }
 

@@ -13,6 +13,7 @@ export default function Watchlist({ userId }) {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [syncRetry, setSyncRetry] = useState(null); // instrument whose history sync failed
 
   const load = useCallback(async (preferredWid = "") => {
     setErr("");
@@ -52,23 +53,51 @@ export default function Watchlist({ userId }) {
     if (!wid) return;
     setBusy(true);
     setMsg("");
+    setSyncRetry(null);
+
+    // 1) Add to the watchlist. Only THIS failing is a real "add failed".
     try {
       await api.post(`/v1/watchlists/${wid}/items`, { instrument_id: inst.id });
+    } catch (e) {
+      setMsg(`Failed to add ${inst.trading_symbol}: ${e.message}`);
+      setBusy(false);
+      return;
+    }
+    setQ(""); setResults([]);
+
+    // 2) Fetch history — best-effort. A slow/failed sync must NOT read as an
+    //    add failure. On failure we surface a Retry action.
+    setMsg(`${inst.trading_symbol} added. Fetching history…`);
+    await syncHistory(inst);
+    await load(wid);
+    setBusy(false);
+  }
+
+  // syncHistory pulls daily history for a freshly-added instrument. Safe to
+  // re-run (skips when history already exists).
+  async function syncHistory(inst) {
+    try {
       const cov = await api.get(`/v1/instruments/${inst.id}/coverage`);
       if (cov.has_data) {
-        setMsg(`${inst.trading_symbol} added. History already exists, so sync was skipped.`);
-      } else {
-        setMsg(`Added ${inst.trading_symbol}. Fetching history…`);
-        await api.post(`/v1/instruments/${inst.id}/candles/sync?days=1300`);
-        setMsg(`${inst.trading_symbol} added and synced.`);
+        setMsg(`${inst.trading_symbol} added. History already present (${cov.daily_candles} daily candles).`);
+        setSyncRetry(null);
+        return;
       }
-      setQ(""); setResults([]);
-      load(wid);
+      const r = await api.post(`/v1/instruments/${inst.id}/candles/sync?days=1300`);
+      setMsg(`${inst.trading_symbol} added and synced (${r.daily_stored} daily candles).`);
+      setSyncRetry(null);
     } catch (e) {
-      setMsg("Failed: " + e.message);
-    } finally {
-      setBusy(false);
+      setMsg(`${inst.trading_symbol} added, but history didn't load (${e.message}).`);
+      setSyncRetry(inst); // offer a retry button
     }
+  }
+
+  async function retrySync() {
+    if (!syncRetry) return;
+    setBusy(true);
+    await syncHistory(syncRetry);
+    await load(wid);
+    setBusy(false);
   }
 
   async function createWatchlist(e) {
@@ -164,7 +193,16 @@ export default function Watchlist({ userId }) {
           disabled={!wid}
         />
         {busy && <span className="subtle" style={{ marginLeft: 10 }}>working…</span>}
-        {msg && <div className="msg" style={{ marginTop: 8 }}>{msg}</div>}
+        {msg && (
+          <div className="msg" style={{ marginTop: 8 }}>
+            {msg}
+            {syncRetry && (
+              <button className="btn-sm" style={{ marginLeft: 10 }} onClick={retrySync} disabled={busy}>
+                Retry history sync
+              </button>
+            )}
+          </div>
+        )}
         {results.length > 0 && (
           <div className="search-results" style={{ maxWidth: 460 }}>
             {results.map((r) => (
