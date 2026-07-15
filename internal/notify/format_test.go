@@ -51,7 +51,10 @@ func TestFormatMessage_WeeklyContainsKeyFields(t *testing.T) {
 	}
 	msg := formatMessage(sig, "RELIANCE-EQ", 2845.30)
 
-	for _, want := range []string{"RELIANCE-EQ", "Weekly", "BUY", "CMP", "2845.30", "3/4", "63.4", "weekly_1,weekly_3"} {
+	for _, want := range []string{
+		"RELIANCE-EQ", "Weekly Confluence", "BUY", "💰 Price", "2845.30",
+		"3 of 4", "63.4", "⚡ Conviction: HIGH", "52-wk high breakout + EMA stack",
+	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message missing %q\n---\n%s", want, msg)
 		}
@@ -69,12 +72,15 @@ func TestFormatMessage_PineNoConfidenceNoCMPWhenZero(t *testing.T) {
 		Direction: "SELL",
 		CandleDate: time.Date(2026, 7, 3, 0, 0, 0, 0, time.UTC),
 	}
-	msg := formatMessage(sig, "TCS-EQ", 0) // cmp=0 → omitted
-	if strings.Contains(msg, "CMP") {
-		t.Errorf("CMP line should be omitted when price is 0:\n%s", msg)
+	msg := formatMessage(sig, "TCS-EQ", 0) // cmp=0 → Price line omitted
+	if strings.Contains(msg, "💰 Price") {
+		t.Errorf("Price line should be omitted when price is 0:\n%s", msg)
 	}
-	if !strings.Contains(msg, "Chase Momentum") {
-		t.Errorf("pine signal should show friendly scanner name:\n%s", msg)
+	if !strings.Contains(msg, "Pine Script Momentum") {
+		t.Errorf("pine signal should show its strategy name:\n%s", msg)
+	}
+	if !strings.Contains(msg, "Bearish stack") {
+		t.Errorf("SELL pine signal should show bearish trend stack:\n%s", msg)
 	}
 	if !strings.HasPrefix(msg, "🔴") {
 		t.Errorf("SELL message should start with red marker")

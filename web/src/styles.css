@@ -1144,3 +1144,33 @@ code {
   font-size: 13px;
   text-align: center;
 }
+
+/* ---------- Admin "fire again" button (Audit) ---------- */
+.fire-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 35%, transparent);
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+}
+
+.fire-btn:hover {
+  border-color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 16%, transparent);
+}
+
+.fire-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.fire-btn:disabled {
+  opacity: .6;
+  cursor: default;
+}

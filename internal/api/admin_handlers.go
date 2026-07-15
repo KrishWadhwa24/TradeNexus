@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"time"
 
 	"tradenexus/internal/market"
@@ -91,4 +92,30 @@ func (s *Server) handleRefetchCandlesByDate(w http.ResponseWriter, r *http.Reque
 		"date":   d.Format("2006-01-02"),
 		"message": "refetch started in background",
 	})
+}
+
+// POST /v1/admin/dispatch/force?signal_id=1 — re-send a stored signal to all of
+// its current recipients + the safety-net chat, IGNORING dedup and the freshness
+// window. Backs the admin "fire again" button in the Audit view. Admin only.
+func (s *Server) handleForceDispatch(w http.ResponseWriter, r *http.Request) {
+	if s.notifier == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "notifications disabled (NOTIFY_ENABLED=false)"})
+		return
+	}
+	id, err := strconv.ParseInt(r.URL.Query().Get("signal_id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "signal_id query param required"})
+		return
+	}
+	sig, err := s.signals.GetByID(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	res, err := s.notifier.ForceResend(r.Context(), sig)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }

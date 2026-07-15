@@ -14,6 +14,7 @@ export const Icon = {
   menu: () => (<svg viewBox="0 0 24 24" {...s}><path d="M4 6h16M4 12h16M4 18h16" /></svg>),
   shield: () => (<svg viewBox="0 0 24 24" {...s}><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z" /><path d="M9 12l2 2 4-4" /></svg>),
   search: () => (<svg viewBox="0 0 24 24" {...s}><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.2-3.2" /></svg>),
+  fire: () => (<svg viewBox="0 0 24 24" {...s}><path d="M12 3c1 3-1.5 4.5-1.5 7A2.5 2.5 0 0 0 13 12c.3-1 .2-1.8-.2-2.5 2 1 3.7 3.2 3.7 6a4.5 4.5 0 1 1-9 0c0-2.2 1.3-3.7 2-5 .8-1.5 1.3-3.7 1.7-4.5Z" /></svg>),
   close: () => (<svg viewBox="0 0 24 24" {...s}><path d="M6 6l12 12M18 6L6 18" /></svg>),
   sun: () => (<svg viewBox="0 0 24 24" {...s}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19" /></svg>),
   moon: () => (<svg viewBox="0 0 24 24" {...s}><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8Z" /></svg>),

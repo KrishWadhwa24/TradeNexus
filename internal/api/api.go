@@ -198,6 +198,7 @@ func (s *Server) Router() http.Handler {
 				r.Get("/admin/candles", s.handleCandleCountByDate)
 				r.Delete("/admin/candles", s.handleDeleteCandlesByDate)
 				r.With(middleware.Timeout(65*time.Minute)).Post("/admin/candles/refetch", s.handleRefetchCandlesByDate)
+				r.Post("/admin/dispatch/force", s.handleForceDispatch)
 			})
 
 			// Users, watchlists, prefs, telegram (Module 7)

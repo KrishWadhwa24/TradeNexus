@@ -208,7 +208,7 @@ func pineSignal(instID int64, tf string, date time.Time, sig scanner.PineSignal)
 	if sig.Sell {
 		dir = "SELL"
 	}
-	return signals.Signal{
+	out := signals.Signal{
 		InstrumentID: instID,
 		Source:       "pine",
 		ScannerName:  "pine",
@@ -216,7 +216,18 @@ func pineSignal(instID int64, tf string, date time.Time, sig scanner.PineSignal)
 		Direction:    dir,
 		CandleDate:   date,
 		Reasons:      sig.Reasons,
+		Metrics:      sig.Metrics,
 	}
+	// Surface RSI/volume as dedicated fields too (used by the audit UI + alerts).
+	if v, ok := sig.Metrics["rsi"]; ok {
+		rsi := v
+		out.RSI = &rsi
+	}
+	if v, ok := sig.Metrics["volume"]; ok {
+		vol := v
+		out.Volume = &vol
+	}
+	return out
 }
 
 func lastTime(c []market.Candle) time.Time { return c[len(c)-1].Time }
