@@ -40,6 +40,21 @@ func TestDropAfter(t *testing.T) {
 	}
 }
 
+func TestOnlyDate(t *testing.T) {
+	cs := []market.Candle{
+		day(2026, 7, 8, 90),
+		day(2026, 7, 9, 95),
+		day(2026, 7, 10, 100),
+	}
+	got := onlyDate(cs, day(2026, 7, 9, 0).Time)
+	if len(got) != 1 || got[0].Close != 95 {
+		t.Fatalf("onlyDate should keep exactly 7/9 (close 95), got %+v", got)
+	}
+	if none := onlyDate(cs, day(2026, 7, 1, 0).Time); len(none) != 0 {
+		t.Fatalf("no matching date should be empty, got %d", len(none))
+	}
+}
+
 func TestAppendToday_Empty(t *testing.T) {
 	td := day(2026, 7, 10, 100)
 	got := appendToday(nil, td)

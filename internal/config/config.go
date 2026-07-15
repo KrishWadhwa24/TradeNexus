@@ -45,8 +45,16 @@ type Config struct {
 	// Exchange / calendar
 	Exchange string `env:"EXCHANGE" envDefault:"NSE"`
 
+	// MarketCloseBufferMin is the grace period (minutes) after the 15:30 IST
+	// close before a daily candle is treated as finalized (Angel EOD lag).
+	MarketCloseBufferMin int `env:"MARKET_CLOSE_BUFFER_MIN" envDefault:"15"`
+
 	// Auth
 	JWTSecret string `env:"JWT_SECRET" envDefault:"dev-change-me-please"`
+
+	// Admin bootstrap: if both are set, an admin account is upserted on boot.
+	AdminEmail    string `env:"ADMIN_EMAIL" envDefault:""`
+	AdminPassword string `env:"ADMIN_PASSWORD" envDefault:""`
 
 	// Scanner / scheduler
 	SchedulerEnabled   bool   `env:"SCHEDULER_ENABLED" envDefault:"true"`

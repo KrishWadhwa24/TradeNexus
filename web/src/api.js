@@ -123,6 +123,22 @@ export const authApi = {
   register: (email, password) => req("POST", "/v1/auth/register", { email, password }),
 };
 
+// convLevel maps a signal's confidence to "low" | "med" | "high" so the UI can
+// colour-code it. Weekly scanners are on a 1–4 scale; pattern conviction is
+// 0–100. Returns null when there's no value to show.
+export function convLevel(source, value) {
+  if (value === null || value === undefined) return null;
+  if (source === "weekly") return value >= 3 ? "high" : value === 2 ? "med" : "low";
+  return value >= 70 ? "high" : value >= 40 ? "med" : "low"; // patterns / conviction
+}
+
+// convLabel is the text shown inside the badge for a given source.
+export function convLabel(source, value) {
+  if (value === null || value === undefined) return "—";
+  if (source === "weekly") return value + "/4";
+  return value + "%"; // pattern conviction
+}
+
 // Formatting helpers.
 export const fmt = (n, d = 2) =>
   n === null || n === undefined || isNaN(n) ? "—" : Number(n).toFixed(d);

@@ -15,6 +15,7 @@ import (
 	"tradenexus/internal/analytics"
 	"tradenexus/internal/angel"
 	"tradenexus/internal/api"
+	"tradenexus/internal/auth"
 	"tradenexus/internal/calendar"
 	"tradenexus/internal/candles"
 	"tradenexus/internal/config"
@@ -88,6 +89,21 @@ func main() {
 	signalRepo := signals.NewRepo(pg.Pool)
 	userRepo := users.NewRepo(pg.Pool)
 
+	// Seed the admin account from env (idempotent). Refreshes the password each
+	// boot so ADMIN_PASSWORD is always the source of truth.
+	if cfg.AdminEmail != "" && cfg.AdminPassword != "" {
+		hash, herr := auth.HashPassword(cfg.AdminPassword)
+		if herr != nil {
+			log.Fatal().Err(herr).Msg("hash admin password")
+		}
+		if _, aerr := userRepo.EnsureAdmin(ctx, cfg.AdminEmail, hash); aerr != nil {
+			log.Fatal().Err(aerr).Msg("seed admin user")
+		}
+		log.Info().Str("email", cfg.AdminEmail).Msg("admin account ready")
+	} else {
+		log.Warn().Msg("ADMIN_EMAIL/ADMIN_PASSWORD not set — admin tools disabled")
+	}
+
 	// 6) Calendar (load holidays from DB).
 	calSvc := calendar.NewService(pg.Pool, cfg.Exchange)
 	if err := calSvc.Reload(ctx); err != nil {
@@ -117,6 +133,7 @@ func main() {
 		candleRepo, signalRepo, instRepo, angelClient, calSvc, dispatcher, intradayCache,
 		scanner.DefaultPineConfig(),
 		time.Duration(cfg.RetentionDays)*24*time.Hour,
+		cfg.MarketCloseBufferMin,
 		log,
 	)
 

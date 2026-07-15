@@ -44,6 +44,46 @@ func (r *Repo) UpsertDaily(ctx context.Context, instrumentID int64, cs []market.
 	return len(cs), nil
 }
 
+// CountByDate returns how many instruments have a stored daily candle on the
+// given date (one row per instrument, so this is also the row count). Used by
+// the admin candle tools to inspect/diagnose a specific trading day.
+func (r *Repo) CountByDate(ctx context.Context, date time.Time) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx,
+		`SELECT count(*) FROM daily_candles WHERE trade_date = $1`, date).Scan(&n)
+	return n, err
+}
+
+// InstrumentIDsByDate returns the instrument ids that have a candle on date.
+func (r *Repo) InstrumentIDsByDate(ctx context.Context, date time.Time) ([]int64, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT instrument_id FROM daily_candles WHERE trade_date = $1 ORDER BY instrument_id`, date)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// DeleteByDate removes every daily candle on the given date and returns how many
+// rows were deleted. Aggregates for affected instruments are rebuilt separately
+// (or on the next reconcile).
+func (r *Repo) DeleteByDate(ctx context.Context, date time.Time) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM daily_candles WHERE trade_date = $1`, date)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // GetDaily returns daily candles for an instrument ordered ascending.
 func (r *Repo) GetDaily(ctx context.Context, instrumentID int64) ([]market.Candle, error) {
 	rows, err := r.pool.Query(ctx, `

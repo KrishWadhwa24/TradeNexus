@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { api } from "../api.js";
+import { api, convLevel, convLabel } from "../api.js";
 
 export default function Audit() {
   const [rows, setRows] = useState([]);
@@ -34,6 +34,7 @@ export default function Audit() {
             <option value="">All sources</option>
             <option value="pine">Pine</option>
             <option value="weekly">Weekly</option>
+            <option value="patterns">Patterns</option>
           </select>
           <select value={tf} onChange={(e) => setTf(e.target.value)}>
             <option value="">All timeframes</option>
@@ -67,7 +68,13 @@ export default function Audit() {
                   <td><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
                   <td className="muted">{s.source}</td>
                   <td>{s.timeframe}</td>
-                  <td>{s.confidence != null ? s.confidence + "/4" : "—"}</td>
+                  <td>
+                    {convLevel(s.source, s.confidence) ? (
+                      <span className={"conv conv-" + convLevel(s.source, s.confidence)}>
+                        {convLabel(s.source, s.confidence)}
+                      </span>
+                    ) : "—"}
+                  </td>
                   <td className="muted">{s.scanner_name}</td>
                   <td className="muted">{s.candle_date?.slice(0, 10)}</td>
                   <td className="muted">{new Date(s.created_at).toLocaleString()}</td>
