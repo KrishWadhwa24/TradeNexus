@@ -36,14 +36,17 @@ func TestFormatMessage_Pine(t *testing.T) {
 		"📊 Volume: Relative volume 1.89x",
 		"🔥 RSI: 76.2 (Strong bullish)",
 		"📐 Trend: EMA 10 > 20 > SMA 40 (Bullish stack)",
-		"⚡ Conviction: HIGH",
 		"💰 Price: ₹1540.10",
-		"🕐 Candle Close: 27 May 2026, 00:00 IST",
+		"🕐 Candle Close: 27 May 2026, 15:30 IST",
 	}
 	for _, w := range want {
 		if !strings.Contains(msg, w) {
 			t.Errorf("message missing %q\n---\n%s", w, msg)
 		}
+	}
+	// Pine is binary BUY/SELL — there must be NO conviction line.
+	if strings.Contains(msg, "Conviction") {
+		t.Errorf("pine message must not contain a conviction line:\n%s", msg)
 	}
 }
 
@@ -69,17 +72,6 @@ func TestFormatMessage_WeeklyAndPatterns(t *testing.T) {
 	mp := formatMessage(pat, "INFY-EQ", 1600)
 	if !strings.Contains(mp, "🔎 Pattern: Cup & Handle") || !strings.Contains(mp, "⚡ Conviction: HIGH") {
 		t.Errorf("pattern format wrong:\n%s", mp)
-	}
-}
-
-func TestPineConviction(t *testing.T) {
-	high := pineConviction(map[string]float64{"rel_volume": 2.6, "body_atr": 1.1}, fptr(78), true)
-	if high != "HIGH" {
-		t.Errorf("expected HIGH, got %s", high)
-	}
-	low := pineConviction(map[string]float64{"rel_volume": 1.2}, fptr(52), true)
-	if low != "LOW" {
-		t.Errorf("expected LOW, got %s", low)
 	}
 }
 

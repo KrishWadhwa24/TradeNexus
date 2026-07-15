@@ -299,6 +299,7 @@ func formatMessage(sig signals.Signal, symbol string, cmp float64) string {
 		} else {
 			b.WriteString("📐 Trend: EMA 10 < 20 < SMA 40 (Bearish stack)\n")
 		}
+		// Pine is a binary BUY/SELL strategy — no conviction/confidence concept.
 	case "weekly":
 		if sig.Confidence != nil {
 			fmt.Fprintf(&b, "🎯 Scanners: %d of 4 confluences fired\n", *sig.Confidence)
@@ -324,13 +325,32 @@ func formatMessage(sig signals.Signal, symbol string, cmp float64) string {
 		fmt.Fprintf(&b, "🧭 Scanner: %s\n", prettyScanner(sig))
 	}
 
-	fmt.Fprintf(&b, "⚡ Conviction: %s\n", convictionText(sig, buy))
+	if c := convictionText(sig); c != "" {
+		fmt.Fprintf(&b, "⚡ Conviction: %s\n", c)
+	}
 	b.WriteString("━━━━━━━━━━━━━━━━━━━\n")
 	if cmp > 0 {
 		fmt.Fprintf(&b, "💰 Price: ₹%.2f\n", cmp)
 	}
-	fmt.Fprintf(&b, "🕐 Candle Close: %s, 00:00 IST", sig.CandleDate.Format("02 Jan 2006"))
+	b.WriteString(candleLine(sig))
 	return b.String()
+}
+
+// candleLine describes the signal's candle correctly per timeframe. A daily bar
+// closes at 15:30 IST on its trade date; for weekly/monthly the stored date is
+// the period start, so we label it as the week/month rather than a fake time.
+func candleLine(sig signals.Signal) string {
+	d := sig.CandleDate
+	switch sig.Timeframe {
+	case "1D":
+		return fmt.Sprintf("🕐 Candle Close: %s, 15:30 IST", d.Format("02 Jan 2006"))
+	case "1W":
+		return fmt.Sprintf("🗓 Week of: %s (closes Fri 15:30 IST)", d.Format("02 Jan 2006"))
+	case "1M":
+		return fmt.Sprintf("🗓 Month of: %s", d.Format("Jan 2006"))
+	default:
+		return fmt.Sprintf("🗓 Candle: %s", d.Format("02 Jan 2006"))
+	}
 }
 
 // strategyName is the human label for a signal's source.
@@ -385,8 +405,10 @@ func rsiLabel(rsi float64, buy bool) string {
 	}
 }
 
-// convictionText renders LOW/MEDIUM/HIGH per source.
-func convictionText(sig signals.Signal, buy bool) string {
+// convictionText renders LOW/MEDIUM/HIGH for sources that HAVE a real
+// confidence measure. Pine is a binary BUY/SELL strategy with no such concept,
+// so it returns "" (the caller omits the line entirely for Pine).
+func convictionText(sig signals.Signal) string {
 	switch sig.Source {
 	case "weekly":
 		if sig.Confidence != nil {
@@ -410,53 +432,8 @@ func convictionText(sig signals.Signal, buy bool) string {
 				return "LOW"
 			}
 		}
-	case "pine":
-		return pineConviction(sig.Metrics, sig.RSI, buy)
 	}
-	return "—"
-}
-
-// pineConviction grades a Pine signal from its supporting metrics.
-func pineConviction(m map[string]float64, rsi *float64, buy bool) string {
-	score := 0
-	if v, ok := m["rel_volume"]; ok {
-		if v >= 1.8 {
-			score++
-		}
-		if v >= 2.5 {
-			score++
-		}
-	}
-	if v, ok := m["body_atr"]; ok {
-		if v >= 0.6 {
-			score++
-		}
-		if v >= 1.0 {
-			score++
-		}
-	}
-	if rsi != nil {
-		if buy && *rsi >= 65 {
-			score++
-		}
-		if buy && *rsi >= 75 {
-			score++
-		}
-		if !buy && *rsi <= 35 {
-			score++
-		}
-		if !buy && *rsi <= 25 {
-			score++
-		}
-	}
-	switch {
-	case score >= 4:
-		return "HIGH"
-	case score >= 2:
-		return "MEDIUM"
-	default:
-		return "LOW"
-	}
+	return ""
 }
 
 // weeklyMatched turns "weekly_1,weekly_3" into a friendly comma list.
