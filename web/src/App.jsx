@@ -2,7 +2,6 @@ import React, { useEffect, useState } from "react";
 import { getToken, setToken } from "./api.js";
 import { Icon } from "./icons.jsx";
 import CommandPalette from "./CommandPalette.jsx";
-import Landing from "./pages/Landing.jsx";
 import Login from "./pages/Login.jsx";
 import Home from "./pages/Home.jsx";
 import Analytics from "./pages/Analytics.jsx";
@@ -51,7 +50,6 @@ export default function App() {
   const [view, setView] = useState(localStorage.getItem("view") || "home");
   const [menuOpen, setMenuOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [showLogin, setShowLogin] = useState(false); // false → marketing landing
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem("user") || "null"); } catch { return null; }
   });
@@ -97,13 +95,7 @@ export default function App() {
     localStorage.removeItem("user");
   }
 
-  if (!authed) {
-    return showLogin ? (
-      <Login onAuthed={onAuthed} onBack={() => setShowLogin(false)} />
-    ) : (
-      <Landing onGetStarted={() => setShowLogin(true)} />
-    );
-  }
+  if (!authed) return <Login onAuthed={onAuthed} />;
 
   const userId = user.id;
   function render() {

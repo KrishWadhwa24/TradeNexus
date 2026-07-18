@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { authApi, setToken } from "../api.js";
 
-export default function Login({ onAuthed, onBack }) {
+export default function Login({ onAuthed }) {
   const [mode, setMode] = useState("login"); // login | register
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -27,12 +27,9 @@ export default function Login({ onAuthed, onBack }) {
   return (
     <div className="auth-wrap">
       <div className="auth-art">
-        <div className="brand" style={{ padding: 0, cursor: onBack ? "pointer" : "default" }} onClick={onBack}>
+        <div className="brand" style={{ padding: 0 }}>
           <span className="prompt">&gt;_</span> Trade<em>Nexus</em>
         </div>
-        {onBack && (
-          <a className="subtle" style={{ cursor: "pointer", display: "inline-block", marginTop: 6 }} onClick={onBack}>← Back to home</a>
-        )}
         <span className="kicker">// UNIFIED_STOCK_SCANNER</span>
         <h1>Find winning stocks<br />before the <span className="accent">crowd.</span></h1>
         <p>Pine &amp; weekly scanners over NSE + BSE data, live analytics, Telegram alerts, and paper trading — all in one terminal.</p>
