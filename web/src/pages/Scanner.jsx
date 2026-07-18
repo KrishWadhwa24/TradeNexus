@@ -40,7 +40,7 @@ export default function Scanner({ source, pattern, userId }) {
         setMsg("A scan is already running — hang tight.");
       } else {
         setMsg("Scan started. Signals will appear shortly — refreshing in 8s…");
-        setTimeout(load, 8000);
+        setTimeout(() => { setMsg(""); load(); }, 8000);
       }
     } catch (e) {
       setMsg("Scan failed: " + e.message);

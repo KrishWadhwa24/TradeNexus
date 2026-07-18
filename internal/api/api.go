@@ -22,6 +22,7 @@ import (
 	"tradenexus/internal/candles"
 	"tradenexus/internal/engine"
 	"tradenexus/internal/instruments"
+	"tradenexus/internal/ipo"
 	"tradenexus/internal/live"
 	"tradenexus/internal/notify"
 	"tradenexus/internal/paper"
@@ -48,6 +49,7 @@ type Deps struct {
 	Analytics   *analytics.Service
 	Paper       *paper.Service
 	Live        *live.Hub
+	IPO         *ipo.Service
 	JWTSecret   string
 }
 
@@ -68,6 +70,7 @@ type Server struct {
 	analytics *analytics.Service
 	paper     *paper.Service
 	live      *live.Hub
+	ipo       *ipo.Service
 	jwtSecret string
 
 	// scanRunning guards manual scan-all so repeated clicks don't stack.
@@ -94,6 +97,7 @@ func NewServer(d Deps) *Server {
 		analytics: d.Analytics,
 		paper:     d.Paper,
 		live:      d.Live,
+		ipo:       d.IPO,
 		jwtSecret: d.JWTSecret,
 	}
 }
@@ -200,6 +204,11 @@ func (s *Server) Router() http.Handler {
 				r.Delete("/admin/candles", s.handleDeleteCandlesByDate)
 				r.With(middleware.Timeout(65*time.Minute)).Post("/admin/candles/refetch", s.handleRefetchCandlesByDate)
 				r.Post("/admin/dispatch/force", s.handleForceDispatch)
+
+				// IPO admin: refresh the feed now, or push a manual "Apply".
+				r.Post("/admin/ipos/refresh", s.handleRefreshIPOs)
+				r.Post("/admin/ipos/{id}/apply", s.handleIPOAdminApply)
+				r.Post("/admin/ipos/{id}/clear-signal", s.handleIPOClearSignal)
 			})
 
 			// Users, watchlists, prefs, telegram (Module 7)
@@ -223,6 +232,9 @@ func (s *Server) Router() http.Handler {
 			// Analytics + Excel export (Module 8)
 			r.Get("/analytics/summary", s.handleAnalyticsSummary)
 			r.Get("/analytics/export.xlsx", s.handleAnalyticsExport)
+
+			// IPOs (open + upcoming, with GMP)
+			r.Get("/ipos", s.handleListIPOs)
 
 			// Market data (Module 9): trending + params + dashboard
 			r.Get("/market/trending", s.handleTrending)

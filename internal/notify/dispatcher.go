@@ -157,6 +157,56 @@ func (d *Dispatcher) ForceResend(ctx context.Context, sig signals.Signal) (Dispa
 	return res, nil
 }
 
+// chatTarget is the dedup key for one physical Telegram destination.
+func chatTarget(botToken, chatID string) string {
+	return botToken + "|" + chatID
+}
+
+// Broadcast sends a plain message to every Telegram-enabled user plus the
+// safety-net chat, deduped by physical destination. Used for global (non
+// per-watchlist) alerts like IPO signals. Returns how many chats were sent to.
+func (d *Dispatcher) Broadcast(ctx context.Context, text string) (int, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT bot_token, chat_id FROM telegram_configs
+		WHERE enabled = TRUE AND bot_token <> '' AND chat_id <> ''`)
+	if err != nil {
+		return 0, err
+	}
+	type dest struct{ bot, chat string }
+	var dests []dest
+	for rows.Next() {
+		var dd dest
+		if err := rows.Scan(&dd.bot, &dd.chat); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		dests = append(dests, dd)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if d.defaultBot != "" && d.defaultChat != "" {
+		dests = append(dests, dest{d.defaultBot, d.defaultChat})
+	}
+
+	sent := map[string]bool{}
+	count := 0
+	for _, dd := range dests {
+		tk := chatTarget(dd.bot, dd.chat)
+		if sent[tk] {
+			continue
+		}
+		if err := d.tg.Send(ctx, dd.bot, dd.chat, text); err != nil {
+			d.log.Error().Err(err).Msg("broadcast send failed")
+			continue
+		}
+		sent[tk] = true
+		count++
+	}
+	return count, nil
+}
+
 // SendTest sends a plain connectivity-check message to a specific bot/chat.
 func (d *Dispatcher) SendTest(ctx context.Context, botToken, chatID string) error {
 	return d.tg.Send(ctx, botToken, chatID,

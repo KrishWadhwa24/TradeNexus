@@ -22,6 +22,7 @@ import (
 	"tradenexus/internal/engine"
 	"tradenexus/internal/instruments"
 	"tradenexus/internal/intraday"
+	"tradenexus/internal/ipo"
 	"tradenexus/internal/live"
 	"tradenexus/internal/logger"
 	"tradenexus/internal/notify"
@@ -147,6 +148,17 @@ func main() {
 	// Paper-trading service.
 	paperSvc := paper.New(pg.Pool, angelClient, candleRepo, instRepo, signalRepo, calSvc, log)
 
+	// IPO tracker (open + upcoming IPOs + GMP signals). Polls the feed on a timer.
+	var ipoSvc *ipo.Service
+	if cfg.IPOEnabled {
+		var ipoBroadcaster ipo.Broadcaster // keep a true-nil interface if notify is off
+		if dispatcher != nil {
+			ipoBroadcaster = dispatcher
+		}
+		ipoSvc = ipo.New(ipo.NewClient(), ipo.NewRepo(pg.Pool), ipoBroadcaster, cfg.IPOPollInterval, cfg.IPOSignalCron, log)
+		ipoSvc.StartPolling(ctx)
+	}
+
 	// 8) Scheduler (daily scan + cleanup + startup reconciliation + fill).
 	sched := scheduler.New(engineSvc, paperSvc, intradayCache, scheduler.Config{
 		Enabled:            cfg.SchedulerEnabled,
@@ -180,6 +192,7 @@ func main() {
 			Analytics:   analyticsSvc,
 			Paper:       paperSvc,
 			Live:        liveHub,
+			IPO:         ipoSvc,
 			JWTSecret:   cfg.JWTSecret,
 		}).Router(),
 		ReadHeaderTimeout: 10 * time.Second,
