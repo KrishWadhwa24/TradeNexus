@@ -132,7 +132,47 @@ func (s *Service) persist(ctx context.Context, instID int64, rep scanner.Report,
 			return n, err
 		}
 	}
+	if err := s.persistPatternSignals(add, instID, market.TF1D, lastTimeOrZero(daily), rep.Patterns.Daily); err != nil {
+		return n, err
+	}
+	if err := s.persistPatternSignals(add, instID, market.TF1W, lastTimeOrZero(weekly), rep.Patterns.Weekly); err != nil {
+		return n, err
+	}
+	if err := s.persistPatternSignals(add, instID, market.TF1M, lastTimeOrZero(monthly), rep.Patterns.Monthly); err != nil {
+		return n, err
+	}
 	return n, nil
+}
+
+func (s *Service) persistPatternSignals(add func(signals.Signal) error, instID int64, tf string, date time.Time, res scanner.PatternTimeframeResult) error {
+	if date.IsZero() {
+		return nil
+	}
+	patterns := []struct {
+		name string
+		sig  scanner.PatternSignal
+	}{
+		{scanner.PatternDowntrendBreakout, res.DowntrendBreakout},
+		{scanner.PatternRectangle, res.Rectangle},
+		{scanner.PatternCupHandle, res.CupHandle},
+	}
+	for _, p := range patterns {
+		if !p.sig.Buy {
+			continue
+		}
+		if err := add(signals.Signal{
+			InstrumentID: instID,
+			Source:       "patterns",
+			ScannerName:  p.name,
+			Timeframe:    tf,
+			Direction:    "BUY",
+			CandleDate:   date,
+			Reasons:      p.sig.Reasons,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func pineSignal(instID int64, tf string, date time.Time, sig scanner.PineSignal) signals.Signal {
@@ -152,6 +192,13 @@ func pineSignal(instID int64, tf string, date time.Time, sig scanner.PineSignal)
 }
 
 func lastTime(c []market.Candle) time.Time { return c[len(c)-1].Time }
+
+func lastTimeOrZero(c []market.Candle) time.Time {
+	if len(c) == 0 {
+		return time.Time{}
+	}
+	return lastTime(c)
+}
 
 // SyncAndScan fetches `days` of daily history from Angel, stores it, rebuilds
 // aggregates, and scans.
@@ -273,13 +320,18 @@ func (s *Service) ReconcileAll(ctx context.Context) ([]ReconcileResult, error) {
 		return nil, err
 	}
 	var out []ReconcileResult
-	for _, id := range ids {
+	for i, id := range ids {
 		r, err := s.Reconcile(ctx, id)
 		if err != nil {
 			s.log.Error().Err(err).Int64("instrument", id).Msg("reconcile-all: instrument failed")
 			continue
 		}
 		out = append(out, r)
+		if i < len(ids)-1 {
+			if err := sleepContext(ctx, 350*time.Millisecond); err != nil {
+				return out, err
+			}
+		}
 	}
 	return out, nil
 }
@@ -287,4 +339,15 @@ func (s *Service) ReconcileAll(ctx context.Context) ([]ReconcileResult, error) {
 // Cleanup removes signals older than the retention window (30 days by default).
 func (s *Service) Cleanup(ctx context.Context) (int64, error) {
 	return s.signals.DeleteOlderThan(ctx, s.retention)
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

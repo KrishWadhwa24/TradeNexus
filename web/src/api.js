@@ -11,6 +11,59 @@ export function getToken() {
   return token;
 }
 
+export function livePricesURL(userId) {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const qs = new URLSearchParams({ token });
+  return `${proto}//${window.location.host}/v1/users/${userId}/live-prices?${qs}`;
+}
+
+export function connectLivePrices(userId, { onMessage, onOpen, onClose, onError } = {}) {
+  let ws = null;
+  let retryTimer = null;
+  let disposed = false;
+  let retryDelay = 1000;
+
+  const clearRetry = () => {
+    if (retryTimer) {
+      window.clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+  };
+
+  const scheduleReconnect = () => {
+    if (disposed) return;
+    clearRetry();
+    retryTimer = window.setTimeout(connect, retryDelay);
+    retryDelay = Math.min(retryDelay * 2, 30000);
+  };
+
+  function connect() {
+    if (disposed) return;
+    clearRetry();
+    ws = new WebSocket(livePricesURL(userId));
+    ws.onopen = (event) => {
+      retryDelay = 1000;
+      onOpen?.(event);
+    };
+    ws.onmessage = (event) => onMessage?.(event, ws);
+    ws.onerror = (event) => {
+      onError?.(event);
+    };
+    ws.onclose = (event) => {
+      onClose?.(event);
+      scheduleReconnect();
+    };
+  }
+
+  connect();
+
+  return () => {
+    disposed = true;
+    clearRetry();
+    if (ws) ws.close();
+  };
+}
+
 async function req(method, path, body) {
   const opts = { method, headers: {} };
   if (token) opts.headers["Authorization"] = "Bearer " + token;

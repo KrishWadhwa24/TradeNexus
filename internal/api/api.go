@@ -15,12 +15,13 @@ import (
 	"github.com/rs/zerolog"
 
 	"tradenexus/internal/analytics"
-	"tradenexus/internal/auth"
 	"tradenexus/internal/angel"
+	"tradenexus/internal/auth"
 	"tradenexus/internal/calendar"
 	"tradenexus/internal/candles"
 	"tradenexus/internal/engine"
 	"tradenexus/internal/instruments"
+	"tradenexus/internal/live"
 	"tradenexus/internal/notify"
 	"tradenexus/internal/paper"
 	"tradenexus/internal/ratelimit"
@@ -45,18 +46,19 @@ type Deps struct {
 	Notifier    *notify.Dispatcher
 	Analytics   *analytics.Service
 	Paper       *paper.Service
+	Live        *live.Hub
 	JWTSecret   string
 }
 
 // Server holds shared dependencies for handlers.
 type Server struct {
-	log     zerolog.Logger
-	pg      *store.Postgres
-	rdb     *store.Redis
-	limiter *ratelimit.Limiter
-	angel   *angel.Client
-	inst    *instruments.Repo
-	candles *candles.Repo
+	log       zerolog.Logger
+	pg        *store.Postgres
+	rdb       *store.Redis
+	limiter   *ratelimit.Limiter
+	angel     *angel.Client
+	inst      *instruments.Repo
+	candles   *candles.Repo
 	engine    *engine.Service
 	signals   *signals.Repo
 	cal       *calendar.Service
@@ -64,19 +66,20 @@ type Server struct {
 	notifier  *notify.Dispatcher
 	analytics *analytics.Service
 	paper     *paper.Service
+	live      *live.Hub
 	jwtSecret string
 }
 
 // NewServer constructs the API server with its dependencies.
 func NewServer(d Deps) *Server {
 	return &Server{
-		log:     d.Log,
-		pg:      d.PG,
-		rdb:     d.RDB,
-		limiter: d.Limiter,
-		angel:   d.Angel,
-		inst:    d.Instruments,
-		candles: d.Candles,
+		log:       d.Log,
+		pg:        d.PG,
+		rdb:       d.RDB,
+		limiter:   d.Limiter,
+		angel:     d.Angel,
+		inst:      d.Instruments,
+		candles:   d.Candles,
 		engine:    d.Engine,
 		signals:   d.Signals,
 		cal:       d.Calendar,
@@ -84,6 +87,7 @@ func NewServer(d Deps) *Server {
 		notifier:  d.Notifier,
 		analytics: d.Analytics,
 		paper:     d.Paper,
+		live:      d.Live,
 		jwtSecret: d.JWTSecret,
 	}
 }
@@ -119,7 +123,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(s.requestLogger)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(30 * time.Second))
+	r.Use(timeoutExceptLivePrices(30 * time.Second))
 
 	r.Get("/health", s.handleHealth)
 	r.Get("/health/ready", s.handleReady)
@@ -128,83 +132,99 @@ func (s *Server) Router() http.Handler {
 		// Public auth endpoints.
 		r.Post("/auth/register", s.handleRegister)
 		r.Post("/auth/login", s.handleLogin)
+		r.Get("/users/{uid}/live-prices", s.handleLivePrices)
 
 		// Everything below requires a valid JWT.
 		r.Group(func(r chi.Router) {
 			r.Use(s.authMiddleware)
 			r.Get("/me", s.handleMe)
 
-		// Demo endpoint so you can hammer the limiter from Postman and watch
-		// it flip from allowed:true to allowed:false with a retry hint.
-		r.Post("/ratelimit/try", s.handleRateLimitTry)
+			// Demo endpoint so you can hammer the limiter from Postman and watch
+			// it flip from allowed:true to allowed:false with a retry hint.
+			r.Post("/ratelimit/try", s.handleRateLimitTry)
 
-		// Angel client (Module 2)
-		r.Post("/angel/login", s.handleAngelLogin)
-		r.Get("/angel/status", s.handleAngelStatus)
-		r.Post("/angel/scripmaster/sync", s.handleScripMasterSync)
-		r.Post("/angel/historical", s.handleAngelHistorical)
+			// Angel client (Module 2)
+			r.Post("/angel/login", s.handleAngelLogin)
+			r.Get("/angel/status", s.handleAngelStatus)
+			r.Post("/angel/scripmaster/sync", s.handleScripMasterSync)
+			r.Post("/angel/historical", s.handleAngelHistorical)
 
-		// Instruments (Module 2)
-		r.Get("/instruments/search", s.handleInstrumentSearch)
-		r.Get("/instruments/{id}", s.handleInstrumentGet)
+			// Instruments (Module 2)
+			r.Get("/instruments/search", s.handleInstrumentSearch)
+			r.Get("/instruments/{id}", s.handleInstrumentGet)
 
-		// Candles (Module 3)
-		r.Post("/instruments/{id}/candles/sync", s.handleCandleSync)
-		r.Get("/instruments/{id}/candles", s.handleCandleGet)
+			// Candles (Module 3)
+			r.Post("/instruments/{id}/candles/sync", s.handleCandleSync)
+			r.Get("/instruments/{id}/candles", s.handleCandleGet)
 
-		// Scanning + signals (Modules 4-6)
-		r.Post("/instruments/{id}/scan", s.handleScanInstrument)
-		r.Post("/instruments/{id}/sync-scan", s.handleSyncScan)
-		r.Get("/signals", s.handleSignalsList)
+			// Scanning + signals (Modules 4-6)
+			r.Post("/instruments/{id}/scan", s.handleScanInstrument)
+			r.Post("/instruments/{id}/sync-scan", s.handleSyncScan)
+			r.Get("/signals", s.handleSignalsList)
 
-		// Calendar (Module 6)
-		r.Get("/calendar/check", s.handleCalendarCheck)
+			// Calendar (Module 6)
+			r.Get("/calendar/check", s.handleCalendarCheck)
 
-		// Admin / ops (Module 6)
-		r.Post("/admin/reconcile", s.handleReconcile)
-		r.Post("/admin/scan-all", s.handleScanAll)
-		r.Post("/admin/cleanup", s.handleCleanup)
-		r.Post("/admin/holidays", s.handleAddHolidays)
+			// Admin / ops (Module 6)
+			r.Post("/admin/reconcile", s.handleReconcile)
+			r.Post("/admin/scan-all", s.handleScanAll)
+			r.Post("/admin/cleanup", s.handleCleanup)
+			r.Post("/admin/holidays", s.handleAddHolidays)
 
-		// Users, watchlists, prefs, telegram (Module 7)
-		r.Post("/users", s.handleCreateUser)
-		r.Get("/users", s.handleListUsers)
-		r.Post("/users/{uid}/watchlists", s.handleCreateWatchlist)
-		r.Get("/users/{uid}/watchlists", s.handleListWatchlists)
-		r.Post("/watchlists/{wid}/items", s.handleAddWatchlistItem)
-		r.Delete("/watchlists/{wid}/items/{instrumentId}", s.handleRemoveWatchlistItem)
-		r.Put("/users/{uid}/scanner-prefs", s.handleSetScannerPrefs)
-		r.Get("/users/{uid}/scanner-prefs", s.handleGetScannerPrefs)
-		r.Put("/users/{uid}/telegram", s.handleSetTelegram)
-		r.Get("/users/{uid}/telegram", s.handleGetTelegram)
+			// Users, watchlists, prefs, telegram (Module 7)
+			r.Post("/users", s.handleCreateUser)
+			r.Get("/users", s.handleListUsers)
+			r.Post("/users/{uid}/watchlists", s.handleCreateWatchlist)
+			r.Get("/users/{uid}/watchlists", s.handleListWatchlists)
+			r.Delete("/users/{uid}/watchlists/{wid}", s.handleDeleteWatchlist)
+			r.Post("/watchlists/{wid}/items", s.handleAddWatchlistItem)
+			r.Delete("/watchlists/{wid}/items/{instrumentId}", s.handleRemoveWatchlistItem)
+			r.Put("/users/{uid}/scanner-prefs", s.handleSetScannerPrefs)
+			r.Get("/users/{uid}/scanner-prefs", s.handleGetScannerPrefs)
+			r.Put("/users/{uid}/telegram", s.handleSetTelegram)
+			r.Get("/users/{uid}/telegram", s.handleGetTelegram)
 
-		// Notification testing (Module 7)
-		r.Post("/telegram/test", s.handleTelegramTest)
-		r.Get("/signals/{id}/recipients", s.handleSignalRecipients)
-		r.Post("/admin/dispatch", s.handleDispatch)
+			// Notification testing (Module 7)
+			r.Post("/telegram/test", s.handleTelegramTest)
+			r.Get("/signals/{id}/recipients", s.handleSignalRecipients)
+			r.Post("/admin/dispatch", s.handleDispatch)
 
-		// Analytics + Excel export (Module 8)
-		r.Get("/analytics/summary", s.handleAnalyticsSummary)
-		r.Get("/analytics/export.xlsx", s.handleAnalyticsExport)
+			// Analytics + Excel export (Module 8)
+			r.Get("/analytics/summary", s.handleAnalyticsSummary)
+			r.Get("/analytics/export.xlsx", s.handleAnalyticsExport)
 
-		// Market data (Module 9): trending + params + dashboard
-		r.Get("/market/trending", s.handleTrending)
-		r.Get("/instruments/{id}/params", s.handleInstrumentParams)
-		r.Get("/instruments/{id}/coverage", s.handleCoverage)
-		r.Get("/users/{uid}/dashboard", s.handleDashboard)
-		r.Get("/users/{uid}/coverage", s.handleUserCoverage)
+			// Market data (Module 9): trending + params + dashboard
+			r.Get("/market/trending", s.handleTrending)
+			r.Get("/instruments/{id}/params", s.handleInstrumentParams)
+			r.Get("/instruments/{id}/coverage", s.handleCoverage)
+			r.Get("/users/{uid}/dashboard", s.handleDashboard)
+			r.Get("/users/{uid}/coverage", s.handleUserCoverage)
 
-		// Paper trading (Module 9)
-		r.Put("/users/{uid}/paper/capital", s.handleSetCapital)
-		r.Get("/users/{uid}/paper/account", s.handleGetAccount)
-		r.Post("/users/{uid}/paper/trades", s.handleBuy)
-		r.Get("/users/{uid}/paper/trades", s.handleListTrades)
-		r.Get("/users/{uid}/paper/summary", s.handlePaperSummary)
-		r.Post("/paper/trades/{tradeId}/close", s.handleCloseTrade)
+			// Paper trading (Module 9)
+			r.Put("/users/{uid}/paper/capital", s.handleSetCapital)
+			r.Get("/users/{uid}/paper/account", s.handleGetAccount)
+			r.Post("/users/{uid}/paper/trades", s.handleBuy)
+			r.Get("/users/{uid}/paper/trades", s.handleListTrades)
+			r.Get("/users/{uid}/paper/summary", s.handlePaperSummary)
+			r.Post("/paper/trades/{tradeId}/close", s.handleCloseTrade)
 		}) // end protected group
 	})
 
 	return r
+}
+
+func timeoutExceptLivePrices(timeout time.Duration) func(http.Handler) http.Handler {
+	withTimeout := middleware.Timeout(timeout)
+	return func(next http.Handler) http.Handler {
+		timed := withTimeout(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/live-prices") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			timed.ServeHTTP(w, r)
+		})
+	}
 }
 
 // requestLogger is a tiny zerolog-based access log middleware.

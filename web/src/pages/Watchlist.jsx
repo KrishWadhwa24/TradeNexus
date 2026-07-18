@@ -12,6 +12,7 @@ export default function Watchlist({ userId }) {
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const load = useCallback(async (preferredWid = "") => {
     setErr("");
@@ -88,6 +89,32 @@ export default function Watchlist({ userId }) {
     }
   }
 
+  function openDeleteModal() {
+    if (!wid) return;
+    setDeleteTarget(watchlists.find((w) => w.id === wid) || null);
+  }
+
+  function closeDeleteModal() {
+    if (busy) return;
+    setDeleteTarget(null);
+  }
+
+  async function deleteWatchlist() {
+    if (!wid) return;
+    setBusy(true);
+    setMsg("");
+    try {
+      await api.del(`/v1/users/${userId}/watchlists/${wid}`);
+      setMsg("Watchlist deleted.");
+      setDeleteTarget(null);
+      await load();
+    } catch (e) {
+      setMsg("Failed: " + e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function remove(id) {
     await api.del(`/v1/watchlists/${wid}/items/${id}`);
     load(wid);
@@ -110,17 +137,22 @@ export default function Watchlist({ userId }) {
               ))}
             </select>
           </label>
-          <form className="row" onSubmit={createWatchlist}>
-            <input
-              style={{ width: 220 }}
-              placeholder="New watchlist name"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-            />
-            <button className="btn-sm" type="submit" disabled={busy || !newName.trim()}>
-              Create
+          <div className="row" style={{ flexWrap: "wrap" }}>
+            <button className="btn-sm btn-danger" type="button" onClick={openDeleteModal} disabled={busy || !wid}>
+              Delete watchlist
             </button>
-          </form>
+            <form className="row" onSubmit={createWatchlist}>
+              <input
+                style={{ width: 220 }}
+                placeholder="New watchlist name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+              />
+              <button className="btn-sm" type="submit" disabled={busy || !newName.trim()}>
+                Create
+              </button>
+            </form>
+          </div>
         </div>
 
         <div className="section-title" style={{ margin: "0 0 10px" }}>Add a stock</div>
@@ -176,6 +208,37 @@ export default function Watchlist({ userId }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="delete-modal-backdrop" role="presentation" onClick={closeDeleteModal}>
+          <div
+            className="delete-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-watchlist-title"
+            aria-describedby="delete-watchlist-desc"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="delete-modal-badge">Warning</div>
+            <h3 id="delete-watchlist-title">Delete watchlist</h3>
+            <p id="delete-watchlist-desc">
+              <strong>{deleteTarget.name}</strong> will be deleted permanently.
+              All stocks inside it will be removed from this watchlist, but the instruments themselves will stay in the system.
+            </p>
+            <div className="delete-modal-note">
+              This cannot be undone.
+            </div>
+            <div className="delete-modal-actions">
+              <button className="btn-sm btn-ghost" type="button" onClick={closeDeleteModal} disabled={busy}>
+                Cancel
+              </button>
+              <button className="btn-sm btn-danger" type="button" onClick={deleteWatchlist} disabled={busy}>
+                {busy ? "Deleting…" : "Delete watchlist"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

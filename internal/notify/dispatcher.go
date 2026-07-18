@@ -164,8 +164,8 @@ func (d *Dispatcher) alreadyDelivered(ctx context.Context, userID string, sig si
 	err := d.pool.QueryRow(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM signal_deliveries
-			WHERE user_id = $1::uuid AND instrument_id = $2 AND timeframe = $3 AND candle_date = $4)`,
-		userID, sig.InstrumentID, sig.Timeframe, sig.CandleDate).Scan(&exists)
+			WHERE user_id = $1::uuid AND signal_id = $2 AND channel = 'telegram')`,
+		userID, sig.ID).Scan(&exists)
 	return exists, err
 }
 
@@ -173,7 +173,7 @@ func (d *Dispatcher) recordDelivery(ctx context.Context, userID string, sig sign
 	_, err := d.pool.Exec(ctx, `
 		INSERT INTO signal_deliveries (signal_id, user_id, instrument_id, timeframe, candle_date, channel)
 		VALUES ($1, $2::uuid, $3, $4, $5, 'telegram')
-		ON CONFLICT (user_id, instrument_id, timeframe, candle_date) DO NOTHING`,
+		ON CONFLICT (user_id, signal_id, channel) DO NOTHING`,
 		sig.ID, userID, sig.InstrumentID, sig.Timeframe, sig.CandleDate)
 	return err
 }
@@ -191,6 +191,9 @@ func (d *Dispatcher) symbol(ctx context.Context, instrumentID int64) string {
 func ScannerKeys(sig signals.Signal) []string {
 	if sig.Source == "pine" {
 		return []string{"pine_" + strings.ToLower(sig.Timeframe)} // pine_1d | pine_1w | pine_1m
+	}
+	if sig.Source == "patterns" {
+		return []string{sig.ScannerName}
 	}
 	return strings.Split(sig.ScannerName, ",") // weekly_1..weekly_4
 }

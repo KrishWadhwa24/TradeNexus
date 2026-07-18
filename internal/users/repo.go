@@ -46,7 +46,10 @@ func (r *Repo) CreateUser(ctx context.Context, email string) (string, error) {
 		INSERT INTO users (email) VALUES ($1)
 		ON CONFLICT (lower(email)) DO UPDATE SET email = EXCLUDED.email
 		RETURNING id::text`, email).Scan(&id)
-	return id, err
+	if err != nil {
+		return "", err
+	}
+	return id, r.ensureDefaultScannerPrefs(ctx, id)
 }
 
 // Register creates a user with a password hash. Returns ErrEmailTaken if the
@@ -60,11 +63,46 @@ func (r *Repo) Register(ctx context.Context, email, passwordHash string) (string
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrEmailTaken
 	}
-	return id, err
+	if err != nil {
+		return "", err
+	}
+	return id, r.ensureDefaultScannerPrefs(ctx, id)
 }
 
 // ErrEmailTaken is returned when registering an existing email.
 var ErrEmailTaken = errors.New("email already registered")
+
+var defaultScannerPrefs = []string{
+	"pine_1d",
+	"pine_1w",
+	"pine_1m",
+	"weekly_1",
+	"weekly_2",
+	"weekly_3",
+	"weekly_4",
+	"pattern_downtrend_breakout",
+	"pattern_rectangle",
+	"pattern_cup_handle",
+}
+
+func (r *Repo) ensureDefaultScannerPrefs(ctx context.Context, userID string) error {
+	batch := &pgx.Batch{}
+	for _, key := range defaultScannerPrefs {
+		batch.Queue(`
+			INSERT INTO user_scanner_prefs (user_id, scanner_key, enabled)
+			VALUES ($1::uuid, $2, TRUE)
+			ON CONFLICT (user_id, scanner_key) DO NOTHING`,
+			userID, key)
+	}
+	br := r.pool.SendBatch(ctx, batch)
+	defer br.Close()
+	for range defaultScannerPrefs {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // AuthByEmail returns the user id and password hash for login verification.
 func (r *Repo) AuthByEmail(ctx context.Context, email string) (id, hash string, err error) {
@@ -103,6 +141,20 @@ func (r *Repo) CreateWatchlist(ctx context.Context, userID, name string) (string
 		ON CONFLICT (user_id, name) DO UPDATE SET name = EXCLUDED.name
 		RETURNING id::text`, userID, name).Scan(&id)
 	return id, err
+}
+
+// DeleteWatchlist removes a watchlist owned by a user.
+func (r *Repo) DeleteWatchlist(ctx context.Context, userID, watchlistID string) error {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM watchlists
+		WHERE id = $1::uuid AND user_id = $2::uuid`, watchlistID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // AddWatchlistItem adds an instrument to a watchlist.
