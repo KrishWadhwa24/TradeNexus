@@ -6,7 +6,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 
-	"tradenexus/internal/analytics"
 	"tradenexus/internal/auth"
 	"tradenexus/internal/instruments"
 )
@@ -49,82 +48,6 @@ func (s *Server) handleLivePrices(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	_ = conn.WriteJSON(map[string]any{"type": "ready", "count": len(items)})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				return
-			}
-		}
-	}()
-
-	for {
-		select {
-		case <-done:
-			return
-		case <-r.Context().Done():
-			return
-		case tick, ok := <-ch:
-			if !ok {
-				return
-			}
-			if err := conn.WriteJSON(tick); err != nil {
-				return
-			}
-		}
-	}
-}
-
-// GET /v1/public/live-prices — PUBLIC (no auth) real-time price stream for a
-// small set of trending stocks, for the pre-login landing page. Reuses the same
-// Angel live hub as the authenticated dashboard feed — real ticks, no polling.
-func (s *Server) handlePublicLivePrices(w http.ResponseWriter, r *http.Request) {
-	if s.live == nil || s.analytics == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "live prices not configured"})
-		return
-	}
-
-	movers, err := s.analytics.TopMovers(r.Context(), 8)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	var items []instruments.Instrument
-	for _, m := range movers {
-		it, gerr := s.inst.GetByID(r.Context(), m.InstrumentID)
-		if gerr != nil {
-			continue
-		}
-		items = append(items, it)
-	}
-
-	ch, cancel, err := s.live.Subscribe(r.Context(), items)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-		return
-	}
-
-	conn, err := liveUpgrader.Upgrade(w, r, nil)
-	if err != nil {
-		cancel()
-		return
-	}
-	defer conn.Close()
-	defer cancel()
-
-	// Initial snapshot: real latest params (price, %change, RSI) so the landing
-	// renders immediately, then live ticks update the prices. No polling.
-	snap := make([]analytics.Params, 0, len(items))
-	for _, it := range items {
-		p, perr := s.instrumentParams(r, it.ID)
-		if perr != nil || !p.HasData {
-			continue
-		}
-		snap = append(snap, p)
-	}
-	_ = conn.WriteJSON(map[string]any{"type": "snapshot", "rows": snap})
-
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
