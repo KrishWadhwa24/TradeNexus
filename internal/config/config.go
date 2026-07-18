@@ -68,6 +68,10 @@ type Config struct {
 	IntradayCacheEnabled  bool          `env:"INTRADAY_CACHE_ENABLED" envDefault:"true"`
 	IntradayCacheInterval time.Duration `env:"INTRADAY_CACHE_INTERVAL" envDefault:"20m"`
 
+	// IPO tracker (open + upcoming IPOs + GMP signals from the InvestorGain feed)
+	IPOEnabled      bool          `env:"IPO_ENABLED" envDefault:"true"`
+	IPOPollInterval time.Duration `env:"IPO_POLL_INTERVAL" envDefault:"3h"`
+
 	// Notifications (Module 7)
 	NotifyEnabled    bool   `env:"NOTIFY_ENABLED" envDefault:"true"`
 	NotifyWindowDays int    `env:"NOTIFY_WINDOW_DAYS" envDefault:"7"`
