@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
 	"tradenexus/internal/market"
@@ -21,19 +22,24 @@ type Broadcaster interface {
 // Service polls the IPO feed, keeps only open/upcoming IPOs, and fires last-day
 // "apply" signals over Telegram.
 type Service struct {
-	client   *Client
-	repo     *Repo
-	bc       Broadcaster // optional; nil disables signalling
-	interval time.Duration
-	log      zerolog.Logger
+	client     *Client
+	repo       *Repo
+	bc         Broadcaster // optional; nil disables signalling
+	interval   time.Duration
+	signalCron string // IST cron for the close-day GMP check (e.g. "30 14 * * *")
+	log        zerolog.Logger
 }
 
-// New builds the IPO service. bc may be nil.
-func New(client *Client, repo *Repo, bc Broadcaster, interval time.Duration, log zerolog.Logger) *Service {
+// New builds the IPO service. bc may be nil. signalCron is the IST cron for the
+// close-day auto-signal check; empty → 14:30 daily (2:30 PM IST).
+func New(client *Client, repo *Repo, bc Broadcaster, interval time.Duration, signalCron string, log zerolog.Logger) *Service {
 	if interval <= 0 {
 		interval = 3 * time.Hour
 	}
-	return &Service{client: client, repo: repo, bc: bc, interval: interval, log: log}
+	if signalCron == "" {
+		signalCron = "30 14 * * *"
+	}
+	return &Service{client: client, repo: repo, bc: bc, interval: interval, signalCron: signalCron, log: log}
 }
 
 // ListActive returns the open + upcoming IPOs for the UI.
@@ -69,18 +75,19 @@ func (s *Service) Poll(ctx context.Context) error {
 		s.log.Info().Int64("removed", deleted).Msg("ipo: pruned closed/listed")
 	}
 	s.log.Info().Int("active", len(keep)).Msg("ipo: poll done")
-
-	s.evaluateSignals(ctx, now)
 	return nil
 }
 
-// evaluateSignals sends the last-day GMP signal (upgrade-only) for open IPOs
-// whose close date is today.
-func (s *Service) evaluateSignals(ctx context.Context, now time.Time) {
+// RunClosingDaySignals is the authoritative auto-signal check, run on a schedule
+// (2:30 PM IST by default). For every MAINBOARD IPO that is open and closes
+// today, it evaluates the GMP tier and sends the Telegram signal if the
+// threshold is met. It deliberately ignores any prior admin "clear" — the
+// close-day GMP check always fires. SME IPOs are skipped entirely (admin-only).
+func (s *Service) RunClosingDaySignals(ctx context.Context) {
 	if s.bc == nil {
 		return
 	}
-	today := dateOnly(now)
+	today := dateOnly(time.Now().In(market.IST))
 	active, err := s.repo.ListActive(ctx)
 	if err != nil {
 		s.log.Error().Err(err).Msg("ipo: list for signals failed")
@@ -90,9 +97,12 @@ func (s *Service) evaluateSignals(ctx context.Context, now time.Time) {
 		if x.Status != "open" || x.CloseDate == nil || !sameDate(*x.CloseDate, today) {
 			continue
 		}
+		if isSME(x) {
+			continue // SME IPOs get no automatic signal — admin only
+		}
 		tier := tierFor(x.GMPPercent)
-		if tier == "" || tierRank(tier) <= tierRank(x.SignalTier) {
-			continue // below threshold, or an equal/higher signal already sent
+		if tier == "" {
+			continue // below 10% → no signal
 		}
 		text := formatIPOMessage(x, signalLabel(tier), true)
 		if _, err := s.bc.Broadcast(ctx, text); err != nil {
@@ -102,8 +112,14 @@ func (s *Service) evaluateSignals(ctx context.Context, now time.Time) {
 		if err := s.repo.SetSignalTier(ctx, x.ID, tier, time.Now()); err != nil {
 			s.log.Error().Err(err).Msg("ipo: set signal tier failed")
 		}
-		s.log.Info().Str("ipo", x.Name).Str("tier", tier).Msg("ipo signal sent")
+		s.log.Info().Str("ipo", x.Name).Str("tier", tier).Msg("ipo close-day signal sent")
 	}
+}
+
+// isSME reports whether an IPO is an SME issue (NSE SME / BSE SME), which is
+// excluded from automatic signalling.
+func isSME(x IPO) bool {
+	return strings.Contains(strings.ToUpper(x.Board), "SME") || strings.EqualFold(x.Category, "SME")
 }
 
 // AdminApply lets an admin push an "Apply (said by admin)" signal for any IPO,
@@ -122,6 +138,12 @@ func (s *Service) AdminApply(ctx context.Context, id int64) error {
 		return err
 	}
 	return s.repo.SetSignalTier(ctx, id, "admin_apply", time.Now())
+}
+
+// ClearSignal removes an IPO's on-site signal badge for all users. It does NOT
+// touch Telegram (already-sent messages are deleted there manually).
+func (s *Service) ClearSignal(ctx context.Context, id int64) error {
+	return s.repo.ClearSignal(ctx, id)
 }
 
 // StartPolling runs an immediate poll, then re-polls every interval until ctx is
@@ -147,7 +169,21 @@ func (s *Service) StartPolling(ctx context.Context) {
 			}
 		}
 	}()
-	s.log.Info().Dur("interval", s.interval).Msg("ipo poller started")
+
+	// Authoritative close-day GMP check on an IST cron (default 2:30 PM).
+	c := cron.New(cron.WithLocation(market.IST))
+	if _, err := c.AddFunc(s.signalCron, func() {
+		sc, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		s.RunClosingDaySignals(sc)
+	}); err != nil {
+		s.log.Error().Err(err).Str("cron", s.signalCron).Msg("ipo signal cron invalid")
+	} else {
+		c.Start()
+		go func() { <-ctx.Done(); c.Stop() }()
+	}
+
+	s.log.Info().Dur("interval", s.interval).Str("signal_cron", s.signalCron).Msg("ipo poller started")
 }
 
 // ---- signal tiers -------------------------------------------------------
@@ -162,19 +198,6 @@ func tierFor(pct float64) string {
 		return "your_choice"
 	default:
 		return ""
-	}
-}
-
-func tierRank(tier string) int {
-	switch tier {
-	case "your_choice":
-		return 1
-	case "apply":
-		return 2
-	case "admin_apply":
-		return 3
-	default:
-		return 0
 	}
 }
 

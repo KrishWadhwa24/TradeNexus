@@ -1368,4 +1368,24 @@ code {
 
 .ipo-foot .conv {
   font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conv-x {
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: .6;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 0 0 2px;
+  cursor: pointer;
+}
+
+.conv-x:hover {
+  opacity: 1;
+  color: var(--red);
+  border: none;
 }

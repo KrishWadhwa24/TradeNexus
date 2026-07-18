@@ -71,6 +71,9 @@ type Config struct {
 	// IPO tracker (open + upcoming IPOs + GMP signals from the InvestorGain feed)
 	IPOEnabled      bool          `env:"IPO_ENABLED" envDefault:"true"`
 	IPOPollInterval time.Duration `env:"IPO_POLL_INTERVAL" envDefault:"3h"`
+	// IST cron for the authoritative close-day GMP signal check (mainboard only).
+	// Default 14:30 (2:30 PM IST).
+	IPOSignalCron string `env:"IPO_SIGNAL_CRON" envDefault:"30 14 * * *"`
 
 	// Notifications (Module 7)
 	NotifyEnabled    bool   `env:"NOTIFY_ENABLED" envDefault:"true"`

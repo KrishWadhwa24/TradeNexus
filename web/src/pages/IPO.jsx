@@ -74,6 +74,20 @@ export default function IPO({ isAdmin = false }) {
     }
   }
 
+  async function clearSignal(x) {
+    setBusy(x.id);
+    setMsg("");
+    try {
+      await api.post(`/v1/admin/ipos/${x.id}/clear-signal`, {});
+      setMsg(`Removed the signal badge for ${x.name}.`);
+      load();
+    } catch (e) {
+      setMsg(`Failed to clear ${x.name}: ${e.message}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <div>
       <div className="toolbar">
@@ -146,6 +160,16 @@ export default function IPO({ isAdmin = false }) {
                     {x.signal_tier && (
                       <span className={"conv conv-" + gmpLevel(x.gmp_percent)}>
                         {TIER_LABEL[x.signal_tier] || x.signal_tier}
+                        {isAdmin && (
+                          <button
+                            className="conv-x"
+                            title="Remove this signal for all users (does not touch Telegram)"
+                            disabled={busy === x.id}
+                            onClick={() => clearSignal(x)}
+                          >
+                            ×
+                          </button>
+                        )}
                       </span>
                     )}
                     {isAdmin && (

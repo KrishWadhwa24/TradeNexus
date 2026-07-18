@@ -208,6 +208,7 @@ func (s *Server) Router() http.Handler {
 				// IPO admin: refresh the feed now, or push a manual "Apply".
 				r.Post("/admin/ipos/refresh", s.handleRefreshIPOs)
 				r.Post("/admin/ipos/{id}/apply", s.handleIPOAdminApply)
+				r.Post("/admin/ipos/{id}/clear-signal", s.handleIPOClearSignal)
 			})
 
 			// Users, watchlists, prefs, telegram (Module 7)

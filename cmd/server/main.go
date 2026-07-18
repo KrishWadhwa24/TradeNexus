@@ -155,7 +155,7 @@ func main() {
 		if dispatcher != nil {
 			ipoBroadcaster = dispatcher
 		}
-		ipoSvc = ipo.New(ipo.NewClient(), ipo.NewRepo(pg.Pool), ipoBroadcaster, cfg.IPOPollInterval, log)
+		ipoSvc = ipo.New(ipo.NewClient(), ipo.NewRepo(pg.Pool), ipoBroadcaster, cfg.IPOPollInterval, cfg.IPOSignalCron, log)
 		ipoSvc.StartPolling(ctx)
 	}
 

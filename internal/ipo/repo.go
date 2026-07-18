@@ -97,3 +97,19 @@ func (r *Repo) SetSignalTier(ctx context.Context, id int64, tier string, at time
 		`UPDATE ipos SET signal_tier=$2, signaled_at=$3 WHERE id=$1`, id, tier, at)
 	return err
 }
+
+// ClearSignal removes an IPO's on-site signal badge for all users (blanks the
+// tier). It does NOT touch Telegram. Note: the authoritative close-day check
+// (2:30 PM IST) re-evaluates GMP independently, so a mainboard IPO can still get
+// its signal at close time even after being cleared.
+func (r *Repo) ClearSignal(ctx context.Context, id int64) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE ipos SET signal_tier='', signaled_at=NULL WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

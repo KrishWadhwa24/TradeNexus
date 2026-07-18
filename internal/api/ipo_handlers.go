@@ -57,3 +57,22 @@ func (s *Server) handleIPOAdminApply(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "sent", "ipo_id": id})
 }
+
+// POST /v1/admin/ipos/{id}/clear-signal — remove the on-site signal badge for
+// all users (does not touch Telegram). Admin only.
+func (s *Server) handleIPOClearSignal(w http.ResponseWriter, r *http.Request) {
+	if s.ipo == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ipo tracking disabled"})
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid ipo id"})
+		return
+	}
+	if err := s.ipo.ClearSignal(r.Context(), id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "cleared", "ipo_id": id})
+}

@@ -124,9 +124,14 @@ func TestTierFor(t *testing.T) {
 			t.Errorf("tierFor(%v)=%q want %q", pct, got, want)
 		}
 	}
-	// Upgrade-only ranking.
-	if !(tierRank("apply") > tierRank("your_choice")) || !(tierRank("admin_apply") > tierRank("apply")) {
-		t.Errorf("tier ranks out of order")
+}
+
+func TestIsSME(t *testing.T) {
+	if !isSME(IPO{Board: "BSE SME"}) || !isSME(IPO{Board: "NSE SME"}) || !isSME(IPO{Category: "SME"}) {
+		t.Error("SME issues should be detected")
+	}
+	if isSME(IPO{Board: "IPO", Category: "IPO"}) {
+		t.Error("mainboard IPO must not be flagged SME")
 	}
 }
 
