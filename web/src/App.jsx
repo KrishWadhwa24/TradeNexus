@@ -12,6 +12,7 @@ import Audit from "./pages/Audit.jsx";
 import Paper from "./pages/Paper.jsx";
 import Profile from "./pages/Profile.jsx";
 import Admin from "./pages/Admin.jsx";
+import IPO from "./pages/IPO.jsx";
 
 const NAV = [
   { key: "home", label: "Home", icon: "home" },
@@ -22,6 +23,7 @@ const NAV = [
   { key: "patterns:cup_handle", label: "Cup and Handle", icon: "scan", sub: true },
   { key: "patterns:downtrend_breakout", label: "Downtrend Breakout", icon: "scan", sub: true },
   { key: "patterns:rectangle", label: "Rectangle Box", icon: "scan", sub: true },
+  { key: "ipo", label: "IPO", icon: "rocket" },
   { key: "audit", label: "Audit", icon: "list" },
   { key: "paper", label: "Paper Trading", icon: "wallet" },
   { key: "profile", label: "Profile", icon: "user" },
@@ -37,6 +39,7 @@ const TITLES = {
   "patterns:cup_handle": "Cup and Handle",
   "patterns:downtrend_breakout": "Downtrend Breakout",
   "patterns:rectangle": "Rectangle Box",
+  ipo: "IPO Tracker",
   audit: "Signal Audit",
   paper: "Paper Trading",
   profile: "Profile",
@@ -114,6 +117,7 @@ export default function App() {
       case "patterns:cup_handle": return <Scanner source="patterns" pattern="pattern_cup_handle" {...p} />;
       case "patterns:downtrend_breakout": return <Scanner source="patterns" pattern="pattern_downtrend_breakout" {...p} />;
       case "patterns:rectangle": return <Scanner source="patterns" pattern="pattern_rectangle" {...p} />;
+      case "ipo": return <IPO isAdmin={isAdmin} />;
       case "audit": return <Audit isAdmin={isAdmin} />;
       case "paper": return <Paper {...p} />;
       case "profile": return <Profile {...p} />;

@@ -1399,4 +1399,217 @@ code {
   .lp-links { display: none; }
   .lp-feat-grid, .lp-steps { grid-template-columns: 1fr; }
   .lp-dash-table .lp-name { display: none; }
+/* ---------- IPO cards ---------- */
+.ipo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.ipo-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 16px 14px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color .12s, transform .12s;
+}
+
+.ipo-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  transform: translateY(-1px);
+}
+
+.ipo-card.is-open {
+  border-left: 3px solid var(--green);
+}
+
+.ipo-name {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -.2px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.ipo-name:hover {
+  color: var(--accent-2);
+}
+
+.ipo-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .2px;
+  background: var(--surface-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  text-transform: capitalize;
+}
+
+.chip-open {
+  background: var(--green-soft);
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 34%, transparent);
+}
+
+.chip-soon {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.chip-rating {
+  background: transparent;
+  border-color: transparent;
+  padding-left: 0;
+  font-size: 12px;
+}
+
+.ipo-gmp-block {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.ipo-gmp-label {
+  display: block;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.ipo-gmp-val {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.ipo-gmp-val small {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.conv-text-high {
+  color: var(--green);
+}
+
+.conv-text-med {
+  color: var(--amber);
+}
+
+.conv-text-low {
+  color: var(--muted);
+}
+
+.ipo-profit {
+  text-align: right;
+}
+
+.ipo-profit-val {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.ipo-profit-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--muted);
+}
+
+.ipo-meta {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.ipo-meta > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ipo-meta .k {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--muted);
+}
+
+.ipo-meta .v {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ipo-dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ipo-dates b {
+  color: var(--text);
+  font-weight: 600;
+  margin-right: 2px;
+}
+
+.ipo-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.ipo-foot .conv {
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conv-x {
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: .6;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 0 0 2px;
+  cursor: pointer;
+}
+
+.conv-x:hover {
+  opacity: 1;
+  color: var(--red);
+  border: none;
 }
