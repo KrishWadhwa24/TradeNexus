@@ -154,6 +154,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/auth/register", s.handleRegister)
 		r.Post("/auth/login", s.handleLogin)
 		r.Get("/users/{uid}/live-prices", s.handleLivePrices)
+		r.Get("/public/market-preview", s.handlePublicPreview) // pre-login landing
 
 		// Everything below requires a valid JWT.
 		r.Group(func(r chi.Router) {

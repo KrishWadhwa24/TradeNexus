@@ -20,6 +20,33 @@ func (s *Server) handleTrending(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"count": len(movers), "trending": movers})
 }
 
+// GET /v1/public/market-preview?limit=8 — a small set of trending stocks with
+// live-ish params for the pre-login landing page. PUBLIC (no auth).
+func (s *Server) handlePublicPreview(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 12 {
+		limit = 8
+	}
+	if s.analytics == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"count": 0, "rows": []analytics.Params{}})
+		return
+	}
+	movers, err := s.analytics.TopMovers(r.Context(), limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	out := make([]analytics.Params, 0, len(movers))
+	for _, m := range movers {
+		p, perr := s.instrumentParams(r, m.InstrumentID)
+		if perr != nil || !p.HasData {
+			continue
+		}
+		out = append(out, p)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"count": len(out), "rows": out})
+}
+
 // GET /v1/instruments/{id}/params — latest indicators + live price for one stock.
 func (s *Server) handleInstrumentParams(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
