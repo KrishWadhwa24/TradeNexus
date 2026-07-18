@@ -88,10 +88,13 @@ func TestParseFeed(t *testing.T) {
 	if by[1862].Status != "upcoming" || by[1862].Board != "IPO" || by[1862].Rating != 1 {
 		t.Errorf("lohia: %+v", by[1862])
 	}
-	// Upcoming with GMP 25 / 19.69%.
+	// Upcoming with GMP 25 / 19.69%. Price MUST parse despite the "Price (₹)" key.
 	x := by[1951]
 	if x.Status != "upcoming" || x.GMP != 25 || x.GMPPercent != 19.69 || x.Rating != 3 || x.Size != "170.00 Cr" {
 		t.Errorf("xtranet: %+v", x)
+	}
+	if x.Price != "127" {
+		t.Errorf("xtranet price should parse to 127, got %q", x.Price)
 	}
 	// Open.
 	if by[1610].Status != "open" || by[1610].GMP != 118 {

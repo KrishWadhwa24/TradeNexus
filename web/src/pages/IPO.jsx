@@ -10,8 +10,16 @@ function gmpLevel(pct) {
 // estProfit = GMP per share × lot size (one lot applied).
 function estProfit(x) {
   const lot = parseInt(x.lot, 10);
-  if (!x.gmp || !lot || isNaN(lot)) return "—";
+  if (!x.gmp || !lot || isNaN(lot)) return null;
   return "₹" + (x.gmp * lot).toLocaleString("en-IN");
+}
+
+function fmtDate(d) {
+  if (!d) return "—";
+  const s = String(d).slice(0, 10);
+  const t = new Date(s + "T00:00:00");
+  if (isNaN(t.getTime())) return s;
+  return t.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 }
 
 const TIER_LABEL = {
@@ -27,7 +35,7 @@ export default function IPO({ isAdmin = false }) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
-  const [busy, setBusy] = useState(null); // ipo id currently applying
+  const [busy, setBusy] = useState(null);
 
   function load() {
     setLoading(true);
@@ -46,7 +54,7 @@ export default function IPO({ isAdmin = false }) {
     try {
       await api.post("/v1/admin/ipos/refresh", {});
       setMsg("Feed refresh started — reloading in 6s…");
-      setTimeout(load, 6000);
+      setTimeout(() => { setMsg(""); load(); }, 6000);
     } catch (e) {
       setMsg("Refresh failed: " + e.message);
     }
@@ -56,9 +64,8 @@ export default function IPO({ isAdmin = false }) {
     setBusy(x.id);
     setMsg("");
     try {
-      const r = await api.post(`/v1/admin/ipos/${x.id}/apply`, {});
+      await api.post(`/v1/admin/ipos/${x.id}/apply`, {});
       setMsg(`Sent "Apply (said by admin)" for ${x.name}.`);
-      void r;
       load();
     } catch (e) {
       setMsg(`Failed for ${x.name}: ${e.message}`);
@@ -78,11 +85,6 @@ export default function IPO({ isAdmin = false }) {
         </div>
       </div>
 
-      <div className="subtle" style={{ marginBottom: 12 }}>
-        GMP data from InvestorGain. On an IPO's last bidding day: GMP ≥ 20% → “Apply for IPO”,
-        10–20% → “Your Choice”. Closed/listed IPOs drop off automatically.
-      </div>
-
       {loading ? (
         <div className="spinner">Loading IPOs…</div>
       ) : err ? (
@@ -90,68 +92,74 @@ export default function IPO({ isAdmin = false }) {
       ) : !rows.length ? (
         <div className="empty">No open or upcoming IPOs right now.</div>
       ) : (
-        <div className="panel">
-          <table>
-            <thead>
-              <tr>
-                <th>IPO</th><th>Board</th><th>Status</th><th>GMP</th><th>Est./lot</th><th>Sub</th>
-                <th>Price</th><th>Lot</th><th>Open</th><th>Close</th><th>Listing</th><th>Rating</th>
-                {isAdmin && <th>Admin</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((x) => (
-                <tr key={x.id}>
-                  <td>
+        <div className="ipo-grid">
+          {rows.map((x) => {
+            const profit = estProfit(x);
+            const hasGmp = x.gmp > 0 || x.gmp_percent > 0;
+            return (
+              <div className={"ipo-card" + (x.status === "open" ? " is-open" : "")} key={x.id}>
+                <div className="ipo-card-top">
+                  <div className="ipo-id">
                     {x.url ? (
-                      <a href={IG + x.url} target="_blank" rel="noreferrer"><b>{x.name}</b></a>
-                    ) : <b>{x.name}</b>}
+                      <a className="ipo-name" href={IG + x.url} target="_blank" rel="noreferrer">{x.name}</a>
+                    ) : <span className="ipo-name">{x.name}</span>}
+                    <div className="ipo-badges">
+                      <span className="chip">{x.board || x.category}</span>
+                      <span className={"chip " + (x.status === "open" ? "chip-open" : "chip-soon")}>{x.status}</span>
+                      {x.rating > 0 && <span className="chip chip-rating">{"🔥".repeat(x.rating)}</span>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="ipo-gmp-block">
+                  <div className="ipo-gmp-left">
+                    <span className="ipo-gmp-label">GMP</span>
+                    {hasGmp ? (
+                      <span className={"ipo-gmp-val conv-text-" + gmpLevel(x.gmp_percent)}>
+                        ₹{x.gmp} <small>({x.gmp_percent}%)</small>
+                      </span>
+                    ) : <span className="ipo-gmp-val muted">—</span>}
+                  </div>
+                  {profit && (
+                    <div className="ipo-profit">
+                      <span className="ipo-profit-val">{profit}</span>
+                      <span className="ipo-profit-label">profit / lot</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="ipo-meta">
+                  <div><span className="k">Price</span><span className="v">{x.price ? "₹" + x.price : "—"}</span></div>
+                  <div><span className="k">Lot</span><span className="v">{x.lot || "—"}</span></div>
+                  <div><span className="k">Sub</span><span className="v">{x.subscription && x.subscription !== "-" ? x.subscription : "—"}</span></div>
+                  <div><span className="k">Size</span><span className="v">{x.ipo_size || "—"}</span></div>
+                </div>
+
+                <div className="ipo-dates">
+                  <span><b>Open</b> {fmtDate(x.open_date)}</span>
+                  <span><b>Close</b> {fmtDate(x.close_date)}</span>
+                  <span><b>Lists</b> {fmtDate(x.listing_date)}</span>
+                </div>
+
+                {(x.signal_tier || isAdmin) && (
+                  <div className="ipo-foot">
                     {x.signal_tier && (
-                      <span className={"conv conv-" + gmpLevel(x.gmp_percent)} style={{ marginLeft: 8 }}>
+                      <span className={"conv conv-" + gmpLevel(x.gmp_percent)}>
                         {TIER_LABEL[x.signal_tier] || x.signal_tier}
                       </span>
                     )}
-                  </td>
-                  <td className="muted">{x.board || x.category}</td>
-                  <td>
-                    <span className={"tag " + (x.status === "open" ? "tag-buy" : "tag")}>{x.status}</span>
-                  </td>
-                  <td>
-                    {x.gmp_percent > 0 || x.gmp > 0 ? (
-                      <span className={"conv conv-" + gmpLevel(x.gmp_percent)}>
-                        ₹{x.gmp} ({x.gmp_percent}%)
-                      </span>
-                    ) : <span className="muted">—</span>}
-                  </td>
-                  <td className="muted">{estProfit(x)}</td>
-                  <td className="muted">{x.subscription || "—"}</td>
-                  <td className="muted">{x.price ? "₹" + x.price : "—"}</td>
-                  <td className="muted">{x.lot || "—"}</td>
-                  <td className="muted">{fmtDate(x.open_date)}</td>
-                  <td className="muted">{fmtDate(x.close_date)}</td>
-                  <td className="muted">{fmtDate(x.listing_date)}</td>
-                  <td>{"🔥".repeat(Math.max(0, x.rating || 0)) || "—"}</td>
-                  {isAdmin && (
-                    <td>
+                    {isAdmin && (
                       <button className="btn-sm btn-primary" disabled={busy === x.id} onClick={() => apply(x)}>
                         {busy === x.id ? "Sending…" : "Send Apply"}
                       </button>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
-}
-
-function fmtDate(d) {
-  if (!d) return "—";
-  const s = String(d).slice(0, 10);
-  const t = new Date(s + "T00:00:00");
-  if (isNaN(t.getTime())) return s;
-  return t.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 }

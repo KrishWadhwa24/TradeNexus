@@ -38,31 +38,41 @@ type IPO struct {
 	SignalTier   string     `json:"signal_tier"` // '', your_choice, apply, admin_apply (from DB)
 }
 
-// rawRow mirrors the (HTML-laden) JSON objects the feed returns. Only the fields
-// we use are declared; the rest are ignored.
-type rawRow struct {
-	ID          int64  `json:"~id"`
-	IPOName     string `json:"~ipo_name"`
-	Category    string `json:"~IPO_Category"`
-	GMPPctCalc  string `json:"~gmp_percent_calc"`
-	NameHTML    string `json:"Name"`
-	GMPHTML     string `json:"GMP"`
-	Rating      string `json:"Rating"`
-	Sub         string `json:"Sub"`
-	Price       string `json:"Price (₹)"`
-	Size        string `json:"IPO Size"`
-	Lot         string `json:"Lot"`
-	PE          string `json:"~P/E"`
-	SrtOpen     string `json:"~Srt_Open"`
-	SrtClose    string `json:"~Srt_Close"`
-	SrtBoA      string `json:"~Srt_BoA_Dt"`
-	StrListing  string `json:"~Str_Listing"`
-	URLRewrite  string `json:"~urlrewrite_folder_name"`
-	UpdatedHTML string `json:"Updated-On"`
+// feedResponse decodes rows as generic maps. We look fields up by their exact
+// JSON key — several keys ("Price (₹)", "IPO Size", "~P/E", …) contain spaces
+// or symbols that Go struct tags can't reliably represent (a currency symbol in
+// a tag is silently dropped), so map lookup is the safe way to read them.
+type feedResponse struct {
+	ReportTableData []map[string]any `json:"reportTableData"`
 }
 
-type feedResponse struct {
-	ReportTableData []rawRow `json:"reportTableData"`
+// getStr reads a string-ish value by key (numbers are stringified).
+func getStr(m map[string]any, key string) string {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		return t
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(t)
+	}
+	return ""
+}
+
+// getInt64 reads an integer id by key (JSON numbers decode as float64).
+func getInt64(m map[string]any, key string) int64 {
+	switch t := m[key].(type) {
+	case float64:
+		return int64(t)
+	case string:
+		n, _ := strconv.ParseInt(strings.TrimSpace(t), 10, 64)
+		return n
+	}
+	return 0
 }
 
 // Client fetches IPO data from InvestorGain.
@@ -125,8 +135,8 @@ func ParseFeed(body []byte) ([]IPO, error) {
 		return nil, fmt.Errorf("ipo decode: %w", err)
 	}
 	out := make([]IPO, 0, len(fr.ReportTableData))
-	for _, r := range fr.ReportTableData {
-		out = append(out, r.clean())
+	for _, m := range fr.ReportTableData {
+		out = append(out, cleanRow(m))
 	}
 	return out, nil
 }
@@ -138,28 +148,29 @@ var (
 	reStatusLet = regexp.MustCompile(`ms-2">([UOC])</span>`)
 )
 
-func (r rawRow) clean() IPO {
+func cleanRow(m map[string]any) IPO {
+	nameHTML := getStr(m, "Name")
 	ipo := IPO{
-		ID:           r.ID,
-		Name:         strings.TrimSpace(r.IPOName),
-		Category:     strings.TrimSpace(r.Category),
-		Subscription: strings.TrimSpace(r.Sub),
-		Price:        strings.TrimSpace(r.Price),
-		Size:         cleanRupee(r.Size),
-		Lot:          strings.TrimSpace(r.Lot),
-		PE:           strings.TrimSpace(r.PE),
-		URL:          strings.TrimSpace(r.URLRewrite),
-		UpdatedOn:    stripTags(r.UpdatedHTML),
-		Status:       statusFromName(r.NameHTML),
-		Board:        boardFromName(r.NameHTML),
-		Rating:       len(reFire.FindAllString(r.Rating, -1)),
-		GMPPercent:   parseFloat(r.GMPPctCalc),
-		GMP:          gmpValue(r.GMPHTML),
+		ID:           getInt64(m, "~id"),
+		Name:         strings.TrimSpace(getStr(m, "~ipo_name")),
+		Category:     strings.TrimSpace(getStr(m, "~IPO_Category")),
+		Subscription: strings.TrimSpace(getStr(m, "Sub")),
+		Price:        strings.TrimSpace(cleanRupee(getStr(m, "Price (₹)"))),
+		Size:         cleanRupee(getStr(m, "IPO Size")),
+		Lot:          strings.TrimSpace(getStr(m, "Lot")),
+		PE:           strings.TrimSpace(getStr(m, "~P/E")),
+		URL:          strings.TrimSpace(getStr(m, "~urlrewrite_folder_name")),
+		UpdatedOn:    stripTags(getStr(m, "Updated-On")),
+		Status:       statusFromName(nameHTML),
+		Board:        boardFromName(nameHTML),
+		Rating:       len(reFire.FindAllString(getStr(m, "Rating"), -1)),
+		GMPPercent:   parseFloat(getStr(m, "~gmp_percent_calc")),
+		GMP:          gmpValue(getStr(m, "GMP")),
 	}
-	ipo.OpenDate = parseDate(r.SrtOpen)
-	ipo.CloseDate = parseDate(r.SrtClose)
-	ipo.BoADate = parseDate(r.SrtBoA)
-	ipo.ListingDate = parseDate(r.StrListing)
+	ipo.OpenDate = parseDate(getStr(m, "~Srt_Open"))
+	ipo.CloseDate = parseDate(getStr(m, "~Srt_Close"))
+	ipo.BoADate = parseDate(getStr(m, "~Srt_BoA_Dt"))
+	ipo.ListingDate = parseDate(getStr(m, "~Str_Listing"))
 	return ipo
 }
 
