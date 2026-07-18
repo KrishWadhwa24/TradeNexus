@@ -1,76 +1,63 @@
 import React, { useEffect, useRef, useState } from "react";
-import { api } from "../api.js";
 
-// Fallback seed used only when the backend can't be reached (e.g. deployed
-// frontend with the server offline). When reachable, real data replaces this.
-const SEED = [
-  { sym: "RELIANCE", name: "Reliance Industries", px: 1421.5 },
-  { sym: "TCS", name: "Tata Consultancy Svcs", px: 3208.0 },
-  { sym: "HDFCBANK", name: "HDFC Bank", px: 1683.2 },
-  { sym: "INFY", name: "Infosys", px: 1552.7 },
-  { sym: "ICICIBANK", name: "ICICI Bank", px: 1249.9 },
-  { sym: "TATAMOTORS", name: "Tata Motors", px: 722.4 },
-  { sym: "BHARTIARTL", name: "Bharti Airtel", px: 1655.0 },
-  { sym: "SBIN", name: "State Bank of India", px: 831.6 },
-];
-
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const inr = (n) => (n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-// Rows are normalized to { sym, name, px, chg, rsi, dir }. Real data comes from
-// the public preview endpoint; a random walk is used only as an offline fallback.
+// Real market data only, over a single WebSocket (the same Angel live hub the
+// dashboard uses). On connect the server sends one snapshot (price, %change,
+// RSI), then streams live price ticks. No REST, no polling, no simulation —
+// prices move only when the market actually moves.
 function useLiveStocks() {
-  const [rows, setRows] = useState(() =>
-    SEED.map((s) => ({ sym: s.sym, name: s.name, px: s.px, open: s.px, chg: 0, rsi: 45 + Math.random() * 20, dir: 0 }))
-  );
+  const [rows, setRows] = useState([]);
   const [live, setLive] = useState(false);
-  const prevPx = useRef({});
+  const prevClose = useRef({}); // symbol -> previous close, for %change on tick
 
   useEffect(() => {
     let stopped = false;
-    let simTimer = null;
-    let realTimer = null;
+    let ws = null;
+    let retry = null;
 
-    const applyReal = (data) => {
-      const list = (data.rows || []).slice(0, 8).map((p) => {
-        const prev = prevPx.current[p.symbol];
-        const dir = prev == null ? 0 : Math.sign((p.price || 0) - prev);
-        prevPx.current[p.symbol] = p.price;
-        return { sym: p.symbol, name: "", px: p.price || 0, chg: p.pct_change || 0, rsi: p.rsi14 || 0, dir };
-      });
-      if (list.length && !stopped) { setRows(list); setLive(true); }
-      return list.length > 0;
-    };
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const url = `${proto}//${window.location.host}/v1/public/live-prices`;
 
-    const fetchReal = async () => {
-      try {
-        const d = await api.get("/v1/public/market-preview?limit=8");
-        return applyReal(d);
-      } catch { return false; }
-    };
+    const connect = () => {
+      if (stopped) return;
+      try { ws = new WebSocket(url); } catch { return; }
+      ws.onopen = () => setLive(true);
+      ws.onmessage = (ev) => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+        if (!msg) return;
 
-    const startSim = () => {
-      simTimer = setInterval(() => {
+        if (msg.type === "snapshot") {
+          const list = (msg.rows || []).slice(0, 8).map((p) => {
+            prevClose.current[p.symbol] = p.prev_close || p.last_close || p.price || 0;
+            return { sym: p.symbol, px: p.price || 0, chg: p.pct_change || 0, rsi: p.rsi14 || 0, dir: 0 };
+          });
+          if (!stopped && list.length) setRows(list);
+          return;
+        }
+        // price tick (Tick struct: has symbol + price, no "type")
+        if (!msg.symbol || !msg.price) return;
         setRows((prev) =>
           prev.map((r) => {
-            const open = r.open || r.px;
-            const drift = (Math.random() - 0.48) * r.px * 0.004;
-            const px = Math.max(1, r.px + drift);
-            const rsi = clamp((r.rsi || 50) + (Math.random() - 0.5) * 5, 32, 82);
-            return { ...r, open, px, rsi, dir: Math.sign(px - r.px), chg: ((px - open) / open) * 100 };
+            if (r.sym !== msg.symbol) return r;
+            const pc = prevClose.current[r.sym] || r.px;
+            const chg = pc ? ((msg.price - pc) / pc) * 100 : r.chg;
+            return { ...r, px: msg.price, chg, dir: Math.sign(msg.price - r.px) };
           })
         );
-      }, 1400);
+      };
+      ws.onerror = () => { try { ws.close(); } catch { /* noop */ } };
+      ws.onclose = () => { setLive(false); if (!stopped) retry = setTimeout(connect, 3000); };
     };
+    connect();
 
-    (async () => {
-      const ok = await fetchReal();
-      if (stopped) return;
-      if (ok) realTimer = setInterval(fetchReal, 5000);
-      else startSim();
-    })();
-
-    return () => { stopped = true; if (simTimer) clearInterval(simTimer); if (realTimer) clearInterval(realTimer); };
+    return () => {
+      stopped = true;
+      if (retry) clearTimeout(retry);
+      if (ws) { try { ws.close(); } catch { /* noop */ } }
+    };
   }, []);
 
   return { rows, live };
@@ -169,16 +156,18 @@ export default function Landing({ onGetStarted }) {
         </div>
 
         {/* Ticker marquee */}
-        <div className="lp-ticker">
-          <div className="lp-ticker-track">
-            {[...rows, ...rows].map((r, i) => (
-              <span className="lp-tick" key={i}>
-                <b>{r.sym}</b> ₹{inr(r.px)}
-                <span className={r.chg >= 0 ? "up" : "down"}>{r.chg >= 0 ? "+" : ""}{(r.chg || 0).toFixed(2)}%</span>
-              </span>
-            ))}
+        {rows.length > 0 && (
+          <div className="lp-ticker">
+            <div className="lp-ticker-track">
+              {[...rows, ...rows].map((r, i) => (
+                <span className="lp-tick" key={i}>
+                  <b>{r.sym}</b> ₹{inr(r.px)}
+                  <span className={r.chg >= 0 ? "up" : "down"}>{r.chg >= 0 ? "+" : ""}{(r.chg || 0).toFixed(2)}%</span>
+                </span>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </section>
 
       {/* LIVE DASHBOARD PREVIEW */}
@@ -190,14 +179,19 @@ export default function Landing({ onGetStarted }) {
         </div>
         <div className="lp-dash">
           <div className="lp-dash-top">
-            <span className="lp-live"><i /> LIVE</span>
-            <span className="lp-dash-sub">{live ? "NSE · top movers, live from your server" : "NSE · indicative preview"}</span>
+            <span className="lp-live"><i /> {live ? "LIVE" : "CONNECTING"}</span>
+            <span className="lp-dash-sub">NSE top movers · same live feed as the dashboard</span>
           </div>
           <table className="lp-dash-table">
             <thead>
               <tr><th>Symbol</th><th>Price</th><th>Chg%</th><th>RSI</th><th>Signal</th></tr>
             </thead>
             <tbody>
+              {rows.length === 0 && (
+                <tr><td colSpan={5} style={{ textAlign: "center", padding: "34px 18px", color: "#7d8590" }}>
+                  Waiting for live market data — start the server to stream real prices.
+                </td></tr>
+              )}
               {rows.map((r) => {
                 const chg = r.chg || 0;
                 const sig = signalFor(chg, r.rsi);
