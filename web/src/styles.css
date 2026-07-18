@@ -1399,6 +1399,8 @@ code {
   .lp-links { display: none; }
   .lp-feat-grid, .lp-steps { grid-template-columns: 1fr; }
   .lp-dash-table .lp-name { display: none; }
+}
+
 /* ---------- IPO cards ---------- */
 .ipo-grid {
   display: grid;
