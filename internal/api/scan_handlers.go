@@ -45,11 +45,16 @@ func (s *Server) handleSyncScan(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /v1/signals?instrument_id=&tf=1W&source=weekly&limit=100 — audit browse.
+// Non-admins only see signals for instruments on their own watchlists; admins
+// see every signal, unscoped.
 func (s *Server) handleSignalsList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f := signals.Filter{
 		Timeframe: q.Get("tf"),
 		Source:    q.Get("source"),
+	}
+	if isAdmin, _ := r.Context().Value(isAdminKey).(bool); !isAdmin {
+		f.UserID, _ = r.Context().Value(userIDKey).(string)
 	}
 	if v := q.Get("instrument_id"); v != "" {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil {

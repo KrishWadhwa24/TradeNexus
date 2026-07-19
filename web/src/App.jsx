@@ -74,6 +74,14 @@ export default function App() {
     return () => window.removeEventListener("auth-expired", onExpire);
   }, []);
 
+  // Give the login screen a real history entry so the browser Back button
+  // returns to the landing page instead of leaving the app entirely.
+  useEffect(() => {
+    const onPopState = () => setShowLogin(false);
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
   // Cmd/Ctrl-K toggles the command palette.
   useEffect(() => {
     const onKey = (e) => {
@@ -99,9 +107,14 @@ export default function App() {
 
   if (!authed) {
     return showLogin ? (
-      <Login onAuthed={onAuthed} onBack={() => setShowLogin(false)} />
+      <Login onAuthed={onAuthed} onBack={() => window.history.back()} />
     ) : (
-      <Landing onGetStarted={() => setShowLogin(true)} />
+      <Landing
+        onGetStarted={() => {
+          window.history.pushState({ page: "login" }, "");
+          setShowLogin(true);
+        }}
+      />
     );
   }
 

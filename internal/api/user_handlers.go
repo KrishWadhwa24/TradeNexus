@@ -80,9 +80,35 @@ func (s *Server) handleListWatchlists(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"count": len(list), "watchlists": list})
 }
 
+// ensureWatchlistOwner confirms the authenticated caller owns wid (admins
+// bypass the check). On failure it writes the error response and returns false.
+func (s *Server) ensureWatchlistOwner(w http.ResponseWriter, r *http.Request, wid string) bool {
+	if isAdmin, _ := r.Context().Value(isAdminKey).(bool); isAdmin {
+		return true
+	}
+	owner, err := s.users.WatchlistOwner(r.Context(), wid)
+	if err == users.ErrNotFound {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "watchlist not found"})
+		return false
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return false
+	}
+	uid, _ := r.Context().Value(userIDKey).(string)
+	if owner != uid {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "not your watchlist"})
+		return false
+	}
+	return true
+}
+
 // POST /v1/watchlists/{wid}/items  {"instrument_id":1}
 func (s *Server) handleAddWatchlistItem(w http.ResponseWriter, r *http.Request) {
 	wid := chi.URLParam(r, "wid")
+	if !s.ensureWatchlistOwner(w, r, wid) {
+		return
+	}
 	var body struct {
 		InstrumentID int64 `json:"instrument_id"`
 	}
@@ -100,6 +126,9 @@ func (s *Server) handleAddWatchlistItem(w http.ResponseWriter, r *http.Request) 
 // DELETE /v1/watchlists/{wid}/items/{instrumentId}
 func (s *Server) handleRemoveWatchlistItem(w http.ResponseWriter, r *http.Request) {
 	wid := chi.URLParam(r, "wid")
+	if !s.ensureWatchlistOwner(w, r, wid) {
+		return
+	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "instrumentId"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid instrument id"})

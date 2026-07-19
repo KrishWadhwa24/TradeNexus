@@ -17,6 +17,9 @@ type Filter struct {
 	To        *time.Time
 	Timeframe string
 	Source    string
+	// UserID, when set, restricts results to instruments on that user's
+	// watchlists. Empty means no restriction (admin / unscoped view).
+	UserID string
 }
 
 // Stats is the aggregated dashboard summary.
@@ -49,29 +52,39 @@ type Service struct{ pool *pgxpool.Pool }
 // NewService builds the analytics service.
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
 
-// where builds the shared WHERE clause + args from a filter.
+// where builds the shared WHERE clause + args from a filter. Assumes the
+// signals table is aliased as "s" in the calling query.
 func (s *Service) where(f Filter) (string, []any) {
 	clauses := "WHERE 1=1"
 	var args []any
 	i := 1
 	if f.From != nil {
-		clauses += fmt.Sprintf(" AND created_at >= $%d", i)
+		clauses += fmt.Sprintf(" AND s.created_at >= $%d", i)
 		args = append(args, *f.From)
 		i++
 	}
 	if f.To != nil {
-		clauses += fmt.Sprintf(" AND created_at <= $%d", i)
+		clauses += fmt.Sprintf(" AND s.created_at <= $%d", i)
 		args = append(args, *f.To)
 		i++
 	}
 	if f.Timeframe != "" {
-		clauses += fmt.Sprintf(" AND timeframe = $%d", i)
+		clauses += fmt.Sprintf(" AND s.timeframe = $%d", i)
 		args = append(args, f.Timeframe)
 		i++
 	}
 	if f.Source != "" {
-		clauses += fmt.Sprintf(" AND source = $%d", i)
+		clauses += fmt.Sprintf(" AND s.source = $%d", i)
 		args = append(args, f.Source)
+		i++
+	}
+	if f.UserID != "" {
+		clauses += fmt.Sprintf(` AND EXISTS (
+			SELECT 1 FROM watchlists w
+			JOIN watchlist_items wi ON wi.watchlist_id = w.id
+			WHERE w.user_id = $%d::uuid AND wi.instrument_id = s.instrument_id
+		)`, i)
+		args = append(args, f.UserID)
 		i++
 	}
 	return clauses, args
@@ -88,7 +101,7 @@ func (s *Service) Summary(ctx context.Context, f Filter) (Stats, error) {
 		ConfidenceDist: map[string]int{},
 	}
 
-	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM signals "+where, args...).Scan(&st.Total); err != nil {
+	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM signals s "+where, args...).Scan(&st.Total); err != nil {
 		return st, err
 	}
 	for _, gc := range []struct {
@@ -107,7 +120,7 @@ func (s *Service) Summary(ctx context.Context, f Filter) (Stats, error) {
 
 	// Confidence distribution (weekly only; NULL for pine).
 	rows, err := s.pool.Query(ctx,
-		"SELECT confidence, count(*) FROM signals "+where+" AND confidence IS NOT NULL GROUP BY confidence", args...)
+		"SELECT s.confidence, count(*) FROM signals s "+where+" AND s.confidence IS NOT NULL GROUP BY s.confidence", args...)
 	if err != nil {
 		return st, err
 	}
@@ -124,7 +137,7 @@ func (s *Service) Summary(ctx context.Context, f Filter) (Stats, error) {
 
 func (s *Service) groupCount(ctx context.Context, col, where string, args []any, dst map[string]int) error {
 	// col is from a fixed internal set — safe to interpolate.
-	rows, err := s.pool.Query(ctx, "SELECT "+col+", count(*) FROM signals "+where+" GROUP BY "+col, args...)
+	rows, err := s.pool.Query(ctx, "SELECT s."+col+", count(*) FROM signals s "+where+" GROUP BY s."+col, args...)
 	if err != nil {
 		return err
 	}
