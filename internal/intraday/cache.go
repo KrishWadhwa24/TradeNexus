@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,6 +56,17 @@ func New(rdb *redis.Client, ang *angel.Client, inst *instruments.Repo, c *candle
 }
 
 func key(id int64) string { return fmt.Sprintf("%s%d", keyPrefix, id) }
+
+// isRateLimitErr reports whether an error from Angel's historical endpoint
+// looks like throttling (HTTP 429/403 or app-level AB1004), based on the
+// message text produced by angel.GetDailyCandles.
+func isRateLimitErr(err error) bool {
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "rate limit") ||
+		strings.Contains(m, "access rate") ||
+		strings.Contains(m, "ab1004") ||
+		strings.Contains(m, "too many")
+}
 
 // MarketOpen reports whether NSE cash is currently open.
 func (c *Cache) MarketOpen(now time.Time) bool { return c.cal.Cal().IsMarketOpen(now) }
@@ -109,14 +121,24 @@ func (c *Cache) Refresh(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	c.log.Info().Int("tracked", len(ids)).Msg("intraday: populating redis with today's candles")
 	n := 0
-	for _, id := range ids {
+	for i, id := range ids {
 		inst, err := c.inst.GetByID(ctx, id)
 		if err != nil {
 			continue
 		}
 		cd, found, err := c.fetchToday(ctx, inst)
-		if err != nil || !found {
+		if err != nil {
+			if isRateLimitErr(err) {
+				c.log.Warn().Err(err).Int64("instrument", id).Str("symbol", inst.TradingSymbol).Msg("intraday: rate limited by Angel; keeping previous cached value")
+			} else {
+				c.log.Debug().Err(err).Int64("instrument", id).Str("symbol", inst.TradingSymbol).Msg("intraday: fetchToday errored; keeping previous cached value")
+			}
+			continue // leave the previous cached value in place
+		}
+		if !found {
+			c.log.Debug().Int64("instrument", id).Str("symbol", inst.TradingSymbol).Msg("intraday: no candle yet (no trades today); keeping previous cached value")
 			continue // leave the previous cached value in place
 		}
 		b, _ := json.Marshal(cd)
@@ -124,6 +146,9 @@ func (c *Cache) Refresh(ctx context.Context) (int, error) {
 			continue
 		}
 		n++
+		if (i+1)%10 == 0 {
+			c.log.Info().Int("processed", i+1).Int("tracked", len(ids)).Int("cached", n).Msg("intraday: redis populate progress")
+		}
 	}
 	c.rdb.Set(ctx, builtKey, time.Now().In(market.IST).Format(time.RFC3339), c.ttl)
 	c.log.Info().Int("cached", n).Int("tracked", len(ids)).Msg("intraday: cache refreshed")

@@ -78,11 +78,20 @@ func (s *Service) Poll(ctx context.Context) error {
 	return nil
 }
 
-// RunClosingDaySignals is the authoritative auto-signal check, run on a schedule
-// (2:30 PM IST by default). For every MAINBOARD IPO that is open and closes
-// today, it evaluates the GMP tier and sends the Telegram signal if the
-// threshold is met. It deliberately ignores any prior admin "clear" — the
-// close-day GMP check always fires. SME IPOs are skipped entirely (admin-only).
+// closingSignalCutoffHour is the last IST hour (24h) at which the close-day GMP
+// check is still allowed to fire. IPO bidding effectively ends well before this,
+// so an alert this late has no value even if the server only just started.
+const closingSignalCutoffHour = 17 // 5:00 PM IST
+
+// RunClosingDaySignals is the authoritative auto-signal check. It is run on a
+// schedule (2:30 PM IST by default) AND opportunistically at startup/poll time
+// (see StartPolling) so a signal still goes out even if the process wasn't
+// running at 2:30 PM — as long as it's checked before 5:00 PM IST. For every
+// MAINBOARD IPO that is open and closes today, it evaluates the GMP tier and
+// sends the Telegram signal if the threshold is met. It deliberately ignores
+// any prior admin "clear" — the close-day GMP check always fires. SME IPOs are
+// skipped entirely (admin-only). Already-signaled IPOs (same tier, same day)
+// are skipped so running this more than once a day never double-sends.
 func (s *Service) RunClosingDaySignals(ctx context.Context) {
 	if s.bc == nil {
 		return
@@ -103,6 +112,9 @@ func (s *Service) RunClosingDaySignals(ctx context.Context) {
 		tier := tierFor(x.GMPPercent)
 		if tier == "" {
 			continue // below 10% → no signal
+		}
+		if x.SignalTier == tier && x.SignaledAt != nil && sameDate(*x.SignaledAt, today) {
+			continue // already signaled at this tier today — avoid a duplicate Telegram send
 		}
 		text := formatIPOMessage(x, signalLabel(tier), true)
 		if _, err := s.bc.Broadcast(ctx, text); err != nil {
@@ -146,6 +158,22 @@ func (s *Service) ClearSignal(ctx context.Context, id int64) error {
 	return s.repo.ClearSignal(ctx, id)
 }
 
+// catchUpClosingDaySignals runs the close-day GMP check immediately, but only
+// if it's still before the 5:00 PM IST cutoff. This covers the case where the
+// process wasn't running at the scheduled 2:30 PM cron (e.g. server was down
+// or only just started) — as long as someone brings it up before 5:00 PM on
+// the IPO's last day, the alert still goes out. RunClosingDaySignals is
+// idempotent (skips IPOs already signaled today), so this is safe to run
+// alongside the cron without double-sending.
+func (s *Service) catchUpClosingDaySignals() {
+	if time.Now().In(market.IST).Hour() >= closingSignalCutoffHour {
+		return
+	}
+	sc, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	s.RunClosingDaySignals(sc)
+}
+
 // StartPolling runs an immediate poll, then re-polls every interval until ctx is
 // cancelled. Each poll uses its own timeout so it can't hang the loop.
 func (s *Service) StartPolling(ctx context.Context) {
@@ -157,7 +185,8 @@ func (s *Service) StartPolling(ctx context.Context) {
 		}
 	}
 	go func() {
-		poll() // startup
+		poll()                       // startup
+		s.catchUpClosingDaySignals() // catch up on today's close-day signal if we missed the cron
 		t := time.NewTicker(s.interval)
 		defer t.Stop()
 		for {
@@ -166,6 +195,7 @@ func (s *Service) StartPolling(ctx context.Context) {
 				return
 			case <-t.C:
 				poll()
+				s.catchUpClosingDaySignals()
 			}
 		}
 	}()

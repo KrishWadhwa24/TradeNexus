@@ -389,15 +389,20 @@ func (s *Service) ScanAll(ctx context.Context) ([]ScanResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.log.Info().Int("tracked", len(ids)).Msg("scan-all: starting scan")
 	var out []ScanResult
-	for _, id := range ids {
+	for i, id := range ids {
 		r, err := s.ScanStored(ctx, id)
 		if err != nil {
 			s.log.Error().Err(err).Int64("instrument", id).Msg("scan-all: instrument failed")
 			continue
 		}
 		out = append(out, r)
+		if (i+1)%10 == 0 {
+			s.log.Info().Int("scanned", i+1).Int("tracked", len(ids)).Msg("scan-all: progress")
+		}
 	}
+	s.log.Info().Int("scanned", len(out)).Int("tracked", len(ids)).Msg("scan-all: finished")
 	return out, nil
 }
 
@@ -408,16 +413,25 @@ func (s *Service) ReconcileAll(ctx context.Context) ([]ReconcileResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	total := len(ids)
+	s.log.Info().Int("total", total).Msg("reconcile-all: starting")
+
+	const heartbeatEvery = 10
 	var out []ReconcileResult
-	for _, id := range ids {
+	for i, id := range ids {
 		r, err := s.Reconcile(ctx, id)
 		if err != nil {
 			s.log.Error().Err(err).Int64("instrument", id).Msg("reconcile-all: instrument failed")
-			continue
+		} else {
+			out = append(out, r)
 		}
-		out = append(out, r)
 
+		done := i + 1
+		if done%heartbeatEvery == 0 || done == total {
+			s.log.Info().Int("done", done).Int("total", total).Msg("reconcile-all: progress")
+		}
 	}
+	s.log.Info().Int("total", total).Int("succeeded", len(out)).Msg("reconcile-all: finished")
 	return out, nil
 }
 

@@ -17,7 +17,7 @@ import (
 
 // maxHistAttempts bounds retries when Angel rejects a historical request with a
 // transient rate-limit error (its server-side cap is stricter than our bucket).
-const maxHistAttempts = 3
+const maxHistAttempts = 5
 
 // Interval constants (only ONE_DAY is used — higher TFs are derived locally).
 const IntervalOneDay = "ONE_DAY"
@@ -53,6 +53,19 @@ func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken stri
 		if err != nil {
 			return nil, err
 		}
+		// Angel throttling: HTTP 429, or a 403 whose body is a rate-limit
+		// message (not an expired-auth 403) → back off and retry. This must be
+		// checked BEFORE the auth-refresh branch below, since a 403 body of
+		// "Access denied because of exceeding access rate" is not an auth
+		// failure and re-logging in for it is pointless.
+		if status == http.StatusTooManyRequests ||
+			(status == http.StatusForbidden && isRateLimited(string(raw), "")) {
+			lastErr = fmt.Errorf("angel historical HTTP %d (rate limited): %s", status, bodyPreview(raw))
+			if attempt < maxHistAttempts && sleepBackoff(ctx, attempt) {
+				continue
+			}
+			return nil, lastErr
+		}
 		if status == http.StatusUnauthorized || status == http.StatusForbidden {
 			if err := c.refreshOrLogin(ctx); err == nil {
 				raw, status, err = c.doHistoricalRequest(ctx, reqBody)
@@ -60,14 +73,6 @@ func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken stri
 					return nil, err
 				}
 			}
-		}
-		// Angel throttling: HTTP 429 → back off and retry.
-		if status == http.StatusTooManyRequests {
-			lastErr = fmt.Errorf("angel historical HTTP 429 (rate limited): %s", bodyPreview(raw))
-			if attempt < maxHistAttempts && sleepBackoff(ctx, attempt) {
-				continue
-			}
-			return nil, lastErr
 		}
 		if status < http.StatusOK || status >= http.StatusMultipleChoices {
 			return nil, fmt.Errorf("angel historical HTTP %d: %s", status, bodyPreview(raw))
@@ -110,9 +115,12 @@ func isRateLimited(msg, code string) bool {
 		strings.Contains(m, "too many")
 }
 
-// sleepBackoff waits attempt*1s (respecting ctx). Returns false if cancelled.
+// sleepBackoff waits with an exponential ramp (5s, 10s, 20s, 40s, ...),
+// respecting ctx. Returns false if cancelled. Angel's access-rate block seems
+// to need real cooldown time, not just a 1-3s retry.
 func sleepBackoff(ctx context.Context, attempt int) bool {
-	t := time.NewTimer(time.Duration(attempt) * time.Second)
+	wait := 5 * time.Second << (attempt - 1)
+	t := time.NewTimer(wait)
 	defer t.Stop()
 	select {
 	case <-ctx.Done():
