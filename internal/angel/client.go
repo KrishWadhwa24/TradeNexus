@@ -53,9 +53,17 @@ type Client struct {
 	limiter *ratelimit.Limiter
 	log     zerolog.Logger
 
-	mu        sync.RWMutex
-	tokens    tokenData
-	tokenTime time.Time
+	mu          sync.RWMutex
+	tokens      tokenData
+	tokenTime   time.Time
+	loginFailAt time.Time // zero if the last login attempt succeeded (or none made yet)
+	loginErr    error
+
+	// loginMu serializes ensureLogin so concurrent callers (e.g. ReconcileAll's
+	// worker pool, all unauthenticated at startup) coalesce onto a single
+	// Login() attempt instead of firing several at once — Angel's edge/WAF
+	// rejects simultaneous logins from the same account with a non-JSON 403.
+	loginMu sync.Mutex
 }
 
 // StreamCredentials returns the current credentials required by Angel's

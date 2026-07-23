@@ -35,7 +35,8 @@ type IPO struct {
 	ListingDate  *time.Time `json:"listing_date"`
 	URL          string     `json:"url"`
 	UpdatedOn    string     `json:"updated_on"`
-	SignalTier   string     `json:"signal_tier"` // '', your_choice, apply, admin_apply (from DB)
+	SignalTier   string     `json:"signal_tier"`  // '', your_choice, apply, admin_apply (from DB)
+	SignaledAt   *time.Time `json:"signaled_at"` // when SignalTier was last set (from DB)
 }
 
 // feedResponse decodes rows as generic maps. We look fields up by their exact

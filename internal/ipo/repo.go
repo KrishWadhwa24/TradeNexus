@@ -52,13 +52,15 @@ func (r *Repo) PruneExcept(ctx context.Context, keepIDs []int64) (int64, error) 
 }
 
 const selectCols = `id, name, board, category, status, gmp, gmp_percent, subscription, price,
-	ipo_size, lot, pe, rating, open_date, close_date, boa_date, listing_date, url, updated_on, signal_tier`
+	ipo_size, lot, pe, rating, open_date, close_date, boa_date, listing_date, url, updated_on,
+	signal_tier, signaled_at`
 
 func scanIPO(row pgx.Row) (IPO, error) {
 	var x IPO
 	err := row.Scan(&x.ID, &x.Name, &x.Board, &x.Category, &x.Status, &x.GMP, &x.GMPPercent,
 		&x.Subscription, &x.Price, &x.Size, &x.Lot, &x.PE, &x.Rating,
-		&x.OpenDate, &x.CloseDate, &x.BoADate, &x.ListingDate, &x.URL, &x.UpdatedOn, &x.SignalTier)
+		&x.OpenDate, &x.CloseDate, &x.BoADate, &x.ListingDate, &x.URL, &x.UpdatedOn,
+		&x.SignalTier, &x.SignaledAt)
 	return x, err
 }
 

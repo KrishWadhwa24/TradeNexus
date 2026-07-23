@@ -1,6 +1,6 @@
 -- IPO tracker. Holds ONLY open + upcoming IPOs (source: InvestorGain GMP feed).
 -- Closed/listed IPOs are pruned on every poll — no history is kept.
-CREATE TABLE ipos (
+CREATE TABLE IF NOT EXISTS ipos (
     id           BIGINT PRIMARY KEY,          -- InvestorGain ~id (stable per IPO)
     name         TEXT NOT NULL,
     board        TEXT NOT NULL DEFAULT '',    -- "IPO" | "BSE SME" | "NSE SME"
@@ -26,4 +26,4 @@ CREATE TABLE ipos (
     signaled_at  TIMESTAMPTZ,
     last_polled  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX ipos_status_close_idx ON ipos (status, close_date);
+CREATE INDEX IF NOT EXISTS ipos_status_close_idx ON ipos (status, close_date);

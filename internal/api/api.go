@@ -77,6 +77,10 @@ type Server struct {
 	scanRunning atomic.Bool
 	// refetchRunning guards the admin per-date refetch (also heavy on Angel).
 	refetchRunning atomic.Bool
+	// reconcileRunning guards the bulk admin reconcile-all endpoint so two
+	// overlapping runs (e.g. an admin click racing the daily cron) don't both
+	// hammer Angel at once.
+	reconcileRunning atomic.Bool
 }
 
 // NewServer constructs the API server with its dependencies.
@@ -158,6 +162,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/auth/register", s.handleRegister)
 		r.Post("/auth/login", s.handleLogin)
 		r.Get("/users/{uid}/live-prices", s.handleLivePrices)
+		r.Get("/public/live-prices", s.handlePublicLivePrices) // landing: snapshot + live ticks (WS)
 
 		// Everything below requires a valid JWT.
 		r.Group(func(r chi.Router) {

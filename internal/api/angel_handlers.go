@@ -15,7 +15,7 @@ import (
 
 // POST /v1/angel/login — authenticate with Angel (TOTP+JWT).
 func (s *Server) handleAngelLogin(w http.ResponseWriter, r *http.Request) {
-	if err := s.angel.Login(r.Context()); err != nil {
+	if err := s.angel.ForceLogin(r.Context()); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}

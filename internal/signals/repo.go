@@ -50,6 +50,9 @@ type Filter struct {
 	Timeframe    string
 	Source       string
 	Limit        int
+	// UserID, when set, restricts results to instruments on that user's
+	// watchlists. Empty means no restriction (admin / unscoped view).
+	UserID string
 }
 
 // Repo is the signals datastore.
@@ -95,9 +98,14 @@ func (r *Repo) List(ctx context.Context, f Filter) ([]Signal, error) {
 		WHERE ($1::bigint IS NULL OR s.instrument_id = $1)
 		  AND ($2 = '' OR s.timeframe = $2)
 		  AND ($3 = '' OR s.source = $3)
+		  AND ($5 = '' OR EXISTS (
+		        SELECT 1 FROM watchlists w
+		        JOIN watchlist_items wi ON wi.watchlist_id = w.id
+		        WHERE w.user_id = $5::uuid AND wi.instrument_id = s.instrument_id
+		      ))
 		ORDER BY s.created_at DESC
 		LIMIT $4`,
-		f.InstrumentID, f.Timeframe, f.Source, limit)
+		f.InstrumentID, f.Timeframe, f.Source, limit, f.UserID)
 	if err != nil {
 		return nil, err
 	}

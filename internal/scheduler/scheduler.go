@@ -122,10 +122,22 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		s.log.Info().Dur("interval", s.cfg.IntradayInterval).Msg("intraday cache refresher started")
 	}
 
-	// Startup work runs SEQUENTIALLY: reconcile/backfill first, then (only if the
-	// market is open) warm the intraday cache. Running them one after the other
-	// avoids two concurrent bulk Angel workflows tripping the rate limiter.
+	// Startup work runs SEQUENTIALLY: fill any SCHEDULED paper trades if the
+	// market is already open (covers a server restart or downtime that spans
+	// market open, so trades don't sit stranded until the next cron tick),
+	// then reconcile/backfill, then (only if the market is open) warm the
+	// intraday cache. Running them one after the other avoids concurrent bulk
+	// Angel workflows tripping the rate limiter.
 	go func() {
+		if s.paper != nil {
+			bootCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			if n, err := s.paper.FillScheduledIfMarketOpen(bootCtx); err != nil {
+				s.log.Error().Err(err).Msg("scheduler: startup fill scheduled trades failed")
+			} else if n > 0 {
+				s.log.Info().Int("filled", n).Msg("scheduler: startup filled scheduled trades (market already open)")
+			}
+			cancel()
+		}
 		if s.cfg.RunReconcileOnBoot {
 			bootCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			s.log.Info().Msg("scheduler: startup reconciliation starting")
