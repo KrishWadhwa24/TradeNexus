@@ -107,6 +107,16 @@ func (s *Server) handleReconcile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, res)
 		return
 	}
+	// Guard: only one bulk reconcile at a time (e.g. an admin click racing the
+	// daily cron), so they don't both hammer Angel concurrently.
+	if !s.reconcileRunning.CompareAndSwap(false, true) {
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"status": "already_running", "message": "a reconcile is already in progress",
+		})
+		return
+	}
+	defer s.reconcileRunning.Store(false)
+
 	res, err := s.engine.ReconcileAll(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

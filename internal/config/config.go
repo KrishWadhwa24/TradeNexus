@@ -37,7 +37,13 @@ type Config struct {
 
 	// Angel rate limiting
 	AngelHistRate            float64       `env:"ANGEL_HIST_RATE" envDefault:"2"`
-	AngelHistBurst           int           `env:"ANGEL_HIST_BURST" envDefault:"2"`
+	// Burst is deliberately 1: with >1 the bucket can release two requests to
+	// Angel at the same instant, and Angel's real server-side cap is stricter
+	// than our configured rate — bursts of 2+ are what triggers its rate-limit
+	// errors. Keeping burst at 1 still lets concurrent workers overlap request
+	// latency (see intraday.Cache.Refresh) without ever dispatching two calls
+	// at once.
+	AngelHistBurst           int           `env:"ANGEL_HIST_BURST" envDefault:"1"`
 	AngelScripMasterTimeout  time.Duration `env:"ANGEL_SCRIPMASTER_TIMEOUT" envDefault:"5m"`
 	AngelScripMasterAttempts int           `env:"ANGEL_SCRIPMASTER_ATTEMPTS" envDefault:"3"`
 	AngelScripMasterURL      string        `env:"ANGEL_SCRIPMASTER_URL" envDefault:""`
