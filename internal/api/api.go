@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +22,7 @@ import (
 	"tradenexus/internal/candles"
 	"tradenexus/internal/engine"
 	"tradenexus/internal/instruments"
+	"tradenexus/internal/ipo"
 	"tradenexus/internal/live"
 	"tradenexus/internal/notify"
 	"tradenexus/internal/paper"
@@ -47,6 +49,7 @@ type Deps struct {
 	Analytics   *analytics.Service
 	Paper       *paper.Service
 	Live        *live.Hub
+	IPO         *ipo.Service
 	JWTSecret   string
 }
 
@@ -67,7 +70,13 @@ type Server struct {
 	analytics *analytics.Service
 	paper     *paper.Service
 	live      *live.Hub
+	ipo       *ipo.Service
 	jwtSecret string
+
+	// scanRunning guards manual scan-all so repeated clicks don't stack.
+	scanRunning atomic.Bool
+	// refetchRunning guards the admin per-date refetch (also heavy on Angel).
+	refetchRunning atomic.Bool
 }
 
 // NewServer constructs the API server with its dependencies.
@@ -88,6 +97,7 @@ func NewServer(d Deps) *Server {
 		analytics: d.Analytics,
 		paper:     d.Paper,
 		live:      d.Live,
+		ipo:       d.IPO,
 		jwtSecret: d.JWTSecret,
 	}
 }
@@ -96,8 +106,10 @@ func NewServer(d Deps) *Server {
 type ctxKey string
 
 const userIDKey ctxKey = "uid"
+const isAdminKey ctxKey = "is_admin"
 
-// authMiddleware validates the Bearer JWT and injects the user id into context.
+// authMiddleware validates the Bearer JWT and injects the user id + admin flag
+// into context.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := r.Header.Get("Authorization")
@@ -111,7 +123,20 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), userIDKey, claims.UserID)
+		ctx = context.WithValue(ctx, isAdminKey, claims.IsAdmin)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// adminOnly rejects requests whose token isn't flagged admin. Must run inside
+// the authenticated group (after authMiddleware).
+func (s *Server) adminOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isAdmin, _ := r.Context().Value(isAdminKey).(bool); !isAdmin {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin access required"})
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -123,7 +148,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(s.requestLogger)
 	r.Use(middleware.Recoverer)
-	r.Use(timeoutExceptLivePrices(30 * time.Second))
+	r.Use(timeoutExcept(30*time.Second, "/live-prices", "/admin/reconcile", "/candles/sync", "/sync-scan", "/admin/candles/refetch"))
 
 	r.Get("/health", s.handleHealth)
 	r.Get("/health/ready", s.handleReady)
@@ -153,23 +178,38 @@ func (s *Server) Router() http.Handler {
 			r.Get("/instruments/search", s.handleInstrumentSearch)
 			r.Get("/instruments/{id}", s.handleInstrumentGet)
 
-			// Candles (Module 3)
-			r.Post("/instruments/{id}/candles/sync", s.handleCandleSync)
+			// Candles (Module 3). Sync fetches from Angel (rate-limited) so it gets
+			// a longer timeout than the 30s default.
+			r.With(middleware.Timeout(3*time.Minute)).Post("/instruments/{id}/candles/sync", s.handleCandleSync)
 			r.Get("/instruments/{id}/candles", s.handleCandleGet)
 
 			// Scanning + signals (Modules 4-6)
 			r.Post("/instruments/{id}/scan", s.handleScanInstrument)
-			r.Post("/instruments/{id}/sync-scan", s.handleSyncScan)
+			r.With(middleware.Timeout(3*time.Minute)).Post("/instruments/{id}/sync-scan", s.handleSyncScan)
 			r.Get("/signals", s.handleSignalsList)
 
 			// Calendar (Module 6)
 			r.Get("/calendar/check", s.handleCalendarCheck)
 
 			// Admin / ops (Module 6)
-			r.Post("/admin/reconcile", s.handleReconcile)
-			r.Post("/admin/scan-all", s.handleScanAll)
+			r.With(middleware.Timeout(35*time.Minute)).Post("/admin/reconcile", s.handleReconcile)
+			r.With(middleware.Timeout(35*time.Minute)).Post("/admin/scan-all", s.handleScanAll)
 			r.Post("/admin/cleanup", s.handleCleanup)
 			r.Post("/admin/holidays", s.handleAddHolidays)
+
+			// Admin-only candle tools (count / delete / refetch a specific day).
+			r.Group(func(r chi.Router) {
+				r.Use(s.adminOnly)
+				r.Get("/admin/candles", s.handleCandleCountByDate)
+				r.Delete("/admin/candles", s.handleDeleteCandlesByDate)
+				r.With(middleware.Timeout(65*time.Minute)).Post("/admin/candles/refetch", s.handleRefetchCandlesByDate)
+				r.Post("/admin/dispatch/force", s.handleForceDispatch)
+
+				// IPO admin: refresh the feed now, or push a manual "Apply".
+				r.Post("/admin/ipos/refresh", s.handleRefreshIPOs)
+				r.Post("/admin/ipos/{id}/apply", s.handleIPOAdminApply)
+				r.Post("/admin/ipos/{id}/clear-signal", s.handleIPOClearSignal)
+			})
 
 			// Users, watchlists, prefs, telegram (Module 7)
 			r.Post("/users", s.handleCreateUser)
@@ -193,6 +233,9 @@ func (s *Server) Router() http.Handler {
 			r.Get("/analytics/summary", s.handleAnalyticsSummary)
 			r.Get("/analytics/export.xlsx", s.handleAnalyticsExport)
 
+			// IPOs (open + upcoming, with GMP)
+			r.Get("/ipos", s.handleListIPOs)
+
 			// Market data (Module 9): trending + params + dashboard
 			r.Get("/market/trending", s.handleTrending)
 			r.Get("/instruments/{id}/params", s.handleInstrumentParams)
@@ -213,14 +256,16 @@ func (s *Server) Router() http.Handler {
 	return r
 }
 
-func timeoutExceptLivePrices(timeout time.Duration) func(http.Handler) http.Handler {
+func timeoutExcept(timeout time.Duration, suffixes ...string) func(http.Handler) http.Handler {
 	withTimeout := middleware.Timeout(timeout)
 	return func(next http.Handler) http.Handler {
 		timed := withTimeout(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasSuffix(r.URL.Path, "/live-prices") {
-				next.ServeHTTP(w, r)
-				return
+			for _, suffix := range suffixes {
+				if strings.HasSuffix(r.URL.Path, suffix) {
+					next.ServeHTTP(w, r)
+					return
+				}
 			}
 			timed.ServeHTTP(w, r)
 		})

@@ -59,7 +59,7 @@ func runWeekly() result {
 }
 
 func runDowntrendBreakout() result {
-	sig := scanner.ScanDowntrendBreakout(fakeDowntrendBreakoutCandles())
+	sig := scanner.ScanDowntrendBreakout(fakeDowntrendBreakoutCandles(), true)
 	return result{
 		Scanner: "pattern_downtrend_breakout",
 		Fired:   sig.Buy,
@@ -68,7 +68,7 @@ func runDowntrendBreakout() result {
 }
 
 func runRectangle() result {
-	sig := scanner.ScanRectangleConsolidation(fakeRectangleCandles())
+	sig := scanner.ScanRectangleConsolidation(fakeRectangleCandles(), true)
 	return result{
 		Scanner: "pattern_rectangle",
 		Fired:   sig.Buy,
@@ -77,7 +77,7 @@ func runRectangle() result {
 }
 
 func runCupHandle() result {
-	sig := scanner.ScanCupAndHandle(fakeCupHandleCandles())
+	sig := scanner.ScanCupAndHandle(fakeCupHandleCandles(), true)
 	return result{
 		Scanner: "pattern_cup_handle",
 		Fired:   sig.Buy,

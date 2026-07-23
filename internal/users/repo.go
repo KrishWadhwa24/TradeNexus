@@ -15,8 +15,9 @@ var ErrNotFound = errors.New("not found")
 
 // User is an account.
 type User struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
+	ID      string `json:"id"`
+	Email   string `json:"email"`
+	IsAdmin bool   `json:"is_admin"`
 }
 
 // Watchlist with its instrument ids.
@@ -104,20 +105,36 @@ func (r *Repo) ensureDefaultScannerPrefs(ctx context.Context, userID string) err
 	return nil
 }
 
-// AuthByEmail returns the user id and password hash for login verification.
-func (r *Repo) AuthByEmail(ctx context.Context, email string) (id, hash string, err error) {
+// AuthByEmail returns the user id, password hash, and admin flag for login.
+func (r *Repo) AuthByEmail(ctx context.Context, email string) (id, hash string, isAdmin bool, err error) {
 	err = r.pool.QueryRow(ctx,
-		`SELECT id::text, password_hash FROM users WHERE lower(email) = lower($1)`, email).
-		Scan(&id, &hash)
+		`SELECT id::text, password_hash, is_admin FROM users WHERE lower(email) = lower($1)`, email).
+		Scan(&id, &hash, &isAdmin)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", ErrNotFound
+		return "", "", false, ErrNotFound
 	}
-	return id, hash, err
+	return id, hash, isAdmin, err
+}
+
+// EnsureAdmin upserts an admin account with the given credentials. Called on
+// boot from ADMIN_EMAIL/ADMIN_PASSWORD so there's always exactly one known
+// admin login. The password hash is refreshed each boot and is_admin forced on.
+func (r *Repo) EnsureAdmin(ctx context.Context, email, passwordHash string) (string, error) {
+	var id string
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO users (email, password_hash, is_admin) VALUES ($1, $2, TRUE)
+		ON CONFLICT (lower(email)) DO UPDATE
+		SET password_hash = EXCLUDED.password_hash, is_admin = TRUE
+		RETURNING id::text`, email, passwordHash).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return id, r.ensureDefaultScannerPrefs(ctx, id)
 }
 
 // ListUsers returns all users.
 func (r *Repo) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := r.pool.Query(ctx, `SELECT id::text, email FROM users ORDER BY email`)
+	rows, err := r.pool.Query(ctx, `SELECT id::text, email, is_admin FROM users ORDER BY email`)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +142,7 @@ func (r *Repo) ListUsers(ctx context.Context) ([]User, error) {
 	var out []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Email); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.IsAdmin); err != nil {
 			return nil, err
 		}
 		out = append(out, u)

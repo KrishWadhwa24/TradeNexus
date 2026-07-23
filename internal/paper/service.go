@@ -68,14 +68,14 @@ type Trade struct {
 type PnLSummary struct {
 	StartingCapital float64 `json:"starting_capital"`
 	CashBalance     float64 `json:"cash_balance"`
-	Invested        float64 `json:"invested"`         // cost basis of open positions
-	MarketValue     float64 `json:"market_value"`     // current value of open positions
-	Unrealized      float64 `json:"unrealized_pnl"`   // open positions
-	RealizedTotal   float64 `json:"realized_pnl"`     // closed trades net
-	BookedProfit    float64 `json:"booked_profit"`    // sum of positive closed pnl
-	BookedLoss      float64 `json:"booked_loss"`      // sum of negative closed pnl
-	TotalPnL        float64 `json:"total_pnl"`        // realized + unrealized
-	Equity          float64 `json:"equity"`           // cash + market value
+	Invested        float64 `json:"invested"`       // cost basis of open positions
+	MarketValue     float64 `json:"market_value"`   // current value of open positions
+	Unrealized      float64 `json:"unrealized_pnl"` // open positions
+	RealizedTotal   float64 `json:"realized_pnl"`   // closed trades net
+	BookedProfit    float64 `json:"booked_profit"`  // sum of positive closed pnl
+	BookedLoss      float64 `json:"booked_loss"`    // sum of negative closed pnl
+	TotalPnL        float64 `json:"total_pnl"`      // realized + unrealized
+	Equity          float64 `json:"equity"`         // cash + market value
 	OpenPositions   int     `json:"open_positions"`
 }
 

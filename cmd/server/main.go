@@ -15,11 +15,14 @@ import (
 	"tradenexus/internal/analytics"
 	"tradenexus/internal/angel"
 	"tradenexus/internal/api"
+	"tradenexus/internal/auth"
 	"tradenexus/internal/calendar"
 	"tradenexus/internal/candles"
 	"tradenexus/internal/config"
 	"tradenexus/internal/engine"
 	"tradenexus/internal/instruments"
+	"tradenexus/internal/intraday"
+	"tradenexus/internal/ipo"
 	"tradenexus/internal/live"
 	"tradenexus/internal/logger"
 	"tradenexus/internal/notify"
@@ -87,6 +90,21 @@ func main() {
 	signalRepo := signals.NewRepo(pg.Pool)
 	userRepo := users.NewRepo(pg.Pool)
 
+	// Seed the admin account from env (idempotent). Refreshes the password each
+	// boot so ADMIN_PASSWORD is always the source of truth.
+	if cfg.AdminEmail != "" && cfg.AdminPassword != "" {
+		hash, herr := auth.HashPassword(cfg.AdminPassword)
+		if herr != nil {
+			log.Fatal().Err(herr).Msg("hash admin password")
+		}
+		if _, aerr := userRepo.EnsureAdmin(ctx, cfg.AdminEmail, hash); aerr != nil {
+			log.Fatal().Err(aerr).Msg("seed admin user")
+		}
+		log.Info().Str("email", cfg.AdminEmail).Msg("admin account ready")
+	} else {
+		log.Warn().Msg("ADMIN_EMAIL/ADMIN_PASSWORD not set — admin tools disabled")
+	}
+
 	// 6) Calendar (load holidays from DB).
 	calSvc := calendar.NewService(pg.Pool, cfg.Exchange)
 	if err := calSvc.Reload(ctx); err != nil {
@@ -102,11 +120,21 @@ func main() {
 		)
 	}
 
-	// 8) Engine service (scan pipeline + reconciliation + notify).
+	// Intraday cache (today's forming candle in Redis, market hours only).
+	var intradayCache *intraday.Cache
+	if cfg.IntradayCacheEnabled {
+		intradayCache = intraday.New(
+			rdb.Client, angelClient, instRepo, candleRepo, calSvc,
+			cfg.IntradayCacheInterval+5*time.Minute, log,
+		)
+	}
+
+	// 8) Engine service (scan pipeline + reconciliation + notify + intraday).
 	engineSvc := engine.New(
-		candleRepo, signalRepo, instRepo, angelClient, calSvc, dispatcher,
+		candleRepo, signalRepo, instRepo, angelClient, calSvc, dispatcher, intradayCache,
 		scanner.DefaultPineConfig(),
 		time.Duration(cfg.RetentionDays)*24*time.Hour,
+		cfg.MarketCloseBufferMin,
 		log,
 	)
 
@@ -120,12 +148,24 @@ func main() {
 	// Paper-trading service.
 	paperSvc := paper.New(pg.Pool, angelClient, candleRepo, instRepo, signalRepo, calSvc, log)
 
+	// IPO tracker (open + upcoming IPOs + GMP signals). Polls the feed on a timer.
+	var ipoSvc *ipo.Service
+	if cfg.IPOEnabled {
+		var ipoBroadcaster ipo.Broadcaster // keep a true-nil interface if notify is off
+		if dispatcher != nil {
+			ipoBroadcaster = dispatcher
+		}
+		ipoSvc = ipo.New(ipo.NewClient(), ipo.NewRepo(pg.Pool), ipoBroadcaster, cfg.IPOPollInterval, cfg.IPOSignalCron, log)
+		ipoSvc.StartPolling(ctx)
+	}
+
 	// 8) Scheduler (daily scan + cleanup + startup reconciliation + fill).
-	sched := scheduler.New(engineSvc, paperSvc, scheduler.Config{
+	sched := scheduler.New(engineSvc, paperSvc, intradayCache, scheduler.Config{
 		Enabled:            cfg.SchedulerEnabled,
 		DailyScanCron:      cfg.DailyScanCron,
 		CleanupCron:        cfg.CleanupCron,
 		FillScheduledCron:  cfg.FillScheduledCron,
+		IntradayInterval:   cfg.IntradayCacheInterval,
 		RunReconcileOnBoot: cfg.ReconcileOnStartup,
 	}, log)
 	if err := sched.Start(ctx); err != nil {
@@ -152,6 +192,7 @@ func main() {
 			Analytics:   analyticsSvc,
 			Paper:       paperSvc,
 			Live:        liveHub,
+			IPO:         ipoSvc,
 			JWTSecret:   cfg.JWTSecret,
 		}).Router(),
 		ReadHeaderTimeout: 10 * time.Second,

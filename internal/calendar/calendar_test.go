@@ -11,6 +11,39 @@ func d(y int, m time.Month, day int) time.Time {
 	return time.Date(y, m, day, 0, 0, 0, 0, loc)
 }
 
+func dt(y int, m time.Month, day, hh, mm int) time.Time {
+	return time.Date(y, m, day, hh, mm, 0, 0, loc)
+}
+
+func TestLastFinalizedTradingDay(t *testing.T) {
+	cal := New(nil) // weekends-only
+	const buf = 15  // finalized at 15:45
+
+	// 2026-07-13 Mon, 2026-07-10 Fri, 2026-07-11 Sat, 2026-07-12 Sun.
+	// Monday pre-close → previous finalized day is Friday.
+	if got := cal.LastFinalizedTradingDay(dt(2026, 7, 13, 10, 0), buf); !got.Equal(d(2026, 7, 10)) {
+		t.Errorf("Mon 10:00 → want Fri 07-10, got %v", got.Format("2006-01-02"))
+	}
+	// Monday just before close+buffer (15:40 < 15:45) → still Friday.
+	if got := cal.LastFinalizedTradingDay(dt(2026, 7, 13, 15, 40), buf); !got.Equal(d(2026, 7, 10)) {
+		t.Errorf("Mon 15:40 → want Fri 07-10, got %v", got.Format("2006-01-02"))
+	}
+	// Monday after close+buffer (16:00) → today (Monday) is finalized.
+	if got := cal.LastFinalizedTradingDay(dt(2026, 7, 13, 16, 0), buf); !got.Equal(d(2026, 7, 13)) {
+		t.Errorf("Mon 16:00 → want Mon 07-13, got %v", got.Format("2006-01-02"))
+	}
+	// Saturday any time → previous trading day Friday.
+	if got := cal.LastFinalizedTradingDay(dt(2026, 7, 11, 18, 0), buf); !got.Equal(d(2026, 7, 10)) {
+		t.Errorf("Sat → want Fri 07-10, got %v", got.Format("2006-01-02"))
+	}
+
+	// With a holiday on Monday 07-13: post-close should skip it to Friday.
+	calH := New([]time.Time{d(2026, 7, 13)})
+	if got := calH.LastFinalizedTradingDay(dt(2026, 7, 13, 16, 0), buf); !got.Equal(d(2026, 7, 10)) {
+		t.Errorf("holiday Mon 16:00 → want Fri 07-10, got %v", got.Format("2006-01-02"))
+	}
+}
+
 func TestIsTradingDay(t *testing.T) {
 	// 2024-01-26 is a Friday (holiday), 27=Sat, 28=Sun, 29=Mon.
 	cal := New([]time.Time{d(2024, 1, 26)})
