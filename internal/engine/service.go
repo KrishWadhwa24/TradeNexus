@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -316,8 +318,15 @@ type ReconcileResult struct {
 
 // Reconcile detects and backfills missing daily candles (distinguishing gaps
 // from weekends/holidays), rebuilds aggregates, and re-scans. Runs on startup,
-// after downtime, and each trading day.
+// after downtime, and each trading day. Participates in the same
+// reconcile-before-redis-populate gate as ReconcileAll (see intraday.Cache),
+// so a single admin-triggered reconcile can't race intraday Redis population
+// either — not just the bulk path.
 func (s *Service) Reconcile(ctx context.Context, instrumentID int64) (ReconcileResult, error) {
+	if s.intraday != nil {
+		s.intraday.BeginReconcile()
+		defer s.intraday.EndReconcile()
+	}
 	inst, err := s.inst.GetByID(ctx, instrumentID)
 	if err != nil {
 		return ReconcileResult{}, err
@@ -406,9 +415,21 @@ func (s *Service) ScanAll(ctx context.Context) ([]ScanResult, error) {
 	return out, nil
 }
 
+// reconcileWorkers bounds how many instruments are reconciled concurrently.
+// Angel calls within each still share the same rate limiter (and the same
+// login-cooldown circuit breaker), so this overlaps request/DB latency across
+// instruments rather than raising the true dispatch rate to Angel.
+const reconcileWorkers = 5
+
 // ReconcileAll reconciles + scans every tracked instrument. This is the daily
-// job and the startup-recovery routine.
+// job and the startup-recovery routine. While it runs, intraday Redis
+// population (manual scans, the scheduled ticker) waits — reconciliation
+// always goes first so the two never compete for the same Angel session.
 func (s *Service) ReconcileAll(ctx context.Context) ([]ReconcileResult, error) {
+	if s.intraday != nil {
+		s.intraday.BeginReconcile()
+		defer s.intraday.EndReconcile()
+	}
 	ids, err := s.candles.ListInstrumentIDsWithData(ctx)
 	if err != nil {
 		return nil, err
@@ -417,20 +438,38 @@ func (s *Service) ReconcileAll(ctx context.Context) ([]ReconcileResult, error) {
 	s.log.Info().Int("total", total).Msg("reconcile-all: starting")
 
 	const heartbeatEvery = 10
-	var out []ReconcileResult
-	for i, id := range ids {
-		r, err := s.Reconcile(ctx, id)
-		if err != nil {
-			s.log.Error().Err(err).Int64("instrument", id).Msg("reconcile-all: instrument failed")
-		} else {
-			out = append(out, r)
-		}
-
-		done := i + 1
-		if done%heartbeatEvery == 0 || done == total {
-			s.log.Info().Int("done", done).Int("total", total).Msg("reconcile-all: progress")
-		}
+	var (
+		mu   sync.Mutex
+		out  []ReconcileResult
+		done int32
+	)
+	idCh := make(chan int64)
+	var wg sync.WaitGroup
+	for w := 0; w < reconcileWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for id := range idCh {
+				r, err := s.Reconcile(ctx, id)
+				if err != nil {
+					s.log.Error().Err(err).Int64("instrument", id).Msg("reconcile-all: instrument failed")
+				} else {
+					mu.Lock()
+					out = append(out, r)
+					mu.Unlock()
+				}
+				if d := atomic.AddInt32(&done, 1); int(d)%heartbeatEvery == 0 || int(d) == total {
+					s.log.Info().Int32("done", d).Int("total", total).Msg("reconcile-all: progress")
+				}
+			}
+		}()
 	}
+	for _, id := range ids {
+		idCh <- id
+	}
+	close(idCh)
+	wg.Wait()
+
 	s.log.Info().Int("total", total).Int("succeeded", len(out)).Msg("reconcile-all: finished")
 	return out, nil
 }
@@ -474,8 +513,14 @@ type RefetchDateResult struct {
 // tracked instrument, upserts the finalized bar, and rebuilds aggregates. The
 // date must be finalized (its session has closed) and a trading day. Heavy —
 // one rate-limited Angel call per instrument — so callers should run it in the
-// background.
+// background. Participates in the same reconcile-before-redis-populate gate as
+// ReconcileAll/Reconcile, since it's a third bulk Angel consumer that would
+// otherwise be free to race intraday Redis population.
 func (s *Service) RefetchDate(ctx context.Context, date time.Time) (RefetchDateResult, error) {
+	if s.intraday != nil {
+		s.intraday.BeginReconcile()
+		defer s.intraday.EndReconcile()
+	}
 	day := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, market.IST)
 	res := RefetchDateResult{Date: day.Format("2006-01-02")}
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -28,6 +29,12 @@ type Service struct {
 	interval   time.Duration
 	signalCron string // IST cron for the close-day GMP check (e.g. "30 14 * * *")
 	log        zerolog.Logger
+
+	// signalMu serializes RunClosingDaySignals. It's now triggered from the
+	// cron AND opportunistically at startup/every poll tick (catchUpClosing-
+	// DaySignals), so without this, two overlapping calls could both read an
+	// IPO's not-yet-updated signal state and both broadcast.
+	signalMu sync.Mutex
 }
 
 // New builds the IPO service. bc may be nil. signalCron is the IST cron for the
@@ -90,12 +97,16 @@ const closingSignalCutoffHour = 17 // 5:00 PM IST
 // MAINBOARD IPO that is open and closes today, it evaluates the GMP tier and
 // sends the Telegram signal if the threshold is met. It deliberately ignores
 // any prior admin "clear" — the close-day GMP check always fires. SME IPOs are
-// skipped entirely (admin-only). Already-signaled IPOs (same tier, same day)
-// are skipped so running this more than once a day never double-sends.
+// skipped entirely (admin-only). An IPO already signaled today (at any tier)
+// is skipped, so running this more than once a day — or a GMP swing crossing
+// multiple tiers in one day — never sends more than one Telegram message.
 func (s *Service) RunClosingDaySignals(ctx context.Context) {
 	if s.bc == nil {
 		return
 	}
+	s.signalMu.Lock()
+	defer s.signalMu.Unlock()
+
 	today := dateOnly(time.Now().In(market.IST))
 	active, err := s.repo.ListActive(ctx)
 	if err != nil {
@@ -113,8 +124,13 @@ func (s *Service) RunClosingDaySignals(ctx context.Context) {
 		if tier == "" {
 			continue // below 10% → no signal
 		}
-		if x.SignalTier == tier && x.SignaledAt != nil && sameDate(*x.SignaledAt, today) {
-			continue // already signaled at this tier today — avoid a duplicate Telegram send
+		// Once signaled today (any tier), never signal again today. This now
+		// runs on every poll tick (not just the 2:30 PM cron), so gating on
+		// "same tier" alone would let a GMP swing across tier boundaries fire
+		// a fresh Telegram message each time it crosses — one signal per IPO
+		// per day is the promise.
+		if x.SignaledAt != nil && sameDate(*x.SignaledAt, today) {
+			continue // already signaled today — avoid a repeat Telegram send
 		}
 		text := formatIPOMessage(x, signalLabel(tier), true)
 		if _, err := s.bc.Broadcast(ctx, text); err != nil {

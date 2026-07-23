@@ -77,6 +77,10 @@ type Server struct {
 	scanRunning atomic.Bool
 	// refetchRunning guards the admin per-date refetch (also heavy on Angel).
 	refetchRunning atomic.Bool
+	// reconcileRunning guards the bulk admin reconcile-all endpoint so two
+	// overlapping runs (e.g. an admin click racing the daily cron) don't both
+	// hammer Angel at once.
+	reconcileRunning atomic.Bool
 }
 
 // NewServer constructs the API server with its dependencies.
