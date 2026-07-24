@@ -44,6 +44,46 @@ func (r *Repo) UpsertDaily(ctx context.Context, instrumentID int64, cs []market.
 	return len(cs), nil
 }
 
+// CountByDate returns how many instruments have a stored daily candle on the
+// given date (one row per instrument, so this is also the row count). Used by
+// the admin candle tools to inspect/diagnose a specific trading day.
+func (r *Repo) CountByDate(ctx context.Context, date time.Time) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx,
+		`SELECT count(*) FROM daily_candles WHERE trade_date = $1`, date).Scan(&n)
+	return n, err
+}
+
+// InstrumentIDsByDate returns the instrument ids that have a candle on date.
+func (r *Repo) InstrumentIDsByDate(ctx context.Context, date time.Time) ([]int64, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT instrument_id FROM daily_candles WHERE trade_date = $1 ORDER BY instrument_id`, date)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// DeleteByDate removes every daily candle on the given date and returns how many
+// rows were deleted. Aggregates for affected instruments are rebuilt separately
+// (or on the next reconcile).
+func (r *Repo) DeleteByDate(ctx context.Context, date time.Time) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM daily_candles WHERE trade_date = $1`, date)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // GetDaily returns daily candles for an instrument ordered ascending.
 func (r *Repo) GetDaily(ctx context.Context, instrumentID int64) ([]market.Candle, error) {
 	rows, err := r.pool.Query(ctx, `
@@ -128,12 +168,6 @@ func (r *Repo) RebuildAggregates(ctx context.Context, instrumentID int64) (weekl
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback is a no-op after commit
 
-	if _, err = tx.Exec(ctx, `DELETE FROM weekly_candles WHERE instrument_id=$1`, instrumentID); err != nil {
-		return 0, 0, err
-	}
-	if _, err = tx.Exec(ctx, `DELETE FROM monthly_candles WHERE instrument_id=$1`, instrumentID); err != nil {
-		return 0, 0, err
-	}
 	if err = insertAgg(ctx, tx, "weekly_candles", instrumentID, w); err != nil {
 		return 0, 0, err
 	}
@@ -150,7 +184,10 @@ func insertAgg(ctx context.Context, tx pgx.Tx, table string, instrumentID int64,
 	for _, c := range cs {
 		_, err := tx.Exec(ctx, fmt.Sprintf(`
 			INSERT INTO %s (instrument_id, period_start, period_end, open, high, low, close, volume, is_confirmed)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, table),
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			ON CONFLICT (instrument_id, period_start) DO UPDATE
+			SET period_end=EXCLUDED.period_end, open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low,
+			    close=EXCLUDED.close, volume=EXCLUDED.volume, is_confirmed=EXCLUDED.is_confirmed`, table),
 			instrumentID, c.PeriodStart, c.PeriodEnd, c.Open, c.High, c.Low, c.Close, c.Volume, c.IsConfirmed)
 		if err != nil {
 			return fmt.Errorf("insert %s: %w", table, err)

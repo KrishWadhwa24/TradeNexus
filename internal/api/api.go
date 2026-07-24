@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -15,12 +16,14 @@ import (
 	"github.com/rs/zerolog"
 
 	"tradenexus/internal/analytics"
-	"tradenexus/internal/auth"
 	"tradenexus/internal/angel"
+	"tradenexus/internal/auth"
 	"tradenexus/internal/calendar"
 	"tradenexus/internal/candles"
 	"tradenexus/internal/engine"
 	"tradenexus/internal/instruments"
+	"tradenexus/internal/ipo"
+	"tradenexus/internal/live"
 	"tradenexus/internal/notify"
 	"tradenexus/internal/paper"
 	"tradenexus/internal/ratelimit"
@@ -45,18 +48,20 @@ type Deps struct {
 	Notifier    *notify.Dispatcher
 	Analytics   *analytics.Service
 	Paper       *paper.Service
+	Live        *live.Hub
+	IPO         *ipo.Service
 	JWTSecret   string
 }
 
 // Server holds shared dependencies for handlers.
 type Server struct {
-	log     zerolog.Logger
-	pg      *store.Postgres
-	rdb     *store.Redis
-	limiter *ratelimit.Limiter
-	angel   *angel.Client
-	inst    *instruments.Repo
-	candles *candles.Repo
+	log       zerolog.Logger
+	pg        *store.Postgres
+	rdb       *store.Redis
+	limiter   *ratelimit.Limiter
+	angel     *angel.Client
+	inst      *instruments.Repo
+	candles   *candles.Repo
 	engine    *engine.Service
 	signals   *signals.Repo
 	cal       *calendar.Service
@@ -64,19 +69,26 @@ type Server struct {
 	notifier  *notify.Dispatcher
 	analytics *analytics.Service
 	paper     *paper.Service
+	live      *live.Hub
+	ipo       *ipo.Service
 	jwtSecret string
+
+	// scanRunning guards manual scan-all so repeated clicks don't stack.
+	scanRunning atomic.Bool
+	// refetchRunning guards the admin per-date refetch (also heavy on Angel).
+	refetchRunning atomic.Bool
 }
 
 // NewServer constructs the API server with its dependencies.
 func NewServer(d Deps) *Server {
 	return &Server{
-		log:     d.Log,
-		pg:      d.PG,
-		rdb:     d.RDB,
-		limiter: d.Limiter,
-		angel:   d.Angel,
-		inst:    d.Instruments,
-		candles: d.Candles,
+		log:       d.Log,
+		pg:        d.PG,
+		rdb:       d.RDB,
+		limiter:   d.Limiter,
+		angel:     d.Angel,
+		inst:      d.Instruments,
+		candles:   d.Candles,
 		engine:    d.Engine,
 		signals:   d.Signals,
 		cal:       d.Calendar,
@@ -84,6 +96,8 @@ func NewServer(d Deps) *Server {
 		notifier:  d.Notifier,
 		analytics: d.Analytics,
 		paper:     d.Paper,
+		live:      d.Live,
+		ipo:       d.IPO,
 		jwtSecret: d.JWTSecret,
 	}
 }
@@ -92,8 +106,10 @@ func NewServer(d Deps) *Server {
 type ctxKey string
 
 const userIDKey ctxKey = "uid"
+const isAdminKey ctxKey = "is_admin"
 
-// authMiddleware validates the Bearer JWT and injects the user id into context.
+// authMiddleware validates the Bearer JWT and injects the user id + admin flag
+// into context.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := r.Header.Get("Authorization")
@@ -107,7 +123,20 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), userIDKey, claims.UserID)
+		ctx = context.WithValue(ctx, isAdminKey, claims.IsAdmin)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// adminOnly rejects requests whose token isn't flagged admin. Must run inside
+// the authenticated group (after authMiddleware).
+func (s *Server) adminOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isAdmin, _ := r.Context().Value(isAdminKey).(bool); !isAdmin {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin access required"})
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -119,7 +148,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(s.requestLogger)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(30 * time.Second))
+	r.Use(timeoutExcept(30*time.Second, "/live-prices", "/admin/reconcile", "/candles/sync", "/sync-scan", "/admin/candles/refetch"))
 
 	r.Get("/health", s.handleHealth)
 	r.Get("/health/ready", s.handleReady)
@@ -128,83 +157,119 @@ func (s *Server) Router() http.Handler {
 		// Public auth endpoints.
 		r.Post("/auth/register", s.handleRegister)
 		r.Post("/auth/login", s.handleLogin)
+		r.Get("/users/{uid}/live-prices", s.handleLivePrices)
 
 		// Everything below requires a valid JWT.
 		r.Group(func(r chi.Router) {
 			r.Use(s.authMiddleware)
 			r.Get("/me", s.handleMe)
 
-		// Demo endpoint so you can hammer the limiter from Postman and watch
-		// it flip from allowed:true to allowed:false with a retry hint.
-		r.Post("/ratelimit/try", s.handleRateLimitTry)
+			// Demo endpoint so you can hammer the limiter from Postman and watch
+			// it flip from allowed:true to allowed:false with a retry hint.
+			r.Post("/ratelimit/try", s.handleRateLimitTry)
 
-		// Angel client (Module 2)
-		r.Post("/angel/login", s.handleAngelLogin)
-		r.Get("/angel/status", s.handleAngelStatus)
-		r.Post("/angel/scripmaster/sync", s.handleScripMasterSync)
-		r.Post("/angel/historical", s.handleAngelHistorical)
+			// Angel client (Module 2)
+			r.Post("/angel/login", s.handleAngelLogin)
+			r.Get("/angel/status", s.handleAngelStatus)
+			r.Post("/angel/scripmaster/sync", s.handleScripMasterSync)
+			r.Post("/angel/historical", s.handleAngelHistorical)
 
-		// Instruments (Module 2)
-		r.Get("/instruments/search", s.handleInstrumentSearch)
-		r.Get("/instruments/{id}", s.handleInstrumentGet)
+			// Instruments (Module 2)
+			r.Get("/instruments/search", s.handleInstrumentSearch)
+			r.Get("/instruments/{id}", s.handleInstrumentGet)
 
-		// Candles (Module 3)
-		r.Post("/instruments/{id}/candles/sync", s.handleCandleSync)
-		r.Get("/instruments/{id}/candles", s.handleCandleGet)
+			// Candles (Module 3). Sync fetches from Angel (rate-limited) so it gets
+			// a longer timeout than the 30s default.
+			r.With(middleware.Timeout(3*time.Minute)).Post("/instruments/{id}/candles/sync", s.handleCandleSync)
+			r.Get("/instruments/{id}/candles", s.handleCandleGet)
 
-		// Scanning + signals (Modules 4-6)
-		r.Post("/instruments/{id}/scan", s.handleScanInstrument)
-		r.Post("/instruments/{id}/sync-scan", s.handleSyncScan)
-		r.Get("/signals", s.handleSignalsList)
+			// Scanning + signals (Modules 4-6)
+			r.Post("/instruments/{id}/scan", s.handleScanInstrument)
+			r.With(middleware.Timeout(3*time.Minute)).Post("/instruments/{id}/sync-scan", s.handleSyncScan)
+			r.Get("/signals", s.handleSignalsList)
 
-		// Calendar (Module 6)
-		r.Get("/calendar/check", s.handleCalendarCheck)
+			// Calendar (Module 6)
+			r.Get("/calendar/check", s.handleCalendarCheck)
 
-		// Admin / ops (Module 6)
-		r.Post("/admin/reconcile", s.handleReconcile)
-		r.Post("/admin/scan-all", s.handleScanAll)
-		r.Post("/admin/cleanup", s.handleCleanup)
-		r.Post("/admin/holidays", s.handleAddHolidays)
+			// Admin / ops (Module 6)
+			r.With(middleware.Timeout(35*time.Minute)).Post("/admin/reconcile", s.handleReconcile)
+			r.With(middleware.Timeout(35*time.Minute)).Post("/admin/scan-all", s.handleScanAll)
+			r.Post("/admin/cleanup", s.handleCleanup)
+			r.Post("/admin/holidays", s.handleAddHolidays)
 
-		// Users, watchlists, prefs, telegram (Module 7)
-		r.Post("/users", s.handleCreateUser)
-		r.Get("/users", s.handleListUsers)
-		r.Post("/users/{uid}/watchlists", s.handleCreateWatchlist)
-		r.Get("/users/{uid}/watchlists", s.handleListWatchlists)
-		r.Post("/watchlists/{wid}/items", s.handleAddWatchlistItem)
-		r.Delete("/watchlists/{wid}/items/{instrumentId}", s.handleRemoveWatchlistItem)
-		r.Put("/users/{uid}/scanner-prefs", s.handleSetScannerPrefs)
-		r.Get("/users/{uid}/scanner-prefs", s.handleGetScannerPrefs)
-		r.Put("/users/{uid}/telegram", s.handleSetTelegram)
-		r.Get("/users/{uid}/telegram", s.handleGetTelegram)
+			// Admin-only candle tools (count / delete / refetch a specific day).
+			r.Group(func(r chi.Router) {
+				r.Use(s.adminOnly)
+				r.Get("/admin/candles", s.handleCandleCountByDate)
+				r.Delete("/admin/candles", s.handleDeleteCandlesByDate)
+				r.With(middleware.Timeout(65*time.Minute)).Post("/admin/candles/refetch", s.handleRefetchCandlesByDate)
+				r.Post("/admin/dispatch/force", s.handleForceDispatch)
 
-		// Notification testing (Module 7)
-		r.Post("/telegram/test", s.handleTelegramTest)
-		r.Get("/signals/{id}/recipients", s.handleSignalRecipients)
-		r.Post("/admin/dispatch", s.handleDispatch)
+				// IPO admin: refresh the feed now, or push a manual "Apply".
+				r.Post("/admin/ipos/refresh", s.handleRefreshIPOs)
+				r.Post("/admin/ipos/{id}/apply", s.handleIPOAdminApply)
+				r.Post("/admin/ipos/{id}/clear-signal", s.handleIPOClearSignal)
+			})
 
-		// Analytics + Excel export (Module 8)
-		r.Get("/analytics/summary", s.handleAnalyticsSummary)
-		r.Get("/analytics/export.xlsx", s.handleAnalyticsExport)
+			// Users, watchlists, prefs, telegram (Module 7)
+			r.Post("/users", s.handleCreateUser)
+			r.Get("/users", s.handleListUsers)
+			r.Post("/users/{uid}/watchlists", s.handleCreateWatchlist)
+			r.Get("/users/{uid}/watchlists", s.handleListWatchlists)
+			r.Delete("/users/{uid}/watchlists/{wid}", s.handleDeleteWatchlist)
+			r.Post("/watchlists/{wid}/items", s.handleAddWatchlistItem)
+			r.Delete("/watchlists/{wid}/items/{instrumentId}", s.handleRemoveWatchlistItem)
+			r.Put("/users/{uid}/scanner-prefs", s.handleSetScannerPrefs)
+			r.Get("/users/{uid}/scanner-prefs", s.handleGetScannerPrefs)
+			r.Put("/users/{uid}/telegram", s.handleSetTelegram)
+			r.Get("/users/{uid}/telegram", s.handleGetTelegram)
 
-		// Market data (Module 9): trending + params + dashboard
-		r.Get("/market/trending", s.handleTrending)
-		r.Get("/instruments/{id}/params", s.handleInstrumentParams)
-		r.Get("/instruments/{id}/coverage", s.handleCoverage)
-		r.Get("/users/{uid}/dashboard", s.handleDashboard)
-		r.Get("/users/{uid}/coverage", s.handleUserCoverage)
+			// Notification testing (Module 7)
+			r.Post("/telegram/test", s.handleTelegramTest)
+			r.Get("/signals/{id}/recipients", s.handleSignalRecipients)
+			r.Post("/admin/dispatch", s.handleDispatch)
 
-		// Paper trading (Module 9)
-		r.Put("/users/{uid}/paper/capital", s.handleSetCapital)
-		r.Get("/users/{uid}/paper/account", s.handleGetAccount)
-		r.Post("/users/{uid}/paper/trades", s.handleBuy)
-		r.Get("/users/{uid}/paper/trades", s.handleListTrades)
-		r.Get("/users/{uid}/paper/summary", s.handlePaperSummary)
-		r.Post("/paper/trades/{tradeId}/close", s.handleCloseTrade)
+			// Analytics + Excel export (Module 8)
+			r.Get("/analytics/summary", s.handleAnalyticsSummary)
+			r.Get("/analytics/export.xlsx", s.handleAnalyticsExport)
+
+			// IPOs (open + upcoming, with GMP)
+			r.Get("/ipos", s.handleListIPOs)
+
+			// Market data (Module 9): trending + params + dashboard
+			r.Get("/market/trending", s.handleTrending)
+			r.Get("/instruments/{id}/params", s.handleInstrumentParams)
+			r.Get("/instruments/{id}/coverage", s.handleCoverage)
+			r.Get("/users/{uid}/dashboard", s.handleDashboard)
+			r.Get("/users/{uid}/coverage", s.handleUserCoverage)
+
+			// Paper trading (Module 9)
+			r.Put("/users/{uid}/paper/capital", s.handleSetCapital)
+			r.Get("/users/{uid}/paper/account", s.handleGetAccount)
+			r.Post("/users/{uid}/paper/trades", s.handleBuy)
+			r.Get("/users/{uid}/paper/trades", s.handleListTrades)
+			r.Get("/users/{uid}/paper/summary", s.handlePaperSummary)
+			r.Post("/paper/trades/{tradeId}/close", s.handleCloseTrade)
 		}) // end protected group
 	})
 
 	return r
+}
+
+func timeoutExcept(timeout time.Duration, suffixes ...string) func(http.Handler) http.Handler {
+	withTimeout := middleware.Timeout(timeout)
+	return func(next http.Handler) http.Handler {
+		timed := withTimeout(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			for _, suffix := range suffixes {
+				if strings.HasSuffix(r.URL.Path, suffix) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			timed.ServeHTTP(w, r)
+		})
+	}
 }
 
 // requestLogger is a tiny zerolog-based access log middleware.

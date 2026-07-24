@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -111,12 +112,29 @@ func (s *Server) handleReconcile(w http.ResponseWriter, r *http.Request) {
 
 // POST /v1/admin/scan-all — scan all tracked instruments from stored candles.
 func (s *Server) handleScanAll(w http.ResponseWriter, r *http.Request) {
-	res, err := s.engine.ScanAll(r.Context())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	// Guard: only one scan-all at a time. Repeated clicks are no-ops.
+	if !s.scanRunning.CompareAndSwap(false, true) {
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"status": "already_running", "message": "a scan is already in progress",
+		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"count": len(res), "results": res})
+	// Run in the background with its own context so the HTTP request returns
+	// immediately and dispatch (Telegram) is never cancelled by a request timeout.
+	go func() {
+		defer s.scanRunning.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		res, err := s.engine.ScanAll(ctx)
+		if err != nil {
+			s.log.Error().Err(err).Msg("scan-all failed")
+			return
+		}
+		s.log.Info().Int("instruments", len(res)).Msg("scan-all done")
+	}()
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"status": "started", "message": "scan started in background",
+	})
 }
 
 // POST /v1/admin/cleanup — delete signals older than the retention window now.

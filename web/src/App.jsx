@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { getToken, setToken } from "./api.js";
 import { Icon } from "./icons.jsx";
+import CommandPalette from "./CommandPalette.jsx";
 import Login from "./pages/Login.jsx";
 import Home from "./pages/Home.jsx";
 import Analytics from "./pages/Analytics.jsx";
@@ -9,6 +10,8 @@ import Scanner from "./pages/Scanner.jsx";
 import Audit from "./pages/Audit.jsx";
 import Paper from "./pages/Paper.jsx";
 import Profile from "./pages/Profile.jsx";
+import Admin from "./pages/Admin.jsx";
+import IPO from "./pages/IPO.jsx";
 
 const NAV = [
   { key: "home", label: "Home", icon: "home" },
@@ -16,9 +19,14 @@ const NAV = [
   { key: "analytics", label: "Analytics", icon: "chart" },
   { key: "scanner:pine", label: "Pine Scanner", icon: "scan", sub: true },
   { key: "scanner:weekly", label: "Weekly Scanner", icon: "scan", sub: true },
+  { key: "patterns:cup_handle", label: "Cup and Handle", icon: "scan", sub: true },
+  { key: "patterns:downtrend_breakout", label: "Downtrend Breakout", icon: "scan", sub: true },
+  { key: "patterns:rectangle", label: "Rectangle Box", icon: "scan", sub: true },
+  { key: "ipo", label: "IPO", icon: "rocket" },
   { key: "audit", label: "Audit", icon: "list" },
   { key: "paper", label: "Paper Trading", icon: "wallet" },
   { key: "profile", label: "Profile", icon: "user" },
+  { key: "admin", label: "Admin", icon: "shield", admin: true },
 ];
 
 const TITLES = {
@@ -27,29 +35,53 @@ const TITLES = {
   analytics: "Analytics Dashboard",
   "scanner:pine": "Pine Scanner",
   "scanner:weekly": "Weekly Scanner",
+  "patterns:cup_handle": "Cup and Handle",
+  "patterns:downtrend_breakout": "Downtrend Breakout",
+  "patterns:rectangle": "Rectangle Box",
+  ipo: "IPO Tracker",
   audit: "Signal Audit",
   paper: "Paper Trading",
   profile: "Profile",
+  admin: "Admin — Candle Tools",
 };
 
 export default function App() {
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "dark");
-  const [view, setView] = useState("home");
+  const [view, setView] = useState(localStorage.getItem("view") || "home");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem("user") || "null"); } catch { return null; }
   });
   const authed = !!getToken() && !!user;
+  const isAdmin = !!(user && user.is_admin);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("theme", theme);
   }, [theme]);
 
+  // Remember the active page so a refresh reopens where you were.
+  useEffect(() => {
+    localStorage.setItem("view", view);
+  }, [view]);
+
   useEffect(() => {
     const onExpire = () => { setUser(null); localStorage.removeItem("user"); };
     window.addEventListener("auth-expired", onExpire);
     return () => window.removeEventListener("auth-expired", onExpire);
+  }, []);
+
+  // Cmd/Ctrl-K toggles the command palette.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   function onAuthed(u) {
@@ -69,20 +101,32 @@ export default function App() {
   function render() {
     const p = { userId };
     switch (view) {
-      case "home": return <Home />;
+      case "home": return <Home {...p} />;
       case "watchlist": return <Watchlist {...p} />;
       case "analytics": return <Analytics {...p} />;
       case "scanner:pine": return <Scanner source="pine" {...p} />;
       case "scanner:weekly": return <Scanner source="weekly" {...p} />;
-      case "audit": return <Audit />;
+      case "patterns:cup_handle": return <Scanner source="patterns" pattern="pattern_cup_handle" {...p} />;
+      case "patterns:downtrend_breakout": return <Scanner source="patterns" pattern="pattern_downtrend_breakout" {...p} />;
+      case "patterns:rectangle": return <Scanner source="patterns" pattern="pattern_rectangle" {...p} />;
+      case "ipo": return <IPO isAdmin={isAdmin} />;
+      case "audit": return <Audit isAdmin={isAdmin} />;
       case "paper": return <Paper {...p} />;
       case "profile": return <Profile {...p} />;
+      case "admin": return isAdmin ? <Admin /> : <Home {...p} />;
       default: return null;
     }
   }
 
   const initial = (user.email || "?").slice(0, 1).toUpperCase();
   function go(key) { setView(key); setMenuOpen(false); }
+
+  const nav = NAV.filter((n) => !n.admin || isAdmin);
+  const commands = [
+    ...nav.map((n) => ({ id: "nav-" + n.key, label: n.label, hint: "Go to page", run: () => go(n.key) })),
+    { id: "theme", label: "Toggle theme (dark / light)", hint: "Appearance", run: () => setTheme(theme === "dark" ? "light" : "dark") },
+    { id: "signout", label: "Sign out", hint: "Session", run: logout },
+  ];
 
   return (
     <div className="app">
@@ -92,7 +136,7 @@ export default function App() {
           <span className="prompt">&gt;_</span>
           Trade<em>Nexus</em>
         </div>
-        {NAV.map((n) => {
+        {nav.map((n) => {
           const I = Icon[n.icon];
           return (
             <div
@@ -122,6 +166,11 @@ export default function App() {
             <h1>{TITLES[view]}</h1>
           </div>
           <div className="topbar-right">
+            <button className="cmdk-trigger" title="Command palette" onClick={() => setPaletteOpen(true)}>
+              <Icon.search />
+              <span>Search</span>
+              <kbd>⌘K</kbd>
+            </button>
             <button
               className="icon-btn"
               title="Toggle theme"
@@ -133,6 +182,8 @@ export default function App() {
         </div>
         <div className="content" key={view}>{render()}</div>
       </div>
+
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
     </div>
   );
 }

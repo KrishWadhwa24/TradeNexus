@@ -1,8 +1,14 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { api } from "../api.js";
+import { api, convLevel, convLabel } from "../api.js";
 
-// source: "pine" | "weekly"
-export default function Scanner({ source, userId }) {
+const PATTERN_LABELS = {
+  pattern_cup_handle: "Cup and Handle",
+  pattern_downtrend_breakout: "Downtrend Breakout",
+  pattern_rectangle: "Rectangle Box",
+};
+
+// source: "pine" | "weekly" | "patterns"
+export default function Scanner({ source, pattern, userId }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -16,20 +22,26 @@ export default function Scanner({ source, userId }) {
       .get(`/v1/signals?source=${source}&limit=300`)
       .then((r) => {
         const cutoff = Date.now() - 7 * 24 * 3600 * 1000; // last 7 days
-        setRows((r.signals || []).filter((s) => new Date(s.created_at).getTime() >= cutoff));
+        setRows((r.signals || [])
+          .filter((s) => new Date(s.created_at).getTime() >= cutoff)
+          .filter((s) => !pattern || s.scanner_name === pattern));
       })
       .catch((e) => setErr(e.message))
       .finally(() => setLoading(false));
-  }, [source]);
+  }, [source, pattern]);
 
   useEffect(() => { load(); }, [load]);
 
   async function runScan() {
-    setMsg("Running scan on all tracked stocks…");
+    setMsg("Starting scan in background…");
     try {
       const r = await api.post("/v1/admin/scan-all", {});
-      setMsg(`Scan complete (${r.count} stocks). Refreshing…`);
-      load();
+      if (r.status === "already_running") {
+        setMsg("A scan is already running — hang tight.");
+      } else {
+        setMsg("Scan started. Signals will appear shortly — refreshing in 8s…");
+        setTimeout(() => { setMsg(""); load(); }, 8000);
+      }
     } catch (e) {
       setMsg("Scan failed: " + e.message);
     }
@@ -53,7 +65,7 @@ export default function Scanner({ source, userId }) {
     <div>
       <div className="toolbar">
         <div className="section-title" style={{ margin: 0 }}>
-          {source === "pine" ? "Pine (Chase Momentum)" : "Weekly scanners"} — current & last 7 days
+          {source === "pine" ? "Pine (Chase Momentum)" : source === "patterns" ? PATTERN_LABELS[pattern] : "Weekly scanners"} — current & last 7 days
         </div>
         <div className="row">
           {msg && <span className="msg">{msg}</span>}
@@ -70,7 +82,7 @@ export default function Scanner({ source, userId }) {
             <thead>
               <tr>
                 <th>Symbol</th><th>Signal</th><th>Timeframe</th>
-                {source === "weekly" && <th>Confidence</th>}
+                {(source === "weekly" || source === "patterns") && <th>Conviction</th>}
                 <th>Scanner(s)</th><th>Candle date</th><th>Buy</th>
               </tr>
             </thead>
@@ -80,8 +92,16 @@ export default function Scanner({ source, userId }) {
                   <td>{s.symbol}</td>
                   <td><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
                   <td>{s.timeframe}</td>
-                  {source === "weekly" && <td>{s.confidence != null ? s.confidence + "/4" : "—"}</td>}
-                  <td className="muted">{s.scanner_name}</td>
+                  {(source === "weekly" || source === "patterns") && (
+                    <td>
+                      {convLevel(source, s.confidence) ? (
+                        <span className={"conv conv-" + convLevel(source, s.confidence)}>
+                          {convLabel(source, s.confidence)}
+                        </span>
+                      ) : "—"}
+                    </td>
+                  )}
+                  <td className="muted">{PATTERN_LABELS[s.scanner_name] || s.scanner_name}</td>
                   <td className="muted">{s.candle_date?.slice(0, 10)}</td>
                   <td>
                     {s.direction === "BUY" ? (

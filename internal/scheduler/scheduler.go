@@ -10,6 +10,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"tradenexus/internal/engine"
+	"tradenexus/internal/intraday"
 	"tradenexus/internal/market"
 	"tradenexus/internal/paper"
 )
@@ -17,29 +18,32 @@ import (
 // Config controls the schedule.
 type Config struct {
 	Enabled            bool
-	DailyScanCron      string // e.g. "20 15 * * 1-5"  (15:20 IST, Mon-Fri)
-	CleanupCron        string // e.g. "0 1 * * *"      (01:00 IST daily)
-	FillScheduledCron  string // e.g. "16 9 * * 1-5"   (09:16 IST, at market open)
+	DailyScanCron      string        // e.g. "0 16 * * 1-5" (16:00 IST, Mon-Fri)
+	CleanupCron        string        // e.g. "0 1 * * *"    (01:00 IST daily)
+	FillScheduledCron  string        // e.g. "16 9 * * 1-5" (09:16 IST, at market open)
+	IntradayInterval   time.Duration // refresh cadence for the intraday cache
 	RunReconcileOnBoot bool
 }
 
 // Scheduler wraps a cron instance bound to the engine + paper services.
 type Scheduler struct {
-	cron  *cron.Cron
-	svc   *engine.Service
-	paper *paper.Service
-	cfg   Config
-	log   zerolog.Logger
+	cron     *cron.Cron
+	svc      *engine.Service
+	paper    *paper.Service
+	intraday *intraday.Cache // optional
+	cfg      Config
+	log      zerolog.Logger
 }
 
-// New builds a scheduler (IST-based cron).
-func New(svc *engine.Service, paperSvc *paper.Service, cfg Config, log zerolog.Logger) *Scheduler {
+// New builds a scheduler (IST-based cron). intradayCache may be nil.
+func New(svc *engine.Service, paperSvc *paper.Service, intradayCache *intraday.Cache, cfg Config, log zerolog.Logger) *Scheduler {
 	return &Scheduler{
-		cron:  cron.New(cron.WithLocation(market.IST)),
-		svc:   svc,
-		paper: paperSvc,
-		cfg:   cfg,
-		log:   log,
+		cron:     cron.New(cron.WithLocation(market.IST)),
+		svc:      svc,
+		paper:    paperSvc,
+		intraday: intradayCache,
+		cfg:      cfg,
+		log:      log,
 	}
 }
 
@@ -96,19 +100,50 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	s.cron.Start()
 	s.log.Info().Str("daily", s.cfg.DailyScanCron).Str("cleanup", s.cfg.CleanupCron).Msg("scheduler started")
 
-	if s.cfg.RunReconcileOnBoot {
+	// Intraday cache refresher: every IntradayInterval, but only while the
+	// market is open. The initial warm is NOT done here — it runs in the startup
+	// goroutine below, sequenced after reconcile, so the two don't hammer Angel
+	// at the same time. A Redis lock in Refresh also prevents overlap.
+	if s.intraday != nil && s.cfg.IntradayInterval > 0 {
 		go func() {
-			bootCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-			defer cancel()
-			s.log.Info().Msg("scheduler: startup reconciliation starting")
-			res, err := s.svc.ReconcileAll(bootCtx)
-			if err != nil {
-				s.log.Error().Err(err).Msg("scheduler: startup reconciliation failed")
-				return
+			t := time.NewTicker(s.cfg.IntradayInterval)
+			defer t.Stop()
+			for range t.C {
+				if !s.intraday.MarketOpen(time.Now().In(market.IST)) {
+					continue
+				}
+				c, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+				if _, err := s.intraday.Refresh(c); err != nil {
+					s.log.Error().Err(err).Msg("scheduler: intraday refresh failed")
+				}
+				cancel()
 			}
-			s.log.Info().Int("instruments", len(res)).Msg("scheduler: startup reconciliation done")
 		}()
+		s.log.Info().Dur("interval", s.cfg.IntradayInterval).Msg("intraday cache refresher started")
 	}
+
+	// Startup work runs SEQUENTIALLY: reconcile/backfill first, then (only if the
+	// market is open) warm the intraday cache. Running them one after the other
+	// avoids two concurrent bulk Angel workflows tripping the rate limiter.
+	go func() {
+		if s.cfg.RunReconcileOnBoot {
+			bootCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			s.log.Info().Msg("scheduler: startup reconciliation starting")
+			if res, err := s.svc.ReconcileAll(bootCtx); err != nil {
+				s.log.Error().Err(err).Msg("scheduler: startup reconciliation failed")
+			} else {
+				s.log.Info().Int("instruments", len(res)).Msg("scheduler: startup reconciliation done")
+			}
+			cancel()
+		}
+		if s.intraday != nil && s.intraday.MarketOpen(time.Now().In(market.IST)) {
+			c, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			if _, err := s.intraday.Refresh(c); err != nil {
+				s.log.Error().Err(err).Msg("scheduler: startup intraday warm failed")
+			}
+			cancel()
+		}
+	}()
 	return nil
 }
 

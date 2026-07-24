@@ -76,7 +76,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, sig signals.Signal) (Dispatch
 	}
 
 	res := DispatchResult{Recipients: len(recips)}
-	text := formatMessage(sig, symbol)
+	text := formatMessage(sig, symbol, d.cmp(ctx, sig.InstrumentID))
 
 	for _, r := range recips {
 		dup, err := d.alreadyDelivered(ctx, r.UserID, sig)
@@ -116,6 +116,95 @@ func (d *Dispatcher) Dispatch(ctx context.Context, sig signals.Signal) (Dispatch
 		}
 	}
 	return res, nil
+}
+
+// ForceResend re-sends a stored signal to all of its current recipients (and the
+// safety-net chat, if configured), IGNORING the dedup ledger and the freshness
+// window. This backs the admin "fire again" action, where a human deliberately
+// wants the alert delivered a second time. Delivery rows are still recorded
+// (idempotently) so the audit trail stays accurate.
+func (d *Dispatcher) ForceResend(ctx context.Context, sig signals.Signal) (DispatchResult, error) {
+	symbol := d.symbol(ctx, sig.InstrumentID)
+	recips, err := d.Recipients(ctx, sig.InstrumentID, ScannerKeys(sig))
+	if err != nil {
+		return DispatchResult{}, err
+	}
+
+	res := DispatchResult{Recipients: len(recips)}
+	text := formatMessage(sig, symbol, d.cmp(ctx, sig.InstrumentID))
+
+	for _, r := range recips {
+		if err := d.tg.Send(ctx, r.BotToken, r.ChatID, text); err != nil {
+			d.log.Error().Err(err).Str("user", r.UserID).Msg("force resend: telegram send failed")
+			continue
+		}
+		if err := d.recordDelivery(ctx, r.UserID, sig); err != nil {
+			d.log.Error().Err(err).Msg("force resend: record delivery failed")
+		}
+		res.Sent++
+	}
+
+	if d.defaultBot != "" && d.defaultChat != "" {
+		if err := d.tg.Send(ctx, d.defaultBot, d.defaultChat, text); err != nil {
+			d.log.Error().Err(err).Msg("force resend: default chat send failed")
+		} else {
+			if err := d.recordDelivery(ctx, systemUserID, sig); err != nil {
+				d.log.Error().Err(err).Msg("force resend: record default delivery failed")
+			}
+			res.DefaultSent = true
+		}
+	}
+	return res, nil
+}
+
+// chatTarget is the dedup key for one physical Telegram destination.
+func chatTarget(botToken, chatID string) string {
+	return botToken + "|" + chatID
+}
+
+// Broadcast sends a plain message to every Telegram-enabled user plus the
+// safety-net chat, deduped by physical destination. Used for global (non
+// per-watchlist) alerts like IPO signals. Returns how many chats were sent to.
+func (d *Dispatcher) Broadcast(ctx context.Context, text string) (int, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT bot_token, chat_id FROM telegram_configs
+		WHERE enabled = TRUE AND bot_token <> '' AND chat_id <> ''`)
+	if err != nil {
+		return 0, err
+	}
+	type dest struct{ bot, chat string }
+	var dests []dest
+	for rows.Next() {
+		var dd dest
+		if err := rows.Scan(&dd.bot, &dd.chat); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		dests = append(dests, dd)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if d.defaultBot != "" && d.defaultChat != "" {
+		dests = append(dests, dest{d.defaultBot, d.defaultChat})
+	}
+
+	sent := map[string]bool{}
+	count := 0
+	for _, dd := range dests {
+		tk := chatTarget(dd.bot, dd.chat)
+		if sent[tk] {
+			continue
+		}
+		if err := d.tg.Send(ctx, dd.bot, dd.chat, text); err != nil {
+			d.log.Error().Err(err).Msg("broadcast send failed")
+			continue
+		}
+		sent[tk] = true
+		count++
+	}
+	return count, nil
 }
 
 // SendTest sends a plain connectivity-check message to a specific bot/chat.
@@ -164,8 +253,8 @@ func (d *Dispatcher) alreadyDelivered(ctx context.Context, userID string, sig si
 	err := d.pool.QueryRow(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM signal_deliveries
-			WHERE user_id = $1::uuid AND instrument_id = $2 AND timeframe = $3 AND candle_date = $4)`,
-		userID, sig.InstrumentID, sig.Timeframe, sig.CandleDate).Scan(&exists)
+			WHERE user_id = $1::uuid AND signal_id = $2 AND channel = 'telegram')`,
+		userID, sig.ID).Scan(&exists)
 	return exists, err
 }
 
@@ -173,9 +262,18 @@ func (d *Dispatcher) recordDelivery(ctx context.Context, userID string, sig sign
 	_, err := d.pool.Exec(ctx, `
 		INSERT INTO signal_deliveries (signal_id, user_id, instrument_id, timeframe, candle_date, channel)
 		VALUES ($1, $2::uuid, $3, $4, $5, 'telegram')
-		ON CONFLICT (user_id, instrument_id, timeframe, candle_date) DO NOTHING`,
+		ON CONFLICT (user_id, signal_id, channel) DO NOTHING`,
 		sig.ID, userID, sig.InstrumentID, sig.Timeframe, sig.CandleDate)
 	return err
+}
+
+// cmp returns the latest stored daily close as an approximate current price.
+func (d *Dispatcher) cmp(ctx context.Context, instrumentID int64) float64 {
+	var px float64
+	_ = d.pool.QueryRow(ctx,
+		`SELECT close FROM daily_candles WHERE instrument_id = $1 ORDER BY trade_date DESC LIMIT 1`,
+		instrumentID).Scan(&px)
+	return px
 }
 
 func (d *Dispatcher) symbol(ctx context.Context, instrumentID int64) string {
@@ -192,19 +290,254 @@ func ScannerKeys(sig signals.Signal) []string {
 	if sig.Source == "pine" {
 		return []string{"pine_" + strings.ToLower(sig.Timeframe)} // pine_1d | pine_1w | pine_1m
 	}
+	if sig.Source == "patterns" {
+		return []string{sig.ScannerName}
+	}
 	return strings.Split(sig.ScannerName, ",") // weekly_1..weekly_4
 }
 
-func formatMessage(sig signals.Signal, symbol string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s signal — %s\n", sig.Direction, symbol)
-	fmt.Fprintf(&b, "Timeframe: %s\n", sig.Timeframe)
-	fmt.Fprintf(&b, "Scanner(s): %s\n", sig.ScannerName)
-	if sig.Confidence != nil {
-		fmt.Fprintf(&b, "Confidence: %d/4\n", *sig.Confidence)
+// tfLabel maps 1D/1W/1M to a readable timeframe name.
+func tfLabel(tf string) string {
+	switch tf {
+	case "1D":
+		return "Daily"
+	case "1W":
+		return "Weekly"
+	case "1M":
+		return "Monthly"
+	default:
+		return tf
 	}
-	fmt.Fprintf(&b, "Candle date: %s", sig.CandleDate.Format("2006-01-02"))
+}
+
+// formatMessage builds a rich, emoji-decorated Telegram alert. It adapts to the
+// scanner source and only prints fields we actually have (no fabricated numbers).
+func formatMessage(sig signals.Signal, symbol string, cmp float64) string {
+	var b strings.Builder
+	dir := strings.ToUpper(sig.Direction)
+	buy := dir == "BUY"
+
+	mark := "🟢"
+	if !buy {
+		mark = "🔴"
+	}
+	fmt.Fprintf(&b, "%s %s SIGNAL — %s (%s)\n", mark, dir, symbol, sig.Timeframe)
+	b.WriteString("━━━━━━━━━━━━━━━━━━━\n")
+	fmt.Fprintf(&b, "📊 Strategy: %s\n", strategyName(sig))
+	fmt.Fprintf(&b, "⏱ Timeframe: %s — %s\n", sig.Timeframe, tfPhase(sig.Timeframe))
+
+	switch sig.Source {
+	case "pine":
+		if v, ok := sig.Metrics["breakout_len"]; ok {
+			if buy {
+				fmt.Fprintf(&b, "📈 Breakout: Close crossed above %.0f-bar high\n", v)
+			} else {
+				fmt.Fprintf(&b, "📉 Breakdown: Close crossed below %.0f-bar low\n", v)
+			}
+		}
+		if v, ok := sig.Metrics["body_atr"]; ok {
+			fmt.Fprintf(&b, "💪 Candle: Body strength %.2fx ATR\n", v)
+		}
+		if v, ok := sig.Metrics["rel_volume"]; ok {
+			fmt.Fprintf(&b, "📊 Volume: Relative volume %.2fx\n", v)
+		}
+		if sig.RSI != nil {
+			fmt.Fprintf(&b, "🔥 RSI: %.1f (%s)\n", *sig.RSI, rsiLabel(*sig.RSI, buy))
+		}
+		if buy {
+			b.WriteString("📐 Trend: EMA 10 > 20 > SMA 40 (Bullish stack)\n")
+		} else {
+			b.WriteString("📐 Trend: EMA 10 < 20 < SMA 40 (Bearish stack)\n")
+		}
+		// Pine is a binary BUY/SELL strategy — no conviction/confidence concept.
+	case "weekly":
+		if sig.Confidence != nil {
+			fmt.Fprintf(&b, "🎯 Scanners: %d of 4 confluences fired\n", *sig.Confidence)
+		}
+		if m := weeklyMatched(sig.ScannerName); m != "" {
+			fmt.Fprintf(&b, "🧩 Matched: %s\n", m)
+		}
+		if sig.RSI != nil {
+			fmt.Fprintf(&b, "🔥 RSI: %.1f (%s)\n", *sig.RSI, rsiLabel(*sig.RSI, buy))
+		}
+		if sig.Volume != nil {
+			fmt.Fprintf(&b, "📊 Volume: %s\n", humanVol(*sig.Volume))
+		}
+	case "patterns":
+		fmt.Fprintf(&b, "🔎 Pattern: %s\n", prettyScanner(sig))
+		if sig.RSI != nil {
+			fmt.Fprintf(&b, "🔥 RSI: %.1f (%s)\n", *sig.RSI, rsiLabel(*sig.RSI, buy))
+		}
+		if sig.Volume != nil {
+			fmt.Fprintf(&b, "📊 Volume: %s\n", humanVol(*sig.Volume))
+		}
+	default:
+		fmt.Fprintf(&b, "🧭 Scanner: %s\n", prettyScanner(sig))
+	}
+
+	if c := convictionText(sig); c != "" {
+		fmt.Fprintf(&b, "⚡ Conviction: %s\n", c)
+	}
+	b.WriteString("━━━━━━━━━━━━━━━━━━━\n")
+	if cmp > 0 {
+		fmt.Fprintf(&b, "💰 Price: ₹%.2f\n", cmp)
+	}
+	b.WriteString(candleLine(sig))
 	return b.String()
+}
+
+// candleLine describes the signal's candle correctly per timeframe. A daily bar
+// closes at 15:30 IST on its trade date; for weekly/monthly the stored date is
+// the period start, so we label it as the week/month rather than a fake time.
+func candleLine(sig signals.Signal) string {
+	d := sig.CandleDate
+	switch sig.Timeframe {
+	case "1D":
+		return fmt.Sprintf("🕐 Candle Close: %s, 15:30 IST", d.Format("02 Jan 2006"))
+	case "1W":
+		return fmt.Sprintf("🗓 Week of: %s (closes Fri 15:30 IST)", d.Format("02 Jan 2006"))
+	case "1M":
+		return fmt.Sprintf("🗓 Month of: %s", d.Format("Jan 2006"))
+	default:
+		return fmt.Sprintf("🗓 Candle: %s", d.Format("02 Jan 2006"))
+	}
+}
+
+// strategyName is the human label for a signal's source.
+func strategyName(sig signals.Signal) string {
+	switch sig.Source {
+	case "pine":
+		return "Pine Script Momentum"
+	case "weekly":
+		return "Weekly Confluence"
+	case "patterns":
+		return "Chart Pattern"
+	}
+	return sig.Source
+}
+
+// tfPhase describes what a timeframe means for trade horizon.
+func tfPhase(tf string) string {
+	switch tf {
+	case "1D":
+		return "Swing Confirmation"
+	case "1W":
+		return "Positional"
+	case "1M":
+		return "Long-term"
+	}
+	return tfLabel(tf)
+}
+
+// rsiLabel gives a short momentum descriptor for an RSI value in context.
+func rsiLabel(rsi float64, buy bool) string {
+	if buy {
+		switch {
+		case rsi >= 70:
+			return "Strong bullish"
+		case rsi >= 60:
+			return "Bullish momentum"
+		case rsi >= 50:
+			return "Mild bullish"
+		default:
+			return "Neutral / weak"
+		}
+	}
+	switch {
+	case rsi <= 30:
+		return "Strong bearish"
+	case rsi <= 40:
+		return "Bearish momentum"
+	case rsi <= 50:
+		return "Mild bearish"
+	default:
+		return "Neutral"
+	}
+}
+
+// convictionText renders LOW/MEDIUM/HIGH for sources that HAVE a real
+// confidence measure. Pine is a binary BUY/SELL strategy with no such concept,
+// so it returns "" (the caller omits the line entirely for Pine).
+func convictionText(sig signals.Signal) string {
+	switch sig.Source {
+	case "weekly":
+		if sig.Confidence != nil {
+			switch {
+			case *sig.Confidence >= 3:
+				return "HIGH"
+			case *sig.Confidence == 2:
+				return "MEDIUM"
+			default:
+				return "LOW"
+			}
+		}
+	case "patterns":
+		if sig.Confidence != nil {
+			switch {
+			case *sig.Confidence >= 70:
+				return "HIGH"
+			case *sig.Confidence >= 40:
+				return "MEDIUM"
+			default:
+				return "LOW"
+			}
+		}
+	}
+	return ""
+}
+
+// weeklyMatched turns "weekly_1,weekly_3" into a friendly comma list.
+func weeklyMatched(names string) string {
+	if names == "" {
+		return ""
+	}
+	labels := map[string]string{
+		"weekly_1": "52-wk high breakout + EMA stack",
+		"weekly_2": "Continuation (higher low + inside-bar break)",
+		"weekly_3": "52-wk high breakout (structure)",
+		"weekly_4": "Price-action continuation",
+	}
+	parts := strings.Split(names, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if lbl, ok := labels[p]; ok {
+			out = append(out, lbl)
+		} else if p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, ", ")
+}
+
+// prettyScanner renders a friendly scanner label.
+func prettyScanner(sig signals.Signal) string {
+	if sig.Source == "pine" {
+		return "Chase Momentum (Pine)"
+	}
+	switch sig.ScannerName {
+	case "pattern_cup_handle":
+		return "Cup & Handle"
+	case "pattern_downtrend_breakout":
+		return "Downtrend Breakout"
+	case "pattern_rectangle":
+		return "Rectangle Box"
+	}
+	return sig.ScannerName
+}
+
+// humanVol formats large volumes compactly (e.g. 1.2M, 845K).
+func humanVol(v float64) string {
+	switch {
+	case v >= 1e7:
+		return fmt.Sprintf("%.2fCr", v/1e7)
+	case v >= 1e5:
+		return fmt.Sprintf("%.2fL", v/1e5)
+	case v >= 1e3:
+		return fmt.Sprintf("%.1fK", v/1e3)
+	default:
+		return fmt.Sprintf("%.0f", v)
+	}
 }
 
 func dateOnly(t time.Time) time.Time {

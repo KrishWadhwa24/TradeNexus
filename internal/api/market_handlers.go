@@ -56,6 +56,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
+			// Skip stocks with no stored candles (e.g. a failed history fetch) —
+			// they'd otherwise show as all-zero rows in the dashboard.
+			if !p.HasData {
+				continue
+			}
 			out = append(out, p)
 		}
 	}
@@ -77,8 +82,8 @@ func (s *Server) instrumentParams(r *http.Request, id int64) (analytics.Params, 
 	p.InstrumentID = id
 	p.Symbol = inst.TradingSymbol
 	// Best-effort live price.
-	if ltp, err := s.angel.GetLTP(r.Context(), inst.Exchange, inst.TradingSymbol, inst.SymbolToken); err == nil && ltp > 0 {
-		p.Price = ltp
+	if tick, ok := s.live.GetLastTick(inst.Exchange, inst.SymbolToken); ok {
+		p.Price = tick.Price
 	}
 	return p, nil
 }

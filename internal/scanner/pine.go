@@ -19,9 +19,10 @@ func DefaultPineConfig() PineConfig {
 
 // PineSignal is the outcome on the most recent bar.
 type PineSignal struct {
-	Buy     bool            `json:"buy"`
-	Sell    bool            `json:"sell"`
-	Reasons map[string]bool `json:"reasons"`
+	Buy     bool               `json:"buy"`
+	Sell    bool               `json:"sell"`
+	Reasons map[string]bool    `json:"reasons"`
+	Metrics map[string]float64 `json:"metrics,omitempty"` // last-bar numbers for alerts
 }
 
 // ScanPine faithfully replays the "Chase Momentum Pro Clean" strategy over the
@@ -30,7 +31,7 @@ type PineSignal struct {
 func ScanPine(candles []market.Candle, cfg PineConfig) PineSignal {
 	s := toSeries(candles)
 	if s.n < 2 {
-		return PineSignal{Reasons: map[string]bool{}}
+		return PineSignal{Reasons: map[string]bool{}, Metrics: map[string]float64{}}
 	}
 
 	ema10 := indicators.EMA(s.close, 10)
@@ -96,6 +97,31 @@ func ScanPine(candles []market.Candle, cfg PineConfig) PineSignal {
 		}
 
 		if i == s.n-1 {
+			metrics := map[string]float64{
+				"breakout_len": float64(cfg.BreakoutLength),
+				"price":        s.close[i],
+			}
+			if !nan(rsi[i]) {
+				metrics["rsi"] = rsi[i]
+			}
+			if !nan(atr[i]) && atr[i] > 0 {
+				metrics["body_atr"] = body / atr[i]
+			}
+			if !nan(avgVol[i]) && avgVol[i] > 0 {
+				metrics["rel_volume"] = s.volume[i] / avgVol[i]
+			}
+			if s.volume[i] > 0 {
+				metrics["volume"] = s.volume[i]
+			}
+			if !nan(ema10[i]) {
+				metrics["ema10"] = ema10[i]
+			}
+			if !nan(ema20[i]) {
+				metrics["ema20"] = ema20[i]
+			}
+			if !nan(sma40[i]) {
+				metrics["sma40"] = sma40[i]
+			}
 			last = PineSignal{
 				Buy:  buy,
 				Sell: sell,
@@ -107,6 +133,7 @@ func ScanPine(candles []market.Candle, cfg PineConfig) PineSignal {
 					"bullMomentum":      bullMom,
 					"canBuy":            canBuy,
 				},
+				Metrics: metrics,
 			}
 		}
 	}

@@ -36,22 +36,44 @@ type Config struct {
 	AngelTOTPSecret string `env:"ANGEL_TOTP_SECRET" envDefault:""`
 
 	// Angel rate limiting
-	AngelHistRate  float64 `env:"ANGEL_HIST_RATE" envDefault:"3"`
-	AngelHistBurst int     `env:"ANGEL_HIST_BURST" envDefault:"3"`
+	AngelHistRate            float64       `env:"ANGEL_HIST_RATE" envDefault:"2"`
+	AngelHistBurst           int           `env:"ANGEL_HIST_BURST" envDefault:"2"`
+	AngelScripMasterTimeout  time.Duration `env:"ANGEL_SCRIPMASTER_TIMEOUT" envDefault:"5m"`
+	AngelScripMasterAttempts int           `env:"ANGEL_SCRIPMASTER_ATTEMPTS" envDefault:"3"`
+	AngelScripMasterURL      string        `env:"ANGEL_SCRIPMASTER_URL" envDefault:""`
 
 	// Exchange / calendar
 	Exchange string `env:"EXCHANGE" envDefault:"NSE"`
 
+	// MarketCloseBufferMin is the grace period (minutes) after the 15:30 IST
+	// close before a daily candle is treated as finalized (Angel EOD lag).
+	MarketCloseBufferMin int `env:"MARKET_CLOSE_BUFFER_MIN" envDefault:"15"`
+
 	// Auth
 	JWTSecret string `env:"JWT_SECRET" envDefault:"dev-change-me-please"`
 
+	// Admin bootstrap: if both are set, an admin account is upserted on boot.
+	AdminEmail    string `env:"ADMIN_EMAIL" envDefault:""`
+	AdminPassword string `env:"ADMIN_PASSWORD" envDefault:""`
+
 	// Scanner / scheduler
-	SchedulerEnabled    bool   `env:"SCHEDULER_ENABLED" envDefault:"true"`
-	DailyScanCron       string `env:"DAILY_SCAN_CRON" envDefault:"20 15 * * 1-5"`
-	CleanupCron         string `env:"CLEANUP_CRON" envDefault:"0 1 * * *"`
-	FillScheduledCron   string `env:"FILL_SCHEDULED_CRON" envDefault:"16 9 * * 1-5"`
-	RetentionDays       int    `env:"RETENTION_DAYS" envDefault:"30"`
-	ReconcileOnStartup  bool   `env:"RECONCILE_ON_STARTUP" envDefault:"true"`
+	SchedulerEnabled   bool   `env:"SCHEDULER_ENABLED" envDefault:"true"`
+	DailyScanCron      string `env:"DAILY_SCAN_CRON" envDefault:"0 16 * * 1-5"`
+	CleanupCron        string `env:"CLEANUP_CRON" envDefault:"0 1 * * *"`
+	FillScheduledCron  string `env:"FILL_SCHEDULED_CRON" envDefault:"16 9 * * 1-5"`
+	RetentionDays      int    `env:"RETENTION_DAYS" envDefault:"30"`
+	ReconcileOnStartup bool   `env:"RECONCILE_ON_STARTUP" envDefault:"true"`
+
+	// Intraday cache (today's forming candle in Redis, market hours only)
+	IntradayCacheEnabled  bool          `env:"INTRADAY_CACHE_ENABLED" envDefault:"true"`
+	IntradayCacheInterval time.Duration `env:"INTRADAY_CACHE_INTERVAL" envDefault:"20m"`
+
+	// IPO tracker (open + upcoming IPOs + GMP signals from the InvestorGain feed)
+	IPOEnabled      bool          `env:"IPO_ENABLED" envDefault:"true"`
+	IPOPollInterval time.Duration `env:"IPO_POLL_INTERVAL" envDefault:"3h"`
+	// IST cron for the authoritative close-day GMP signal check (mainboard only).
+	// Default 14:30 (2:30 PM IST).
+	IPOSignalCron string `env:"IPO_SIGNAL_CRON" envDefault:"30 14 * * *"`
 
 	// Notifications (Module 7)
 	NotifyEnabled    bool   `env:"NOTIFY_ENABLED" envDefault:"true"`

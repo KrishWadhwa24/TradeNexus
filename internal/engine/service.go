@@ -5,6 +5,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"tradenexus/internal/calendar"
 	"tradenexus/internal/candles"
 	"tradenexus/internal/instruments"
+	"tradenexus/internal/intraday"
 	"tradenexus/internal/market"
 	"tradenexus/internal/notify"
 	"tradenexus/internal/scanner"
@@ -27,19 +29,27 @@ type Service struct {
 	inst      *instruments.Repo
 	angel     *angel.Client
 	cal       *calendar.Service
-	notifier  *notify.Dispatcher // optional; nil disables notifications
-	pineCfg   scanner.PineConfig
-	retention time.Duration
-	log       zerolog.Logger
+	notifier   *notify.Dispatcher // optional; nil disables notifications
+	intraday   *intraday.Cache    // optional; nil disables intraday cache
+	pineCfg    scanner.PineConfig
+	retention  time.Duration
+	closeBuffer int // minutes after 15:30 IST before a candle is "finalized"
+	log        zerolog.Logger
 }
 
-// New builds the engine service. notifier may be nil to disable fan-out.
+// New builds the engine service. notifier and intradayCache may be nil.
+// closeBufferMin is the grace period after the 15:30 IST close before a daily
+// candle is treated as finalized; pass <= 0 to use the default.
 func New(c *candles.Repo, sig *signals.Repo, inst *instruments.Repo, ang *angel.Client,
-	cal *calendar.Service, notifier *notify.Dispatcher, pineCfg scanner.PineConfig,
-	retention time.Duration, log zerolog.Logger) *Service {
+	cal *calendar.Service, notifier *notify.Dispatcher, intradayCache *intraday.Cache,
+	pineCfg scanner.PineConfig, retention time.Duration, closeBufferMin int, log zerolog.Logger) *Service {
+	if closeBufferMin <= 0 {
+		closeBufferMin = defaultCloseBufferMin
+	}
 	return &Service{
 		candles: c, signals: sig, inst: inst, angel: ang, cal: cal,
-		notifier: notifier, pineCfg: pineCfg, retention: retention, log: log,
+		notifier: notifier, intraday: intradayCache, pineCfg: pineCfg,
+		retention: retention, closeBuffer: closeBufferMin, log: log,
 	}
 }
 
@@ -50,24 +60,38 @@ type ScanResult struct {
 	SignalsInserted int            `json:"signals_inserted"`
 }
 
-// ScanStored runs the scanner on already-stored candles and persists signals.
+// ScanStored runs the scanner and persists signals. During market hours it
+// appends today's forming candle from the intraday cache to the confirmed daily
+// history, then derives weekly/monthly in-memory so the scan reflects live data.
 func (s *Service) ScanStored(ctx context.Context, instrumentID int64) (ScanResult, error) {
 	daily, err := s.candles.GetDaily(ctx, instrumentID)
 	if err != nil {
 		return ScanResult{}, err
 	}
-	weeklyAgg, err := s.candles.GetAggregates(ctx, instrumentID, market.TF1W)
-	if err != nil {
-		return ScanResult{}, err
-	}
-	monthlyAgg, err := s.candles.GetAggregates(ctx, instrumentID, market.TF1M)
-	if err != nil {
-		return ScanResult{}, err
+
+	// Intraday: while the market is open, splice today's forming candle in.
+	dailyForming := false
+	if s.intraday != nil && s.intraday.MarketOpen(time.Now().In(market.IST)) {
+		if cd, ok, gerr := s.intraday.Get(ctx, instrumentID); gerr == nil && ok {
+			daily = appendToday(daily, cd)
+			dailyForming = true
+		}
 	}
 
+	// Derive higher timeframes from the (possibly intraday-augmented) daily set.
+	weeklyAgg := candles.Weekly(daily)
+	monthlyAgg := candles.Monthly(daily)
 	weekly := market.AggToCandles(weeklyAgg)
 	monthly := market.AggToCandles(monthlyAgg)
-	report := scanner.Run(daily, weekly, monthly, s.pineCfg)
+
+	// Confirmation flags for the pattern scanners (Pine/weekly ignore these):
+	// the daily bar is "confirmed" unless we appended today's forming candle;
+	// the last weekly/monthly bar is confirmed only once its period has closed.
+	dailyConfirmed := !dailyForming
+	weeklyConfirmed := len(weeklyAgg) > 0 && weeklyAgg[len(weeklyAgg)-1].IsConfirmed
+	monthlyConfirmed := len(monthlyAgg) > 0 && monthlyAgg[len(monthlyAgg)-1].IsConfirmed
+
+	report := scanner.Run(daily, weekly, monthly, s.pineCfg, dailyConfirmed, weeklyConfirmed, monthlyConfirmed)
 
 	inserted, err := s.persist(ctx, instrumentID, report, daily, weekly, monthly)
 	if err != nil {
@@ -127,12 +151,56 @@ func (s *Service) persist(ctx context.Context, instID int64, rep scanner.Report,
 			Direction:    "BUY",
 			CandleDate:   lastTime(weekly),
 			Confidence:   &conf,
+			RSI:          rep.Weekly.RSI,
+			Volume:       rep.Weekly.Volume,
 			Reasons:      rep.Weekly.Details,
 		}); err != nil {
 			return n, err
 		}
 	}
+	if err := s.persistPatternSignals(add, instID, market.TF1D, lastTimeOrZero(daily), rep.Patterns.Daily); err != nil {
+		return n, err
+	}
+	if err := s.persistPatternSignals(add, instID, market.TF1W, lastTimeOrZero(weekly), rep.Patterns.Weekly); err != nil {
+		return n, err
+	}
+	if err := s.persistPatternSignals(add, instID, market.TF1M, lastTimeOrZero(monthly), rep.Patterns.Monthly); err != nil {
+		return n, err
+	}
 	return n, nil
+}
+
+func (s *Service) persistPatternSignals(add func(signals.Signal) error, instID int64, tf string, date time.Time, res scanner.PatternTimeframeResult) error {
+	if date.IsZero() {
+		return nil
+	}
+	patterns := []struct {
+		name string
+		sig  scanner.PatternSignal
+	}{
+		{scanner.PatternDowntrendBreakout, res.DowntrendBreakout},
+		{scanner.PatternRectangle, res.Rectangle},
+		{scanner.PatternCupHandle, res.CupHandle},
+	}
+	for _, p := range patterns {
+		if !p.sig.Buy {
+			continue
+		}
+		conv := p.sig.Conviction
+		if err := add(signals.Signal{
+			InstrumentID: instID,
+			Source:       "patterns",
+			ScannerName:  p.name,
+			Timeframe:    tf,
+			Direction:    "BUY",
+			CandleDate:   date,
+			Confidence:   &conv, // pattern conviction (0-100), shown in alerts
+			Reasons:      p.sig.Reasons,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func pineSignal(instID int64, tf string, date time.Time, sig scanner.PineSignal) signals.Signal {
@@ -140,7 +208,7 @@ func pineSignal(instID int64, tf string, date time.Time, sig scanner.PineSignal)
 	if sig.Sell {
 		dir = "SELL"
 	}
-	return signals.Signal{
+	out := signals.Signal{
 		InstrumentID: instID,
 		Source:       "pine",
 		ScannerName:  "pine",
@@ -148,13 +216,66 @@ func pineSignal(instID int64, tf string, date time.Time, sig scanner.PineSignal)
 		Direction:    dir,
 		CandleDate:   date,
 		Reasons:      sig.Reasons,
+		Metrics:      sig.Metrics,
 	}
+	// Surface RSI/volume as dedicated fields too (used by the audit UI + alerts).
+	if v, ok := sig.Metrics["rsi"]; ok {
+		rsi := v
+		out.RSI = &rsi
+	}
+	if v, ok := sig.Metrics["volume"]; ok {
+		vol := v
+		out.Volume = &vol
+	}
+	return out
 }
 
 func lastTime(c []market.Candle) time.Time { return c[len(c)-1].Time }
 
-// SyncAndScan fetches `days` of daily history from Angel, stores it, rebuilds
-// aggregates, and scans.
+func lastTimeOrZero(c []market.Candle) time.Time {
+	if len(c) == 0 {
+		return time.Time{}
+	}
+	return lastTime(c)
+}
+
+// appendToday splices today's forming candle onto the confirmed daily history.
+// If the DB already has a bar for today's date it's replaced with the fresher
+// cached value; otherwise the candle is appended.
+func appendToday(daily []market.Candle, today market.Candle) []market.Candle {
+	if len(daily) == 0 {
+		return []market.Candle{today}
+	}
+	last := daily[len(daily)-1]
+	if today.Time.After(last.Time) {
+		return append(daily, today)
+	}
+	if today.Time.Equal(last.Time) {
+		daily[len(daily)-1] = today
+	}
+	return daily
+}
+
+// defaultCloseBufferMin is the fallback grace period after the 15:30 IST close
+// before a daily candle is treated as finalized (Angel's EOD data can lag the
+// bell). Overridden per-service via New(closeBufferMin).
+const defaultCloseBufferMin = 15
+
+// dropAfter removes any candle whose date is after cutoff. Used so a still-
+// forming (intraday) candle is never persisted to Postgres — today's live
+// candle lives only in the Redis intraday cache until the session closes.
+func dropAfter(cs []market.Candle, cutoff time.Time) []market.Candle {
+	out := make([]market.Candle, 0, len(cs))
+	for _, c := range cs {
+		if !c.Time.After(cutoff) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// SyncAndScan fetches `days` of daily history from Angel, stores only the
+// finalized (closed) candles, rebuilds aggregates, and scans.
 func (s *Service) SyncAndScan(ctx context.Context, instrumentID, days int) (ScanResult, error) {
 	inst, err := s.inst.GetByID(ctx, int64(instrumentID))
 	if err != nil {
@@ -166,13 +287,15 @@ func (s *Service) SyncAndScan(ctx context.Context, instrumentID, days int) (Scan
 	if days > 2000 {
 		days = 2000
 	}
-	to := time.Now().In(market.IST)
-	from := to.AddDate(0, 0, -(days*7/5 + 10))
+	now := time.Now().In(market.IST)
+	from := now.AddDate(0, 0, -(days*7/5 + 10))
 
-	fetched, err := s.angel.GetDailyCandles(ctx, inst.Exchange, inst.SymbolToken, from, to)
+	fetched, err := s.angel.GetDailyCandles(ctx, inst.Exchange, inst.SymbolToken, from, now)
 	if err != nil {
 		return ScanResult{}, err
 	}
+	// Never store today's unclosed candle — keep only finalized bars.
+	fetched = dropAfter(fetched, s.cal.Cal().LastFinalizedTradingDay(now, s.closeBuffer))
 	if _, err := s.candles.UpsertDaily(ctx, int64(instrumentID), fetched); err != nil {
 		return ScanResult{}, err
 	}
@@ -212,8 +335,12 @@ func (s *Service) Reconcile(ctx context.Context, instrumentID int64) (ReconcileR
 		return ReconcileResult{InstrumentID: instrumentID, Fetched: -1, SignalsInserted: res.SignalsInserted, Bootstrapped: true}, nil
 	}
 
-	today := time.Now().In(market.IST)
-	missing := s.cal.Cal().MissingTradingDays(first.AddDate(0, 0, -1), today, set)
+	now := time.Now().In(market.IST)
+	// Only consider days whose session has fully closed. Today (while the market
+	// is open, or before the close buffer) is deliberately excluded so a partial
+	// candle is never treated as missing nor persisted.
+	cutoff := s.cal.Cal().LastFinalizedTradingDay(now, s.closeBuffer)
+	missing := s.cal.Cal().MissingTradingDays(first.AddDate(0, 0, -1), cutoff, set)
 
 	// Nothing missing — still re-scan so the forming weekly/monthly bar updates.
 	if len(missing) == 0 {
@@ -225,10 +352,12 @@ func (s *Service) Reconcile(ctx context.Context, instrumentID int64) (ReconcileR
 	}
 
 	from := missing[0]
-	fetched, err := s.angel.GetDailyCandles(ctx, inst.Exchange, inst.SymbolToken, from, today)
+	fetched, err := s.angel.GetDailyCandles(ctx, inst.Exchange, inst.SymbolToken, from, now)
 	if err != nil {
 		return ReconcileResult{}, err
 	}
+	// Store only finalized candles — drop today's forming bar if present.
+	fetched = dropAfter(fetched, cutoff)
 	if _, err := s.candles.UpsertDaily(ctx, instrumentID, fetched); err != nil {
 		return ReconcileResult{}, err
 	}
@@ -249,6 +378,13 @@ func (s *Service) Reconcile(ctx context.Context, instrumentID int64) (ReconcileR
 
 // ScanAll scans every tracked instrument from stored candles (no Angel calls).
 func (s *Service) ScanAll(ctx context.Context) ([]ScanResult, error) {
+	// If the market is open and the intraday cache is empty, fill it once first
+	// so this scan uses today's live candle (rather than only DB history).
+	if s.intraday != nil && s.intraday.MarketOpen(time.Now().In(market.IST)) {
+		if err := s.intraday.EnsureBuilt(ctx); err != nil {
+			s.log.Warn().Err(err).Msg("scan-all: intraday cache build failed; using DB only")
+		}
+	}
 	ids, err := s.candles.ListInstrumentIDsWithData(ctx)
 	if err != nil {
 		return nil, err
@@ -280,11 +416,121 @@ func (s *Service) ReconcileAll(ctx context.Context) ([]ReconcileResult, error) {
 			continue
 		}
 		out = append(out, r)
+
 	}
 	return out, nil
+}
+
+// DeleteCandlesForDate removes every daily candle on the given date and rebuilds
+// aggregates for the affected instruments. Returns the number of rows deleted.
+// Used by the admin tools to clear a bad (e.g. stale partial) day.
+func (s *Service) DeleteCandlesForDate(ctx context.Context, date time.Time) (int64, error) {
+	day := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, market.IST)
+	ids, err := s.candles.InstrumentIDsByDate(ctx, day)
+	if err != nil {
+		return 0, err
+	}
+	deleted, err := s.candles.DeleteByDate(ctx, day)
+	if err != nil {
+		return 0, err
+	}
+	for _, id := range ids {
+		if _, _, rerr := s.candles.RebuildAggregates(ctx, id); rerr != nil {
+			s.log.Error().Err(rerr).Int64("instrument", id).Msg("delete-date: rebuild aggregates failed")
+		}
+	}
+	s.log.Info().Str("date", day.Format("2006-01-02")).Int64("deleted", deleted).Msg("admin: candles deleted for date")
+	return deleted, nil
+}
+
+// CountCandlesForDate reports how many instruments have a stored candle on date.
+func (s *Service) CountCandlesForDate(ctx context.Context, date time.Time) (int, error) {
+	day := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, market.IST)
+	return s.candles.CountByDate(ctx, day)
+}
+
+// RefetchDateResult summarizes a per-date refetch.
+type RefetchDateResult struct {
+	Date      string `json:"date"`
+	Attempted int    `json:"attempted"`
+	Updated   int    `json:"updated"`
+}
+
+// RefetchDate re-fetches the single trading day `date` from Angel for every
+// tracked instrument, upserts the finalized bar, and rebuilds aggregates. The
+// date must be finalized (its session has closed) and a trading day. Heavy —
+// one rate-limited Angel call per instrument — so callers should run it in the
+// background.
+func (s *Service) RefetchDate(ctx context.Context, date time.Time) (RefetchDateResult, error) {
+	day := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, market.IST)
+	res := RefetchDateResult{Date: day.Format("2006-01-02")}
+
+	cutoff := s.cal.Cal().LastFinalizedTradingDay(time.Now().In(market.IST), s.closeBuffer)
+	if day.After(cutoff) {
+		return res, fmt.Errorf("date %s is not finalized yet (last finalized: %s)",
+			res.Date, cutoff.Format("2006-01-02"))
+	}
+	if !s.cal.Cal().IsTradingDay(day) {
+		return res, fmt.Errorf("%s is not a trading day", res.Date)
+	}
+
+	ids, err := s.candles.ListInstrumentIDsWithData(ctx)
+	if err != nil {
+		return res, err
+	}
+	for _, id := range ids {
+		inst, err := s.inst.GetByID(ctx, id)
+		if err != nil {
+			s.log.Error().Err(err).Int64("instrument", id).Msg("refetch-date: get instrument failed")
+			continue
+		}
+		res.Attempted++
+		fetched, err := s.angel.GetDailyCandles(ctx, inst.Exchange, inst.SymbolToken, day, day)
+		if err != nil {
+			s.log.Error().Err(err).Int64("instrument", id).Msg("refetch-date: fetch failed")
+			continue
+		}
+		fetched = onlyDate(fetched, day)
+		if len(fetched) == 0 {
+			continue
+		}
+		if _, err := s.candles.UpsertDaily(ctx, id, fetched); err != nil {
+			s.log.Error().Err(err).Int64("instrument", id).Msg("refetch-date: upsert failed")
+			continue
+		}
+		if _, _, err := s.candles.RebuildAggregates(ctx, id); err != nil {
+			s.log.Error().Err(err).Int64("instrument", id).Msg("refetch-date: rebuild failed")
+			continue
+		}
+		res.Updated++
+	}
+	s.log.Info().Str("date", res.Date).Int("attempted", res.Attempted).Int("updated", res.Updated).Msg("admin: refetch date done")
+	return res, nil
+}
+
+// onlyDate keeps candles whose date matches day (date-only comparison).
+func onlyDate(cs []market.Candle, day time.Time) []market.Candle {
+	out := make([]market.Candle, 0, 1)
+	for _, c := range cs {
+		if c.Time.Year() == day.Year() && c.Time.Month() == day.Month() && c.Time.Day() == day.Day() {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // Cleanup removes signals older than the retention window (30 days by default).
 func (s *Service) Cleanup(ctx context.Context) (int64, error) {
 	return s.signals.DeleteOlderThan(ctx, s.retention)
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

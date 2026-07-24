@@ -45,6 +45,26 @@ func (c *Calendar) IsMarketOpen(t time.Time) bool {
 	return mins >= 9*60+15 && mins <= 15*60+30
 }
 
+// LastFinalizedTradingDay returns the most recent trading day whose session has
+// fully closed. The regular close is 15:30 IST; bufferMinutes adds a grace
+// period so we don't read a candle Angel is still settling right at the bell.
+// Today counts only once now is past close+buffer; otherwise the previous
+// trading day is returned. Weekends/holidays are skipped.
+func (c *Calendar) LastFinalizedTradingDay(now time.Time, bufferMinutes int) time.Time {
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	closeMins := 15*60 + 30 + bufferMinutes
+	nowMins := now.Hour()*60 + now.Minute()
+	if c.IsTradingDay(day) && nowMins >= closeMins {
+		return day
+	}
+	for {
+		day = day.AddDate(0, 0, -1)
+		if c.IsTradingDay(day) {
+			return day
+		}
+	}
+}
+
 // TradingDays returns the trading days in [from, to] inclusive (date-only).
 func (c *Calendar) TradingDays(from, to time.Time) []time.Time {
 	var out []time.Time

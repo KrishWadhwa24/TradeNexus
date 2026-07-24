@@ -15,8 +15,9 @@ var ErrNotFound = errors.New("not found")
 
 // User is an account.
 type User struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
+	ID      string `json:"id"`
+	Email   string `json:"email"`
+	IsAdmin bool   `json:"is_admin"`
 }
 
 // Watchlist with its instrument ids.
@@ -46,7 +47,10 @@ func (r *Repo) CreateUser(ctx context.Context, email string) (string, error) {
 		INSERT INTO users (email) VALUES ($1)
 		ON CONFLICT (lower(email)) DO UPDATE SET email = EXCLUDED.email
 		RETURNING id::text`, email).Scan(&id)
-	return id, err
+	if err != nil {
+		return "", err
+	}
+	return id, r.ensureDefaultScannerPrefs(ctx, id)
 }
 
 // Register creates a user with a password hash. Returns ErrEmailTaken if the
@@ -60,26 +64,77 @@ func (r *Repo) Register(ctx context.Context, email, passwordHash string) (string
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrEmailTaken
 	}
-	return id, err
+	if err != nil {
+		return "", err
+	}
+	return id, r.ensureDefaultScannerPrefs(ctx, id)
 }
 
 // ErrEmailTaken is returned when registering an existing email.
 var ErrEmailTaken = errors.New("email already registered")
 
-// AuthByEmail returns the user id and password hash for login verification.
-func (r *Repo) AuthByEmail(ctx context.Context, email string) (id, hash string, err error) {
-	err = r.pool.QueryRow(ctx,
-		`SELECT id::text, password_hash FROM users WHERE lower(email) = lower($1)`, email).
-		Scan(&id, &hash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", ErrNotFound
+var defaultScannerPrefs = []string{
+	"pine_1d",
+	"pine_1w",
+	"pine_1m",
+	"weekly_1",
+	"weekly_2",
+	"weekly_3",
+	"weekly_4",
+	"pattern_downtrend_breakout",
+	"pattern_rectangle",
+	"pattern_cup_handle",
+}
+
+func (r *Repo) ensureDefaultScannerPrefs(ctx context.Context, userID string) error {
+	batch := &pgx.Batch{}
+	for _, key := range defaultScannerPrefs {
+		batch.Queue(`
+			INSERT INTO user_scanner_prefs (user_id, scanner_key, enabled)
+			VALUES ($1::uuid, $2, TRUE)
+			ON CONFLICT (user_id, scanner_key) DO NOTHING`,
+			userID, key)
 	}
-	return id, hash, err
+	br := r.pool.SendBatch(ctx, batch)
+	defer br.Close()
+	for range defaultScannerPrefs {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// AuthByEmail returns the user id, password hash, and admin flag for login.
+func (r *Repo) AuthByEmail(ctx context.Context, email string) (id, hash string, isAdmin bool, err error) {
+	err = r.pool.QueryRow(ctx,
+		`SELECT id::text, password_hash, is_admin FROM users WHERE lower(email) = lower($1)`, email).
+		Scan(&id, &hash, &isAdmin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", false, ErrNotFound
+	}
+	return id, hash, isAdmin, err
+}
+
+// EnsureAdmin upserts an admin account with the given credentials. Called on
+// boot from ADMIN_EMAIL/ADMIN_PASSWORD so there's always exactly one known
+// admin login. The password hash is refreshed each boot and is_admin forced on.
+func (r *Repo) EnsureAdmin(ctx context.Context, email, passwordHash string) (string, error) {
+	var id string
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO users (email, password_hash, is_admin) VALUES ($1, $2, TRUE)
+		ON CONFLICT (lower(email)) DO UPDATE
+		SET password_hash = EXCLUDED.password_hash, is_admin = TRUE
+		RETURNING id::text`, email, passwordHash).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return id, r.ensureDefaultScannerPrefs(ctx, id)
 }
 
 // ListUsers returns all users.
 func (r *Repo) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := r.pool.Query(ctx, `SELECT id::text, email FROM users ORDER BY email`)
+	rows, err := r.pool.Query(ctx, `SELECT id::text, email, is_admin FROM users ORDER BY email`)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +142,7 @@ func (r *Repo) ListUsers(ctx context.Context) ([]User, error) {
 	var out []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Email); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.IsAdmin); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -103,6 +158,20 @@ func (r *Repo) CreateWatchlist(ctx context.Context, userID, name string) (string
 		ON CONFLICT (user_id, name) DO UPDATE SET name = EXCLUDED.name
 		RETURNING id::text`, userID, name).Scan(&id)
 	return id, err
+}
+
+// DeleteWatchlist removes a watchlist owned by a user.
+func (r *Repo) DeleteWatchlist(ctx context.Context, userID, watchlistID string) error {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM watchlists
+		WHERE id = $1::uuid AND user_id = $2::uuid`, watchlistID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // AddWatchlistItem adds an instrument to a watchlist.

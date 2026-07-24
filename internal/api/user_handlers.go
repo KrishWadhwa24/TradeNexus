@@ -55,6 +55,21 @@ func (s *Server) handleCreateWatchlist(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "name": body.Name})
 }
 
+// DELETE /v1/users/{uid}/watchlists/{wid}
+func (s *Server) handleDeleteWatchlist(w http.ResponseWriter, r *http.Request) {
+	uid := chi.URLParam(r, "uid")
+	wid := chi.URLParam(r, "wid")
+	if err := s.users.DeleteWatchlist(r.Context(), uid, wid); err != nil {
+		if err == users.ErrNotFound {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "watchlist not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
 // GET /v1/users/{uid}/watchlists
 func (s *Server) handleListWatchlists(w http.ResponseWriter, r *http.Request) {
 	list, err := s.users.ListWatchlists(r.Context(), chi.URLParam(r, "uid"))

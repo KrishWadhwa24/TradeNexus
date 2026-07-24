@@ -27,7 +27,7 @@ func (s *Server) handleAngelStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.angel.TokenStatus())
 }
 
-// POST /v1/angel/scripmaster/sync — download NSE-EQ scrips into instruments.
+// POST /v1/angel/scripmaster/sync — download NSE/BSE cash equities into instruments.
 func (s *Server) handleScripMasterSync(w http.ResponseWriter, r *http.Request) {
 	scrips, err := s.angel.FetchScripMaster(r.Context())
 	if err != nil {

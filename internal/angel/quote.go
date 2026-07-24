@@ -18,9 +18,9 @@ type ltpRequest struct {
 }
 
 type ltpResponse struct {
-	Status bool   `json:"status"`
+	Status  bool   `json:"status"`
 	Message string `json:"message"`
-	Data   struct {
+	Data    struct {
 		LTP float64 `json:"ltp"`
 	} `json:"data"`
 }

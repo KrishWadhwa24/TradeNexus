@@ -4,6 +4,7 @@
 package angel
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"time"
@@ -15,7 +16,7 @@ import (
 
 // Default Angel endpoints. Overridable via Config for tests (httptest servers).
 const (
-	defaultAPIBaseURL    = "https://apiconnect.angelbroking.com"
+	defaultAPIBaseURL     = "https://apiconnect.angelbroking.com"
 	defaultScripMasterURL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
 
 	pathLogin      = "/rest/auth/angelbroking/user/v1/loginByPassword"
@@ -39,8 +40,10 @@ type Config struct {
 	MACAddress     string
 
 	// Overridable base URLs (leave empty for production defaults).
-	APIBaseURL     string
-	ScripMasterURL string
+	APIBaseURL          string
+	ScripMasterURL      string
+	ScripMasterTimeout  time.Duration
+	ScripMasterAttempts int
 }
 
 // Client talks to Angel SmartAPI.
@@ -55,6 +58,17 @@ type Client struct {
 	tokenTime time.Time
 }
 
+// StreamCredentials returns the current credentials required by Angel's
+// websocket feed, logging in first if needed.
+func (c *Client) StreamCredentials(ctx context.Context) (apiKey, clientCode, jwtToken, feedToken string, err error) {
+	if err := c.ensureLogin(ctx); err != nil {
+		return "", "", "", "", err
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.cfg.APIKey, c.cfg.ClientCode, c.tokens.JWTToken, c.tokens.FeedToken, nil
+}
+
 // New builds a client, filling defaults for any empty config fields.
 func New(cfg Config, limiter *ratelimit.Limiter, log zerolog.Logger) *Client {
 	if cfg.APIBaseURL == "" {
@@ -62,6 +76,12 @@ func New(cfg Config, limiter *ratelimit.Limiter, log zerolog.Logger) *Client {
 	}
 	if cfg.ScripMasterURL == "" {
 		cfg.ScripMasterURL = defaultScripMasterURL
+	}
+	if cfg.ScripMasterTimeout == 0 {
+		cfg.ScripMasterTimeout = 5 * time.Minute
+	}
+	if cfg.ScripMasterAttempts == 0 {
+		cfg.ScripMasterAttempts = 3
 	}
 	if cfg.ClientLocalIP == "" {
 		cfg.ClientLocalIP = "127.0.0.1"
@@ -74,7 +94,7 @@ func New(cfg Config, limiter *ratelimit.Limiter, log zerolog.Logger) *Client {
 	}
 	return &Client{
 		cfg:     cfg,
-		http:    &http.Client{Timeout: 30 * time.Second},
+		http:    &http.Client{Timeout: 180 * time.Second},
 		limiter: limiter,
 		log:     log,
 	}

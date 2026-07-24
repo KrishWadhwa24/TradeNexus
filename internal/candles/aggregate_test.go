@@ -9,14 +9,15 @@ import (
 
 func day(y int, m time.Month, d int, o, h, l, c float64, v int64) market.Candle {
 	return market.Candle{
-		Time:   time.Date(y, m, d, 0, 0, 0, 0, market.IST),
-		Open:   o, High: h, Low: l, Close: c, Volume: v,
+		Time: time.Date(y, m, d, 0, 0, 0, 0, market.IST),
+		Open: o, High: h, Low: l, Close: c, Volume: v,
 	}
 }
 
 // Two full ISO weeks of daily bars:
-//   Week A: Mon 2024-01-01 .. Fri 2024-01-05
-//   Week B: Mon 2024-01-08 .. Fri 2024-01-12
+//
+//	Week A: Mon 2024-01-01 .. Fri 2024-01-05
+//	Week B: Mon 2024-01-08 .. Fri 2024-01-12
 func sampleDaily() []market.Candle {
 	return []market.Candle{
 		day(2024, 1, 1, 100, 110, 95, 105, 1000),

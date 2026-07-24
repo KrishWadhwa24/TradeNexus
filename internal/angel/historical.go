@@ -4,13 +4,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"tradenexus/internal/market"
 )
+
+// maxHistAttempts bounds retries when Angel rejects a historical request with a
+// transient rate-limit error (its server-side cap is stricter than our bucket).
+const maxHistAttempts = 3
 
 // Interval constants (only ONE_DAY is used — higher TFs are derived locally).
 const IntervalOneDay = "ONE_DAY"
@@ -25,11 +32,6 @@ func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken stri
 	if err := c.ensureLogin(ctx); err != nil {
 		return nil, err
 	}
-	if c.limiter != nil {
-		if err := c.limiter.Wait(ctx, 1); err != nil {
-			return nil, fmt.Errorf("angel historical rate wait: %w", err)
-		}
-	}
 
 	reqBody, _ := json.Marshal(histRequest{
 		Exchange:    exchange,
@@ -39,30 +41,137 @@ func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken stri
 		ToDate:      to.In(market.IST).Format(angelDateLayout),
 	})
 
+	var lastErr error
+	for attempt := 1; attempt <= maxHistAttempts; attempt++ {
+		if c.limiter != nil {
+			if err := c.limiter.Wait(ctx, 1); err != nil {
+				return nil, fmt.Errorf("angel historical rate wait: %w", err)
+			}
+		}
+
+		raw, status, err := c.doHistoricalRequest(ctx, reqBody)
+		if err != nil {
+			return nil, err
+		}
+		if status == http.StatusUnauthorized || status == http.StatusForbidden {
+			if err := c.refreshOrLogin(ctx); err == nil {
+				raw, status, err = c.doHistoricalRequest(ctx, reqBody)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		// Angel throttling: HTTP 429 → back off and retry.
+		if status == http.StatusTooManyRequests {
+			lastErr = fmt.Errorf("angel historical HTTP 429 (rate limited): %s", bodyPreview(raw))
+			if attempt < maxHistAttempts && sleepBackoff(ctx, attempt) {
+				continue
+			}
+			return nil, lastErr
+		}
+		if status < http.StatusOK || status >= http.StatusMultipleChoices {
+			return nil, fmt.Errorf("angel historical HTTP %d: %s", status, bodyPreview(raw))
+		}
+
+		var hr histResponse
+		if err := json.Unmarshal(raw, &hr); err != nil {
+			return nil, fmt.Errorf("angel historical decode (status %d): %w", status, err)
+		}
+		if !hr.Status {
+			// Angel's application-level rate error ("exceeding access rate",
+			// errorcode AB1004) is transient — retry with backoff.
+			if isRateLimited(hr.Message, hr.ErrorCode) {
+				lastErr = fmt.Errorf("angel historical failed: %s (%s)", hr.Message, hr.ErrorCode)
+				if attempt < maxHistAttempts && sleepBackoff(ctx, attempt) {
+					continue
+				}
+			}
+			return nil, fmt.Errorf("angel historical failed: %s (%s)", hr.Message, hr.ErrorCode)
+		}
+
+		rows, err := decodeHistoricalData(hr.Data)
+		if err != nil {
+			return nil, fmt.Errorf("angel historical failed: %s", err)
+		}
+		return parseCandles(rows)
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("angel historical: exhausted %d attempts", maxHistAttempts)
+}
+
+// isRateLimited reports whether an Angel error looks like throttling.
+func isRateLimited(msg, code string) bool {
+	m := strings.ToLower(msg)
+	return code == "AB1004" ||
+		strings.Contains(m, "access rate") ||
+		strings.Contains(m, "rate limit") ||
+		strings.Contains(m, "too many")
+}
+
+// sleepBackoff waits attempt*1s (respecting ctx). Returns false if cancelled.
+func sleepBackoff(ctx context.Context, attempt int) bool {
+	t := time.NewTimer(time.Duration(attempt) * time.Second)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+func (c *Client) doHistoricalRequest(ctx context.Context, reqBody []byte) ([]byte, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.cfg.APIBaseURL+pathHistorical, bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	c.commonHeaders(req)
 	req.Header.Set("Authorization", "Bearer "+c.jwt())
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("angel historical: %w", err)
+		return nil, 0, fmt.Errorf("angel historical: %w", err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
+	return raw, resp.StatusCode, nil
+}
 
-	var hr histResponse
-	if err := json.Unmarshal(raw, &hr); err != nil {
-		return nil, fmt.Errorf("angel historical decode (status %d): %w", resp.StatusCode, err)
+func (c *Client) refreshOrLogin(ctx context.Context) error {
+	if err := c.RefreshTokens(ctx); err == nil {
+		return nil
 	}
-	if !hr.Status {
-		return nil, fmt.Errorf("angel historical failed: %s (%s)", hr.Message, hr.ErrorCode)
+	return c.Login(ctx)
+}
+
+func bodyPreview(raw []byte) string {
+	const max = 240
+	if len(raw) == 0 {
+		return "empty response body"
+	}
+	if len(raw) > max {
+		raw = raw[:max]
+	}
+	return string(raw)
+}
+
+func decodeHistoricalData(data json.RawMessage) ([][]interface{}, error) {
+	var rows [][]interface{}
+	if err := json.Unmarshal(data, &rows); err == nil {
+		return rows, nil
 	}
 
-	return parseCandles(hr.Data)
+	var msg string
+	if err := json.Unmarshal(data, &msg); err == nil {
+		if msg == "" {
+			return nil, errors.New("empty data")
+		}
+		return nil, errors.New(msg)
+	}
+	return nil, fmt.Errorf("unexpected data payload: %s", string(data))
 }
 
 // parseCandles maps Angel's [ts, o, h, l, c, v] rows into market.Candle values.
@@ -102,6 +211,9 @@ func toFloat(v interface{}) float64 {
 		return n
 	case json.Number:
 		f, _ := n.Float64()
+		return f
+	case string:
+		f, _ := strconv.ParseFloat(n, 64)
 		return f
 	default:
 		return 0
