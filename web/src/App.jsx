@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { getToken, setToken } from "./api.js";
 import { Icon } from "./icons.jsx";
 import CommandPalette from "./CommandPalette.jsx";
+import ErrorBoundary from "./ErrorBoundary.jsx";
 import Landing from "./pages/Landing.jsx";
 import Login from "./pages/Login.jsx";
 import Home from "./pages/Home.jsx";
@@ -14,6 +15,8 @@ import Profile from "./pages/Profile.jsx";
 import Admin from "./pages/Admin.jsx";
 import IPO from "./pages/IPO.jsx";
 import PromoterTrades from "./pages/PromoterTrades.jsx";
+import Deals from "./pages/Deals.jsx";
+import Insights from "./pages/Insights.jsx";
 
 // Flat top-level entries and collapsible groups. A group's `items` are the
 // actual navigable leaves; the group itself is just a collapsible header.
@@ -21,6 +24,7 @@ const NAV = [
   { key: "home", label: "Home", icon: "home" },
   { key: "watchlist", label: "Watchlist", icon: "star" },
   { key: "analytics", label: "Analytics", icon: "chart" },
+  { key: "insights", label: "Insights", icon: "pulse" },
   {
     group: "scanners", label: "Scanners", icon: "scan", items: [
       { key: "scanner:pine", label: "Pine Scanner", icon: "scan" },
@@ -34,6 +38,8 @@ const NAV = [
     group: "markets", label: "Markets", icon: "trending", items: [
       { key: "ipo", label: "IPO Tracker", icon: "rocket" },
       { key: "promoter", label: "Promoter Trades", icon: "pulse" },
+      { key: "bulk", label: "Bulk Deals", icon: "list" },
+      { key: "block", label: "Block Deals", icon: "list" },
     ],
   },
   { key: "audit", label: "Audit", icon: "list" },
@@ -46,6 +52,7 @@ const TITLES = {
   home: "Trending",
   watchlist: "Watchlist",
   analytics: "Analytics Dashboard",
+  insights: "Insights",
   "scanner:pine": "Pine Scanner",
   "scanner:weekly": "Weekly Scanner",
   "patterns:cup_handle": "Cup and Handle",
@@ -53,6 +60,8 @@ const TITLES = {
   "patterns:rectangle": "Rectangle Box",
   ipo: "IPO Tracker",
   promoter: "Promoter Trades",
+  bulk: "Bulk Deals",
+  block: "Block Deals",
   audit: "Signal Audit",
   paper: "Paper Trading",
   profile: "Profile",
@@ -162,6 +171,7 @@ export default function App() {
       case "home": return <Home {...p} />;
       case "watchlist": return <Watchlist {...p} />;
       case "analytics": return <Analytics {...p} />;
+      case "insights": return <Insights />;
       case "scanner:pine": return <Scanner source="pine" {...p} />;
       case "scanner:weekly": return <Scanner source="weekly" {...p} />;
       case "patterns:cup_handle": return <Scanner source="patterns" pattern="pattern_cup_handle" {...p} />;
@@ -169,6 +179,8 @@ export default function App() {
       case "patterns:rectangle": return <Scanner source="patterns" pattern="pattern_rectangle" {...p} />;
       case "ipo": return <IPO isAdmin={isAdmin} />;
       case "promoter": return <PromoterTrades isAdmin={isAdmin} />;
+      case "bulk": return <Deals type="bulk" isAdmin={isAdmin} />;
+      case "block": return <Deals type="block" isAdmin={isAdmin} />;
       case "audit": return <Audit isAdmin={isAdmin} />;
       case "paper": return <Paper {...p} />;
       case "profile": return <Profile {...p} />;
@@ -273,7 +285,7 @@ export default function App() {
             </button>
           </div>
         </div>
-        <div className="content" key={view}>{render()}</div>
+        <div className="content" key={view}><ErrorBoundary>{render()}</ErrorBoundary></div>
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />

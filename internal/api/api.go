@@ -20,7 +20,9 @@ import (
 	"tradenexus/internal/auth"
 	"tradenexus/internal/calendar"
 	"tradenexus/internal/candles"
+	"tradenexus/internal/deals"
 	"tradenexus/internal/engine"
+	"tradenexus/internal/insights"
 	"tradenexus/internal/instruments"
 	"tradenexus/internal/ipo"
 	"tradenexus/internal/live"
@@ -52,6 +54,8 @@ type Deps struct {
 	Live        *live.Hub
 	IPO         *ipo.Service
 	Promoter    *promoter.Service
+	Deals       *deals.Service
+	Insights    *insights.Service
 	JWTSecret   string
 }
 
@@ -74,6 +78,8 @@ type Server struct {
 	live      *live.Hub
 	ipo       *ipo.Service
 	promoter  *promoter.Service
+	deals     *deals.Service
+	insights  *insights.Service
 	jwtSecret string
 
 	// scanRunning guards manual scan-all so repeated clicks don't stack.
@@ -106,6 +112,8 @@ func NewServer(d Deps) *Server {
 		live:      d.Live,
 		ipo:       d.IPO,
 		promoter:  d.Promoter,
+		deals:     d.Deals,
+		insights:  d.Insights,
 		jwtSecret: d.JWTSecret,
 	}
 }
@@ -221,6 +229,7 @@ func (s *Server) Router() http.Handler {
 
 				// Promoter trades admin: force-send a specific trade's Telegram alert.
 				r.Post("/admin/promoter-trades/{id}/send-alert", s.handlePromoterSendAlert)
+				r.Post("/admin/deals/{type}/{symbol}/send-alert", s.handleDealsSendAlert)
 			})
 
 			// Users, watchlists, prefs, telegram (Module 7)
@@ -252,6 +261,17 @@ func (s *Server) Router() http.Handler {
 			// every logged-in user (cooldown-guarded inside the service).
 			r.Get("/promoter-trades", s.handleListPromoterTrades)
 			r.Post("/promoter-trades/scan", s.handlePromoterScanNow)
+
+			r.Get("/bulk-deals", s.handleListDeals(deals.Bulk))
+			r.Get("/bulk-deals/audit", s.handleDealsAudit(deals.Bulk))
+			r.Get("/bulk-deals/{symbol}", s.handleDealDetail(deals.Bulk))
+			r.Get("/block-deals", s.handleListDeals(deals.Block))
+			r.Get("/block-deals/audit", s.handleDealsAudit(deals.Block))
+			r.Get("/block-deals/{symbol}", s.handleDealDetail(deals.Block))
+
+			r.Get("/insights/performance", s.handleInsightsPerformance)
+			r.Get("/insights/breadth", s.handleInsightsBreadth)
+			r.Get("/insights/confluence", s.handleInsightsConfluence)
 
 			// Market data (Module 9): trending + params + dashboard
 			r.Get("/market/trending", s.handleTrending)

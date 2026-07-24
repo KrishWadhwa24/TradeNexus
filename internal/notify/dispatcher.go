@@ -35,14 +35,16 @@ type Dispatcher struct {
 	stockThreadID    int
 	ipoThreadID      int
 	promoterThreadID int
+	bulkThreadID     int
+	blockThreadID    int
 }
 
 // New builds a dispatcher. windowDays is the freshness window (e.g. 7): signals
 // whose candle date is older than this are stored but NOT sent. defaultBot/
 // defaultChat, if non-empty, receive every in-window signal once (safety net).
-// stockThreadID/ipoThreadID/promoterThreadID optionally route the default
-// chat's messages to specific topics in a forum supergroup (0 = General).
-func New(pool *pgxpool.Pool, tg *Telegram, windowDays int, defaultBot, defaultChat string, stockThreadID, ipoThreadID, promoterThreadID int, log zerolog.Logger) *Dispatcher {
+// The threadID params optionally route the default chat's messages to specific
+// topics in a forum supergroup (0 = General / not a forum).
+func New(pool *pgxpool.Pool, tg *Telegram, windowDays int, defaultBot, defaultChat string, stockThreadID, ipoThreadID, promoterThreadID, bulkThreadID, blockThreadID int, log zerolog.Logger) *Dispatcher {
 	if windowDays <= 0 {
 		windowDays = 7
 	}
@@ -50,6 +52,7 @@ func New(pool *pgxpool.Pool, tg *Telegram, windowDays int, defaultBot, defaultCh
 		pool: pool, tg: tg, windowDays: windowDays,
 		defaultBot: defaultBot, defaultChat: defaultChat,
 		stockThreadID: stockThreadID, ipoThreadID: ipoThreadID, promoterThreadID: promoterThreadID,
+		bulkThreadID: bulkThreadID, blockThreadID: blockThreadID,
 		log: log,
 	}
 }
@@ -194,6 +197,16 @@ func (d *Dispatcher) BroadcastPromoter(ctx context.Context, text string) (int, e
 	return d.broadcastToThread(ctx, text, d.promoterThreadID)
 }
 
+// BroadcastBulk is Broadcast, routed to the bulk-deals topic.
+func (d *Dispatcher) BroadcastBulk(ctx context.Context, text string) (int, error) {
+	return d.broadcastToThread(ctx, text, d.bulkThreadID)
+}
+
+// BroadcastBlock is Broadcast, routed to the block-deals topic.
+func (d *Dispatcher) BroadcastBlock(ctx context.Context, text string) (int, error) {
+	return d.broadcastToThread(ctx, text, d.blockThreadID)
+}
+
 // broadcastToThread is Broadcast's shared implementation. threadID only ever
 // applies to the default chat — individual users' own bot chats are plain
 // (non-forum) chats, so they always get the General topic (0).
@@ -271,6 +284,22 @@ type PromoterBroadcaster struct{ D *Dispatcher }
 
 func (b PromoterBroadcaster) Broadcast(ctx context.Context, text string) (int, error) {
 	return b.D.BroadcastPromoter(ctx, text)
+}
+
+// BulkDealsBroadcaster adapts a Dispatcher to the deals package's Broadcaster
+// interface, routing broadcasts to the bulk-deals forum topic.
+type BulkDealsBroadcaster struct{ D *Dispatcher }
+
+func (b BulkDealsBroadcaster) Broadcast(ctx context.Context, text string) (int, error) {
+	return b.D.BroadcastBulk(ctx, text)
+}
+
+// BlockDealsBroadcaster adapts a Dispatcher to the deals package's Broadcaster
+// interface, routing broadcasts to the block-deals forum topic.
+type BlockDealsBroadcaster struct{ D *Dispatcher }
+
+func (b BlockDealsBroadcaster) Broadcast(ctx context.Context, text string) (int, error) {
+	return b.D.BroadcastBlock(ctx, text)
 }
 
 // Recipients returns users who watch the instrument AND have any of the given

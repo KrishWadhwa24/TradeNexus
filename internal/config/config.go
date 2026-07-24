@@ -102,6 +102,15 @@ type Config struct {
 	TelegramStockSignalsThreadID int `env:"TELEGRAM_STOCK_SIGNALS_THREAD_ID" envDefault:"0"`
 	TelegramIPOAlertsThreadID    int `env:"TELEGRAM_IPO_ALERTS_THREAD_ID" envDefault:"0"`
 	TelegramPromoterThreadID     int `env:"TELEGRAM_PROMOTER_THREAD_ID" envDefault:"0"`
+	TelegramBulkDealsThreadID    int `env:"TELEGRAM_BULK_DEALS_THREAD_ID" envDefault:"0"`
+	TelegramBlockDealsThreadID   int `env:"TELEGRAM_BLOCK_DEALS_THREAD_ID" envDefault:"0"`
+
+	// Bulk & block deals tracker (NSE historical bulk-block CSV feed).
+	DealsEnabled         bool    `env:"DEALS_ENABLED" envDefault:"true"`
+	DealsRetentionDays   int     `env:"DEALS_RETENTION_DAYS" envDefault:"30"`
+	DealsAlertWindowDays int     `env:"DEALS_ALERT_WINDOW_DAYS" envDefault:"7"`        // alert stocks dealt within N days
+	DealsAlertCron       string  `env:"DEALS_ALERT_CRON" envDefault:"0 19 * * *"`      // 19:00 IST daily
+	BulkDealMinNetValue  float64 `env:"BULK_DEAL_MIN_NET_VALUE" envDefault:"50000000"` // ₹5cr net-value filter
 }
 
 // IsLocal reports whether we're running in the local dev profile.

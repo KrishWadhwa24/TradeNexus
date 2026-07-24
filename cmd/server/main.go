@@ -19,7 +19,9 @@ import (
 	"tradenexus/internal/calendar"
 	"tradenexus/internal/candles"
 	"tradenexus/internal/config"
+	"tradenexus/internal/deals"
 	"tradenexus/internal/engine"
+	"tradenexus/internal/insights"
 	"tradenexus/internal/instruments"
 	"tradenexus/internal/intraday"
 	"tradenexus/internal/ipo"
@@ -119,6 +121,7 @@ func main() {
 			pg.Pool, notify.NewTelegram(cfg.TelegramBaseURL), cfg.NotifyWindowDays,
 			cfg.TelegramDefaultBotToken, cfg.TelegramDefaultChatID,
 			cfg.TelegramStockSignalsThreadID, cfg.TelegramIPOAlertsThreadID, cfg.TelegramPromoterThreadID,
+			cfg.TelegramBulkDealsThreadID, cfg.TelegramBlockDealsThreadID,
 			log,
 		)
 	}
@@ -174,6 +177,24 @@ func main() {
 		promoterSvc.StartPolling(ctx)
 	}
 
+	// Bulk & block deals tracker (NSE historical bulk-block CSV feed).
+	var dealsSvc *deals.Service
+	if cfg.DealsEnabled {
+		var bulkBC, blockBC deals.Broadcaster // true-nil interfaces if notify is off
+		if dispatcher != nil {
+			bulkBC = notify.BulkDealsBroadcaster{D: dispatcher}
+			blockBC = notify.BlockDealsBroadcaster{D: dispatcher}
+		}
+		dealsSvc = deals.New(deals.NewClient(), deals.NewRepo(pg.Pool), bulkBC, blockBC,
+			cfg.DealsRetentionDays, cfg.DealsAlertWindowDays, cfg.BulkDealMinNetValue, cfg.DealsAlertCron, log)
+		dealsSvc.StartPolling(ctx)
+	}
+
+	// Insights: read-only cross-signal analytics (scanner performance,
+	// confluence board, market breadth) + a daily signal-outcome recorder.
+	insightsSvc := insights.New(pg.Pool, cfg.BulkDealMinNetValue, log)
+	insightsSvc.StartRecorder(ctx)
+
 	// 8) Scheduler (daily scan + cleanup + startup reconciliation + fill).
 	sched := scheduler.New(engineSvc, paperSvc, intradayCache, scheduler.Config{
 		Enabled:            cfg.SchedulerEnabled,
@@ -209,6 +230,8 @@ func main() {
 			Live:        liveHub,
 			IPO:         ipoSvc,
 			Promoter:    promoterSvc,
+			Deals:       dealsSvc,
+			Insights:    insightsSvc,
 			JWTSecret:   cfg.JWTSecret,
 		}).Router(),
 		ReadHeaderTimeout: 10 * time.Second,
