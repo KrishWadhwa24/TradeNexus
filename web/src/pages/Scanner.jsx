@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { api } from "../api.js";
+import { api, convLevel, convLabel } from "../api.js";
 
 const PATTERN_LABELS = {
   pattern_cup_handle: "Cup and Handle",
@@ -82,7 +82,7 @@ export default function Scanner({ source, pattern, userId }) {
             <thead>
               <tr>
                 <th>Symbol</th><th>Signal</th><th>Timeframe</th>
-                {source === "weekly" && <th>Confidence</th>}
+                {(source === "weekly" || source === "patterns") && <th>Conviction</th>}
                 <th>Scanner(s)</th><th>Candle date</th><th>Buy</th>
               </tr>
             </thead>
@@ -92,7 +92,15 @@ export default function Scanner({ source, pattern, userId }) {
                   <td>{s.symbol}</td>
                   <td><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
                   <td>{s.timeframe}</td>
-                  {source === "weekly" && <td>{s.confidence != null ? s.confidence + "/4" : "—"}</td>}
+                  {(source === "weekly" || source === "patterns") && (
+                    <td>
+                      {convLevel(source, s.confidence) ? (
+                        <span className={"conv conv-" + convLevel(source, s.confidence)}>
+                          {convLabel(source, s.confidence)}
+                        </span>
+                      ) : "—"}
+                    </td>
+                  )}
                   <td className="muted">{PATTERN_LABELS[s.scanner_name] || s.scanner_name}</td>
                   <td className="muted">{s.candle_date?.slice(0, 10)}</td>
                   <td>

@@ -35,7 +35,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	s.issueToken(w, id, b.Email)
+	s.issueToken(w, id, b.Email, false) // self-registration is never admin
 }
 
 // POST /v1/auth/login {email,password}
@@ -45,28 +45,29 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email and password required"})
 		return
 	}
-	id, hash, err := s.users.AuthByEmail(r.Context(), b.Email)
+	id, hash, isAdmin, err := s.users.AuthByEmail(r.Context(), b.Email)
 	if err != nil || !auth.CheckPassword(hash, b.Password) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid email or password"})
 		return
 	}
-	s.issueToken(w, id, b.Email)
+	s.issueToken(w, id, b.Email, isAdmin)
 }
 
 // GET /v1/me — current user from the token.
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	uid, _ := r.Context().Value(userIDKey).(string)
-	writeJSON(w, http.StatusOK, map[string]string{"id": uid})
+	isAdmin, _ := r.Context().Value(isAdminKey).(bool)
+	writeJSON(w, http.StatusOK, map[string]any{"id": uid, "is_admin": isAdmin})
 }
 
-func (s *Server) issueToken(w http.ResponseWriter, id, email string) {
-	token, err := auth.Issue(s.jwtSecret, id, email)
+func (s *Server) issueToken(w http.ResponseWriter, id, email string, isAdmin bool) {
+	token, err := auth.Issue(s.jwtSecret, id, email, isAdmin)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": token,
-		"user":  map[string]string{"id": id, "email": email},
+		"user":  map[string]any{"id": id, "email": email, "is_admin": isAdmin},
 	})
 }

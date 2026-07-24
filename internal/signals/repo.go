@@ -25,10 +25,23 @@ type Signal struct {
 	Direction    string          `json:"direction"`
 	CandleDate   time.Time       `json:"candle_date"`
 	Confidence   *int            `json:"confidence,omitempty"`
-	RSI          *float64        `json:"rsi,omitempty"`
-	Volume       *float64        `json:"volume,omitempty"`
-	Reasons      map[string]bool `json:"reasons"`
-	CreatedAt    time.Time       `json:"created_at"`
+	RSI          *float64           `json:"rsi,omitempty"`
+	Volume       *float64           `json:"volume,omitempty"`
+	Reasons      map[string]bool    `json:"reasons"`
+	Metrics      map[string]float64 `json:"metrics,omitempty"`
+	CreatedAt    time.Time          `json:"created_at"`
+}
+
+// metricsJSON marshals Metrics, defaulting to an empty object (never SQL NULL).
+func metricsJSON(m map[string]float64) []byte {
+	if len(m) == 0 {
+		return []byte("{}")
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return []byte("{}")
+	}
+	return b
 }
 
 // Filter narrows a List query. Zero values mean "no filter".
@@ -53,12 +66,12 @@ func (r *Repo) Upsert(ctx context.Context, s Signal) (inserted bool, id int64, e
 	reasons, _ := json.Marshal(s.Reasons)
 	err = r.pool.QueryRow(ctx, `
 		INSERT INTO signals
-			(instrument_id, source, scanner_name, timeframe, direction, candle_date, confidence, reasons, rsi, volume)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			(instrument_id, source, scanner_name, timeframe, direction, candle_date, confidence, reasons, rsi, volume, metrics)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		ON CONFLICT (instrument_id, source, scanner_name, timeframe, candle_date) DO NOTHING
 		RETURNING id`,
 		s.InstrumentID, s.Source, s.ScannerName, s.Timeframe, s.Direction,
-		s.CandleDate, s.Confidence, reasons, s.RSI, s.Volume).Scan(&id)
+		s.CandleDate, s.Confidence, reasons, s.RSI, s.Volume, metricsJSON(s.Metrics)).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, 0, nil // duplicate — already recorded
 	}
@@ -76,7 +89,7 @@ func (r *Repo) List(ctx context.Context, f Filter) ([]Signal, error) {
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT s.id, s.instrument_id, i.trading_symbol, s.source, s.scanner_name, s.timeframe,
-		       s.direction, s.candle_date, s.confidence, s.reasons, s.created_at, s.rsi, s.volume
+		       s.direction, s.candle_date, s.confidence, s.reasons, s.created_at, s.rsi, s.volume, s.metrics
 		FROM signals s
 		JOIN instruments i ON i.id = s.instrument_id
 		WHERE ($1::bigint IS NULL OR s.instrument_id = $1)
@@ -94,11 +107,12 @@ func (r *Repo) List(ctx context.Context, f Filter) ([]Signal, error) {
 	for rows.Next() {
 		var s Signal
 		var reasons []byte
+		var metrics []byte
 		var conf sql.NullInt64
 		var rsi sql.NullFloat64
 		var volume sql.NullFloat64
 		if err := rows.Scan(&s.ID, &s.InstrumentID, &s.Symbol, &s.Source, &s.ScannerName,
-			&s.Timeframe, &s.Direction, &s.CandleDate, &conf, &reasons, &s.CreatedAt, &rsi, &volume); err != nil {
+			&s.Timeframe, &s.Direction, &s.CandleDate, &conf, &reasons, &s.CreatedAt, &rsi, &volume, &metrics); err != nil {
 			return nil, err
 		}
 		if conf.Valid {
@@ -112,6 +126,7 @@ func (r *Repo) List(ctx context.Context, f Filter) ([]Signal, error) {
 			s.Volume = &volume.Float64
 		}
 		_ = json.Unmarshal(reasons, &s.Reasons)
+		_ = json.Unmarshal(metrics, &s.Metrics)
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -121,16 +136,17 @@ func (r *Repo) List(ctx context.Context, f Filter) ([]Signal, error) {
 func (r *Repo) GetByID(ctx context.Context, id int64) (Signal, error) {
 	var s Signal
 	var reasons []byte
+	var metrics []byte
 	var conf sql.NullInt64
 	var rsi sql.NullFloat64
 	var volume sql.NullFloat64
 	err := r.pool.QueryRow(ctx, `
 		SELECT s.id, s.instrument_id, i.trading_symbol, s.source, s.scanner_name, s.timeframe,
-		       s.direction, s.candle_date, s.confidence, s.reasons, s.created_at, s.rsi, s.volume
+		       s.direction, s.candle_date, s.confidence, s.reasons, s.created_at, s.rsi, s.volume, s.metrics
 		FROM signals s JOIN instruments i ON i.id = s.instrument_id
 		WHERE s.id = $1`, id).
 		Scan(&s.ID, &s.InstrumentID, &s.Symbol, &s.Source, &s.ScannerName, &s.Timeframe,
-			&s.Direction, &s.CandleDate, &conf, &reasons, &s.CreatedAt, &rsi, &volume)
+			&s.Direction, &s.CandleDate, &conf, &reasons, &s.CreatedAt, &rsi, &volume, &metrics)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s, errors.New("signal not found")
 	}
@@ -148,6 +164,7 @@ func (r *Repo) GetByID(ctx context.Context, id int64) (Signal, error) {
 		s.Volume = &volume.Float64
 	}
 	_ = json.Unmarshal(reasons, &s.Reasons)
+	_ = json.Unmarshal(metrics, &s.Metrics)
 	return s, nil
 }
 

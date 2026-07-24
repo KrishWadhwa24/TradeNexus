@@ -24,16 +24,18 @@ func CheckPassword(hash, pw string) bool {
 
 // Claims is the JWT payload.
 type Claims struct {
-	UserID string `json:"uid"`
-	Email  string `json:"email"`
+	UserID  string `json:"uid"`
+	Email   string `json:"email"`
+	IsAdmin bool   `json:"is_admin"`
 	jwt.RegisteredClaims
 }
 
 // Issue signs a JWT for a user.
-func Issue(secret, userID, email string) (string, error) {
+func Issue(secret, userID, email string, isAdmin bool) (string, error) {
 	claims := Claims{
-		UserID: userID,
-		Email:  email,
+		UserID:  userID,
+		Email:   email,
+		IsAdmin: isAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(tokenTTL)),

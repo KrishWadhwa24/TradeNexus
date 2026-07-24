@@ -72,6 +72,8 @@ type Server struct {
 
 	// scanRunning guards manual scan-all so repeated clicks don't stack.
 	scanRunning atomic.Bool
+	// refetchRunning guards the admin per-date refetch (also heavy on Angel).
+	refetchRunning atomic.Bool
 }
 
 // NewServer constructs the API server with its dependencies.
@@ -100,8 +102,10 @@ func NewServer(d Deps) *Server {
 type ctxKey string
 
 const userIDKey ctxKey = "uid"
+const isAdminKey ctxKey = "is_admin"
 
-// authMiddleware validates the Bearer JWT and injects the user id into context.
+// authMiddleware validates the Bearer JWT and injects the user id + admin flag
+// into context.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := r.Header.Get("Authorization")
@@ -115,7 +119,20 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), userIDKey, claims.UserID)
+		ctx = context.WithValue(ctx, isAdminKey, claims.IsAdmin)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// adminOnly rejects requests whose token isn't flagged admin. Must run inside
+// the authenticated group (after authMiddleware).
+func (s *Server) adminOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isAdmin, _ := r.Context().Value(isAdminKey).(bool); !isAdmin {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin access required"})
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -174,6 +191,15 @@ func (s *Server) Router() http.Handler {
 			r.With(middleware.Timeout(35*time.Minute)).Post("/admin/scan-all", s.handleScanAll)
 			r.Post("/admin/cleanup", s.handleCleanup)
 			r.Post("/admin/holidays", s.handleAddHolidays)
+
+			// Admin-only candle tools (count / delete / refetch a specific day).
+			r.Group(func(r chi.Router) {
+				r.Use(s.adminOnly)
+				r.Get("/admin/candles", s.handleCandleCountByDate)
+				r.Delete("/admin/candles", s.handleDeleteCandlesByDate)
+				r.With(middleware.Timeout(65*time.Minute)).Post("/admin/candles/refetch", s.handleRefetchCandlesByDate)
+				r.Post("/admin/dispatch/force", s.handleForceDispatch)
+			})
 
 			// Users, watchlists, prefs, telegram (Module 7)
 			r.Post("/users", s.handleCreateUser)

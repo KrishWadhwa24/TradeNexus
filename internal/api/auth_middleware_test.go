@@ -33,7 +33,7 @@ func TestAuthMiddleware(t *testing.T) {
 	}
 
 	// Valid token → passes through to next handler.
-	tok, err := auth.Issue("test-secret", "user-1", "a@b.com")
+	tok, err := auth.Issue("test-secret", "user-1", "a@b.com", false)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestAuthMiddleware(t *testing.T) {
 	}
 
 	// Token signed with a different secret → 401.
-	badTok, _ := auth.Issue("other-secret", "user-1", "a@b.com")
+	badTok, _ := auth.Issue("other-secret", "user-1", "a@b.com", false)
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/v1/me", nil)
 	req.Header.Set("Authorization", "Bearer "+badTok)
