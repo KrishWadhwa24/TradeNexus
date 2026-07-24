@@ -27,6 +27,7 @@ import (
 	"tradenexus/internal/logger"
 	"tradenexus/internal/notify"
 	"tradenexus/internal/paper"
+	"tradenexus/internal/promoter"
 	"tradenexus/internal/ratelimit"
 	"tradenexus/internal/scanner"
 	"tradenexus/internal/scheduler"
@@ -116,7 +117,9 @@ func main() {
 	if cfg.NotifyEnabled {
 		dispatcher = notify.New(
 			pg.Pool, notify.NewTelegram(cfg.TelegramBaseURL), cfg.NotifyWindowDays,
-			cfg.TelegramDefaultBotToken, cfg.TelegramDefaultChatID, log,
+			cfg.TelegramDefaultBotToken, cfg.TelegramDefaultChatID,
+			cfg.TelegramStockSignalsThreadID, cfg.TelegramIPOAlertsThreadID, cfg.TelegramPromoterThreadID,
+			log,
 		)
 	}
 
@@ -153,10 +156,22 @@ func main() {
 	if cfg.IPOEnabled {
 		var ipoBroadcaster ipo.Broadcaster // keep a true-nil interface if notify is off
 		if dispatcher != nil {
-			ipoBroadcaster = dispatcher
+			ipoBroadcaster = notify.IPOBroadcaster{D: dispatcher}
 		}
 		ipoSvc = ipo.New(ipo.NewClient(), ipo.NewRepo(pg.Pool), ipoBroadcaster, cfg.IPOPollInterval, cfg.IPOSignalCron, log)
 		ipoSvc.StartPolling(ctx)
+	}
+
+	// Promoter/Director/KMP insider-trading tracker (NSE PIT disclosure feed).
+	var promoterSvc *promoter.Service
+	if cfg.PromoterEnabled {
+		var promoterBroadcaster promoter.Broadcaster // keep a true-nil interface if notify is off
+		if dispatcher != nil {
+			promoterBroadcaster = notify.PromoterBroadcaster{D: dispatcher}
+		}
+		promoterSvc = promoter.New(promoter.NewClient(), promoter.NewRepo(pg.Pool), promoterBroadcaster,
+			cfg.PromoterPollInterval, cfg.PromoterAlertWindowDays, cfg.PromoterRetentionDays, log)
+		promoterSvc.StartPolling(ctx)
 	}
 
 	// 8) Scheduler (daily scan + cleanup + startup reconciliation + fill).
@@ -193,6 +208,7 @@ func main() {
 			Paper:       paperSvc,
 			Live:        liveHub,
 			IPO:         ipoSvc,
+			Promoter:    promoterSvc,
 			JWTSecret:   cfg.JWTSecret,
 		}).Router(),
 		ReadHeaderTimeout: 10 * time.Second,

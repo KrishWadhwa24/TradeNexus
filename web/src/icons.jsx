@@ -19,6 +19,9 @@ export const Icon = {
   close: () => (<svg viewBox="0 0 24 24" {...s}><path d="M6 6l12 12M18 6L6 18" /></svg>),
   sun: () => (<svg viewBox="0 0 24 24" {...s}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19" /></svg>),
   moon: () => (<svg viewBox="0 0 24 24" {...s}><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8Z" /></svg>),
+  chevron: () => (<svg viewBox="0 0 24 24" {...s}><path d="M6 9l6 6 6-6" /></svg>),
+  trending: () => (<svg viewBox="0 0 24 24" {...s}><path d="M3 17l6-6 4 4 8-8" /><path d="M15 6h6v6" /></svg>),
+  pulse: () => (<svg viewBox="0 0 24 24" {...s}><path d="M3 12h4l2-7 4 14 2-7h6" /></svg>),
 };
 
 // Brand mark inside the logo tile.

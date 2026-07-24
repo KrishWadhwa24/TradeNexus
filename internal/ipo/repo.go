@@ -25,8 +25,10 @@ func (r *Repo) Upsert(ctx context.Context, x IPO) error {
 		INSERT INTO ipos
 			(id, name, board, category, status, gmp, gmp_percent, subscription, price,
 			 ipo_size, lot, pe, rating, open_date, close_date, boa_date, listing_date,
-			 url, updated_on, last_polled)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19, now())
+			 url, updated_on, qib, shni, bhni, nii, rii, total_subscription, anchor_positive,
+			 last_polled)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
+			$20,$21,$22,$23,$24,$25,$26, now())
 		ON CONFLICT (id) DO UPDATE SET
 			name=EXCLUDED.name, board=EXCLUDED.board, category=EXCLUDED.category,
 			status=EXCLUDED.status, gmp=EXCLUDED.gmp, gmp_percent=EXCLUDED.gmp_percent,
@@ -34,10 +36,12 @@ func (r *Repo) Upsert(ctx context.Context, x IPO) error {
 			lot=EXCLUDED.lot, pe=EXCLUDED.pe, rating=EXCLUDED.rating, open_date=EXCLUDED.open_date,
 			close_date=EXCLUDED.close_date, boa_date=EXCLUDED.boa_date,
 			listing_date=EXCLUDED.listing_date, url=EXCLUDED.url, updated_on=EXCLUDED.updated_on,
+			qib=EXCLUDED.qib, shni=EXCLUDED.shni, bhni=EXCLUDED.bhni, nii=EXCLUDED.nii, rii=EXCLUDED.rii,
+			total_subscription=EXCLUDED.total_subscription, anchor_positive=EXCLUDED.anchor_positive,
 			last_polled=now()`,
 		x.ID, x.Name, x.Board, x.Category, x.Status, x.GMP, x.GMPPercent, x.Subscription, x.Price,
 		x.Size, x.Lot, x.PE, x.Rating, x.OpenDate, x.CloseDate, x.BoADate, x.ListingDate,
-		x.URL, x.UpdatedOn)
+		x.URL, x.UpdatedOn, x.QIB, x.SHNI, x.BHNI, x.NII, x.RII, x.TotalSubscription, x.AnchorPositive)
 	return err
 }
 
@@ -53,6 +57,7 @@ func (r *Repo) PruneExcept(ctx context.Context, keepIDs []int64) (int64, error) 
 
 const selectCols = `id, name, board, category, status, gmp, gmp_percent, subscription, price,
 	ipo_size, lot, pe, rating, open_date, close_date, boa_date, listing_date, url, updated_on,
+	qib, shni, bhni, nii, rii, total_subscription, anchor_positive,
 	signal_tier, signaled_at`
 
 func scanIPO(row pgx.Row) (IPO, error) {
@@ -60,6 +65,7 @@ func scanIPO(row pgx.Row) (IPO, error) {
 	err := row.Scan(&x.ID, &x.Name, &x.Board, &x.Category, &x.Status, &x.GMP, &x.GMPPercent,
 		&x.Subscription, &x.Price, &x.Size, &x.Lot, &x.PE, &x.Rating,
 		&x.OpenDate, &x.CloseDate, &x.BoADate, &x.ListingDate, &x.URL, &x.UpdatedOn,
+		&x.QIB, &x.SHNI, &x.BHNI, &x.NII, &x.RII, &x.TotalSubscription, &x.AnchorPositive,
 		&x.SignalTier, &x.SignaledAt)
 	return x, err
 }

@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../api.js";
+import { Icon } from "../icons.jsx";
 
 function gmpLevel(pct) {
   if (pct >= 20) return "high";
@@ -30,12 +32,76 @@ const TIER_LABEL = {
 
 const IG = "https://www.investorgain.com";
 
+function fmtX(n) {
+  return n > 0 ? n.toFixed(2) + "x" : "—";
+}
+
+// SubscriptionModal shows the per-category subscription breakdown for one
+// IPO — this is what opens when you click the IPO name (instead of jumping
+// straight to the external InvestorGain page).
+function SubscriptionModal({ ipo, onClose }) {
+  const rows = [
+    ["QIB", ipo.qib],
+    ["SHNI", ipo.shni],
+    ["BHNI", ipo.bhni],
+    ["NII", ipo.nii],
+    ["RII", ipo.rii],
+  ];
+  // Rendered via a portal straight onto <body> — modals must never inherit
+  // an ancestor's layout (a page with tall scrollable content can otherwise
+  // throw off a plain `position: fixed` centering, depending on the browser).
+  return createPortal(
+    <div className="sub-modal-backdrop" role="presentation" onClick={onClose}>
+      <div
+        className="sub-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sub-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div className="sub-modal-badge">Subscription</div>
+            <h3 id="sub-modal-title">{ipo.name}</h3>
+          </div>
+          <button className="icon-btn" aria-label="Close" onClick={onClose}><Icon.close /></button>
+        </div>
+
+        <div className="sub-modal-total">
+          <span className="sub-modal-total-val">{fmtX(ipo.total_subscription)}</span>
+          <span className="sub-modal-total-label">Total subscription</span>
+          <span className={"chip " + (ipo.anchor_positive ? "chip-open" : "chip-soft")}>
+            {ipo.anchor_positive ? "Anchor booked" : "No anchor"}
+          </span>
+        </div>
+
+        <div className="sub-modal-grid">
+          {rows.map(([label, val]) => (
+            <div key={label} className="sub-modal-cell">
+              <span className="k">{label}</span>
+              <span className="v">{fmtX(val)}</span>
+            </div>
+          ))}
+        </div>
+
+        {ipo.url && (
+          <a className="subtle" href={IG + ipo.url} target="_blank" rel="noreferrer">
+            View full detail on InvestorGain ↗
+          </a>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 export default function IPO({ isAdmin = false }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(null);
+  const [selected, setSelected] = useState(null);
 
   function load() {
     setLoading(true);
@@ -114,13 +180,16 @@ export default function IPO({ isAdmin = false }) {
               <div className={"ipo-card" + (x.status === "open" ? " is-open" : "")} key={x.id}>
                 <div className="ipo-card-top">
                   <div className="ipo-id">
-                    {x.url ? (
-                      <a className="ipo-name" href={IG + x.url} target="_blank" rel="noreferrer">{x.name}</a>
-                    ) : <span className="ipo-name">{x.name}</span>}
+                    <button className="ipo-name ipo-name-btn" onClick={() => setSelected(x)}>{x.name}</button>
                     <div className="ipo-badges">
                       <span className="chip">{x.board || x.category}</span>
                       <span className={"chip " + (x.status === "open" ? "chip-open" : "chip-soon")}>{x.status}</span>
                       {x.rating > 0 && <span className="chip chip-rating">{"🔥".repeat(x.rating)}</span>}
+                      {x.qib > 0 && (
+                        <span className={"chip " + (x.qib > 5 ? "chip-open" : "chip-soft")} title="QIB subscription">
+                          QIB {fmtX(x.qib)}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -184,6 +253,8 @@ export default function IPO({ isAdmin = false }) {
           })}
         </div>
       )}
+
+      {selected && <SubscriptionModal ipo={selected} onClose={() => setSelected(null)} />}
     </div>
   );
 }

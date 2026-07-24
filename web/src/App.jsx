@@ -13,17 +13,29 @@ import Paper from "./pages/Paper.jsx";
 import Profile from "./pages/Profile.jsx";
 import Admin from "./pages/Admin.jsx";
 import IPO from "./pages/IPO.jsx";
+import PromoterTrades from "./pages/PromoterTrades.jsx";
 
+// Flat top-level entries and collapsible groups. A group's `items` are the
+// actual navigable leaves; the group itself is just a collapsible header.
 const NAV = [
   { key: "home", label: "Home", icon: "home" },
   { key: "watchlist", label: "Watchlist", icon: "star" },
   { key: "analytics", label: "Analytics", icon: "chart" },
-  { key: "scanner:pine", label: "Pine Scanner", icon: "scan", sub: true },
-  { key: "scanner:weekly", label: "Weekly Scanner", icon: "scan", sub: true },
-  { key: "patterns:cup_handle", label: "Cup and Handle", icon: "scan", sub: true },
-  { key: "patterns:downtrend_breakout", label: "Downtrend Breakout", icon: "scan", sub: true },
-  { key: "patterns:rectangle", label: "Rectangle Box", icon: "scan", sub: true },
-  { key: "ipo", label: "IPO", icon: "rocket" },
+  {
+    group: "scanners", label: "Scanners", icon: "scan", items: [
+      { key: "scanner:pine", label: "Pine Scanner", icon: "scan" },
+      { key: "scanner:weekly", label: "Weekly Scanner", icon: "scan" },
+      { key: "patterns:cup_handle", label: "Cup and Handle", icon: "scan" },
+      { key: "patterns:downtrend_breakout", label: "Downtrend Breakout", icon: "scan" },
+      { key: "patterns:rectangle", label: "Rectangle Box", icon: "scan" },
+    ],
+  },
+  {
+    group: "markets", label: "Markets", icon: "trending", items: [
+      { key: "ipo", label: "IPO Tracker", icon: "rocket" },
+      { key: "promoter", label: "Promoter Trades", icon: "pulse" },
+    ],
+  },
   { key: "audit", label: "Audit", icon: "list" },
   { key: "paper", label: "Paper Trading", icon: "wallet" },
   { key: "profile", label: "Profile", icon: "user" },
@@ -40,16 +52,26 @@ const TITLES = {
   "patterns:downtrend_breakout": "Downtrend Breakout",
   "patterns:rectangle": "Rectangle Box",
   ipo: "IPO Tracker",
+  promoter: "Promoter Trades",
   audit: "Signal Audit",
   paper: "Paper Trading",
   profile: "Profile",
   admin: "Admin — Candle Tools",
 };
 
+// Groups a view key belongs to, e.g. "scanner:pine" → "scanners".
+const GROUP_OF_KEY = NAV.filter((n) => n.items).reduce((acc, g) => {
+  g.items.forEach((it) => { acc[it.key] = g.group; });
+  return acc;
+}, {});
+
 export default function App() {
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "dark");
   const [view, setView] = useState(localStorage.getItem("view") || "home");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("navCollapsedGroups") || "{}"); } catch { return {}; }
+  });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showLogin, setShowLogin] = useState(false); // false → marketing landing
   const [user, setUser] = useState(() => {
@@ -67,6 +89,21 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("view", view);
   }, [view]);
+
+  // If navigation lands on an item inside a collapsed group, expand it so
+  // the active item is never hidden.
+  useEffect(() => {
+    const group = GROUP_OF_KEY[view];
+    if (group) setCollapsedGroups((prev) => (prev[group] ? { ...prev, [group]: false } : prev));
+  }, [view]);
+
+  useEffect(() => {
+    localStorage.setItem("navCollapsedGroups", JSON.stringify(collapsedGroups));
+  }, [collapsedGroups]);
+
+  function toggleGroup(key) {
+    setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
 
   useEffect(() => {
     const onExpire = () => { setUser(null); localStorage.removeItem("user"); };
@@ -131,6 +168,7 @@ export default function App() {
       case "patterns:downtrend_breakout": return <Scanner source="patterns" pattern="pattern_downtrend_breakout" {...p} />;
       case "patterns:rectangle": return <Scanner source="patterns" pattern="pattern_rectangle" {...p} />;
       case "ipo": return <IPO isAdmin={isAdmin} />;
+      case "promoter": return <PromoterTrades isAdmin={isAdmin} />;
       case "audit": return <Audit isAdmin={isAdmin} />;
       case "paper": return <Paper {...p} />;
       case "profile": return <Profile {...p} />;
@@ -142,9 +180,12 @@ export default function App() {
   const initial = (user.email || "?").slice(0, 1).toUpperCase();
   function go(key) { setView(key); setMenuOpen(false); }
 
-  const nav = NAV.filter((n) => !n.admin || isAdmin);
+  const nav = NAV
+    .filter((n) => !n.admin || isAdmin)
+    .map((n) => (n.items ? { ...n, items: n.items.filter((it) => !it.admin || isAdmin) } : n));
+  const leafItems = nav.flatMap((n) => n.items || [n]);
   const commands = [
-    ...nav.map((n) => ({ id: "nav-" + n.key, label: n.label, hint: "Go to page", run: () => go(n.key) })),
+    ...leafItems.map((n) => ({ id: "nav-" + n.key, label: n.label, hint: "Go to page", run: () => go(n.key) })),
     { id: "theme", label: "Toggle theme (dark / light)", hint: "Appearance", run: () => setTheme(theme === "dark" ? "light" : "dark") },
     { id: "signout", label: "Sign out", hint: "Session", run: logout },
   ];
@@ -155,15 +196,46 @@ export default function App() {
       <aside className={"sidebar" + (menuOpen ? " open" : "")}>
         <div className="brand">
           <span className="prompt">&gt;_</span>
-          Trade<em>Nexus</em>
+          <span className="brand-text">Trade<em>Nexus</em></span>
         </div>
         {nav.map((n) => {
+          if (n.items) {
+            const GroupIcon = Icon[n.icon];
+            const collapsed = !!collapsedGroups[n.group];
+            const hasActive = n.items.some((it) => it.key === view);
+            return (
+              <div className="nav-group" key={n.group}>
+                <div
+                  className={"nav-group-head" + (hasActive ? " active" : "")}
+                  onClick={() => toggleGroup(n.group)}
+                  title={n.label}
+                >
+                  {GroupIcon && <GroupIcon />}<span>{n.label}</span>
+                  <Icon.chevron className={"nav-chevron" + (collapsed ? " collapsed" : "")} />
+                </div>
+                {!collapsed && n.items.map((it) => {
+                  const I = Icon[it.icon];
+                  return (
+                    <div
+                      key={it.key}
+                      className={"nav-item nav-sub" + (view === it.key ? " active" : "")}
+                      onClick={() => go(it.key)}
+                      title={it.label}
+                    >
+                      {I && <I />}<span>{it.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          }
           const I = Icon[n.icon];
           return (
             <div
               key={n.key}
-              className={"nav-item" + (n.sub ? " nav-sub" : "") + (view === n.key ? " active" : "")}
+              className={"nav-item" + (view === n.key ? " active" : "")}
               onClick={() => go(n.key)}
+              title={n.label}
             >
               {I && <I />}<span>{n.label}</span>
             </div>
@@ -172,7 +244,7 @@ export default function App() {
         <div className="sidebar-foot">
           <div className="user-chip">
             <span className="avatar">{initial}</span>
-            <div style={{ minWidth: 0 }}>
+            <div className="user-info" style={{ minWidth: 0 }}>
               <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{user.email}</div>
               <a className="subtle" style={{ cursor: "pointer" }} onClick={logout}>Sign out</a>
             </div>
