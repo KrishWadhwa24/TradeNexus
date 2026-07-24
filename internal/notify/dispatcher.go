@@ -27,18 +27,30 @@ type Dispatcher struct {
 	defaultBot  string
 	defaultChat string
 	log         zerolog.Logger
+
+	// Forum-topic routing for the default chat only (it's the one chat we know
+	// is a forum supergroup with per-category topics; individual users' own
+	// bot chats are plain chats, so they always get threadID 0). 0 = General
+	// topic / not configured.
+	stockThreadID    int
+	ipoThreadID      int
+	promoterThreadID int
 }
 
 // New builds a dispatcher. windowDays is the freshness window (e.g. 7): signals
 // whose candle date is older than this are stored but NOT sent. defaultBot/
 // defaultChat, if non-empty, receive every in-window signal once (safety net).
-func New(pool *pgxpool.Pool, tg *Telegram, windowDays int, defaultBot, defaultChat string, log zerolog.Logger) *Dispatcher {
+// stockThreadID/ipoThreadID/promoterThreadID optionally route the default
+// chat's messages to specific topics in a forum supergroup (0 = General).
+func New(pool *pgxpool.Pool, tg *Telegram, windowDays int, defaultBot, defaultChat string, stockThreadID, ipoThreadID, promoterThreadID int, log zerolog.Logger) *Dispatcher {
 	if windowDays <= 0 {
 		windowDays = 7
 	}
 	return &Dispatcher{
 		pool: pool, tg: tg, windowDays: windowDays,
-		defaultBot: defaultBot, defaultChat: defaultChat, log: log,
+		defaultBot: defaultBot, defaultChat: defaultChat,
+		stockThreadID: stockThreadID, ipoThreadID: ipoThreadID, promoterThreadID: promoterThreadID,
+		log: log,
 	}
 }
 
@@ -87,7 +99,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, sig signals.Signal) (Dispatch
 			res.SkippedDuplicate++
 			continue // same stock + timeframe + day already sent to this user
 		}
-		if err := d.tg.Send(ctx, r.BotToken, r.ChatID, text); err != nil {
+		if err := d.tg.Send(ctx, r.BotToken, r.ChatID, 0, text); err != nil {
 			d.log.Error().Err(err).Str("user", r.UserID).Msg("telegram send failed; will retry next scan")
 			continue // no delivery row recorded → retried on the next scan
 		}
@@ -106,7 +118,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, sig signals.Signal) (Dispatch
 			return res, err
 		}
 		if !dup {
-			if err := d.tg.Send(ctx, d.defaultBot, d.defaultChat, text); err != nil {
+			if err := d.tg.Send(ctx, d.defaultBot, d.defaultChat, d.stockThreadID, text); err != nil {
 				d.log.Error().Err(err).Msg("default chat send failed; will retry next scan")
 			} else if err := d.recordDelivery(ctx, systemUserID, sig); err != nil {
 				d.log.Error().Err(err).Msg("record default delivery failed")
@@ -134,7 +146,7 @@ func (d *Dispatcher) ForceResend(ctx context.Context, sig signals.Signal) (Dispa
 	text := formatMessage(sig, symbol, d.cmp(ctx, sig.InstrumentID))
 
 	for _, r := range recips {
-		if err := d.tg.Send(ctx, r.BotToken, r.ChatID, text); err != nil {
+		if err := d.tg.Send(ctx, r.BotToken, r.ChatID, 0, text); err != nil {
 			d.log.Error().Err(err).Str("user", r.UserID).Msg("force resend: telegram send failed")
 			continue
 		}
@@ -145,7 +157,7 @@ func (d *Dispatcher) ForceResend(ctx context.Context, sig signals.Signal) (Dispa
 	}
 
 	if d.defaultBot != "" && d.defaultChat != "" {
-		if err := d.tg.Send(ctx, d.defaultBot, d.defaultChat, text); err != nil {
+		if err := d.tg.Send(ctx, d.defaultBot, d.defaultChat, d.stockThreadID, text); err != nil {
 			d.log.Error().Err(err).Msg("force resend: default chat send failed")
 		} else {
 			if err := d.recordDelivery(ctx, systemUserID, sig); err != nil {
@@ -164,8 +176,28 @@ func chatTarget(botToken, chatID string) string {
 
 // Broadcast sends a plain message to every Telegram-enabled user plus the
 // safety-net chat, deduped by physical destination. Used for global (non
-// per-watchlist) alerts like IPO signals. Returns how many chats were sent to.
+// per-watchlist) alerts with no more specific topic to route to. Returns how
+// many chats were sent to.
 func (d *Dispatcher) Broadcast(ctx context.Context, text string) (int, error) {
+	return d.broadcastToThread(ctx, text, 0)
+}
+
+// BroadcastIPO is Broadcast, routed to the IPO-alerts topic (if configured)
+// when it reaches the default forum-group chat.
+func (d *Dispatcher) BroadcastIPO(ctx context.Context, text string) (int, error) {
+	return d.broadcastToThread(ctx, text, d.ipoThreadID)
+}
+
+// BroadcastPromoter is Broadcast, routed to the promoter-trades topic (if
+// configured) when it reaches the default forum-group chat.
+func (d *Dispatcher) BroadcastPromoter(ctx context.Context, text string) (int, error) {
+	return d.broadcastToThread(ctx, text, d.promoterThreadID)
+}
+
+// broadcastToThread is Broadcast's shared implementation. threadID only ever
+// applies to the default chat — individual users' own bot chats are plain
+// (non-forum) chats, so they always get the General topic (0).
+func (d *Dispatcher) broadcastToThread(ctx context.Context, text string, threadID int) (int, error) {
 	rows, err := d.pool.Query(ctx, `
 		SELECT bot_token, chat_id FROM telegram_configs
 		WHERE enabled = TRUE AND bot_token <> '' AND chat_id <> ''`)
@@ -197,7 +229,11 @@ func (d *Dispatcher) Broadcast(ctx context.Context, text string) (int, error) {
 		if sent[tk] {
 			continue
 		}
-		if err := d.tg.Send(ctx, dd.bot, dd.chat, text); err != nil {
+		tid := 0
+		if dd.bot == d.defaultBot && dd.chat == d.defaultChat {
+			tid = threadID
+		}
+		if err := d.tg.Send(ctx, dd.bot, dd.chat, tid, text); err != nil {
 			d.log.Error().Err(err).Msg("broadcast send failed")
 			continue
 		}
@@ -209,7 +245,7 @@ func (d *Dispatcher) Broadcast(ctx context.Context, text string) (int, error) {
 
 // SendTest sends a plain connectivity-check message to a specific bot/chat.
 func (d *Dispatcher) SendTest(ctx context.Context, botToken, chatID string) error {
-	return d.tg.Send(ctx, botToken, chatID,
+	return d.tg.Send(ctx, botToken, chatID, 0,
 		"TradeNexus: test message. If you can read this, your Telegram is connected.")
 }
 
@@ -219,6 +255,22 @@ func (d *Dispatcher) TestDefault(ctx context.Context) error {
 		return fmt.Errorf("default Telegram not configured (set TELEGRAM_DEFAULT_BOT_TOKEN / TELEGRAM_DEFAULT_CHAT_ID)")
 	}
 	return d.SendTest(ctx, d.defaultBot, d.defaultChat)
+}
+
+// IPOBroadcaster adapts a Dispatcher to the ipo package's Broadcaster
+// interface, routing broadcasts to the IPO-alerts forum topic.
+type IPOBroadcaster struct{ D *Dispatcher }
+
+func (b IPOBroadcaster) Broadcast(ctx context.Context, text string) (int, error) {
+	return b.D.BroadcastIPO(ctx, text)
+}
+
+// PromoterBroadcaster adapts a Dispatcher to the promoter package's
+// Broadcaster interface, routing broadcasts to the promoter-trades forum topic.
+type PromoterBroadcaster struct{ D *Dispatcher }
+
+func (b PromoterBroadcaster) Broadcast(ctx context.Context, text string) (int, error) {
+	return b.D.BroadcastPromoter(ctx, text)
 }
 
 // Recipients returns users who watch the instrument AND have any of the given

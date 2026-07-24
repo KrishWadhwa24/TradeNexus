@@ -196,7 +196,7 @@ export default function App() {
       <aside className={"sidebar" + (menuOpen ? " open" : "")}>
         <div className="brand">
           <span className="prompt">&gt;_</span>
-          Trade<em>Nexus</em>
+          <span className="brand-text">Trade<em>Nexus</em></span>
         </div>
         {nav.map((n) => {
           if (n.items) {
@@ -208,6 +208,7 @@ export default function App() {
                 <div
                   className={"nav-group-head" + (hasActive ? " active" : "")}
                   onClick={() => toggleGroup(n.group)}
+                  title={n.label}
                 >
                   {GroupIcon && <GroupIcon />}<span>{n.label}</span>
                   <Icon.chevron className={"nav-chevron" + (collapsed ? " collapsed" : "")} />
@@ -219,6 +220,7 @@ export default function App() {
                       key={it.key}
                       className={"nav-item nav-sub" + (view === it.key ? " active" : "")}
                       onClick={() => go(it.key)}
+                      title={it.label}
                     >
                       {I && <I />}<span>{it.label}</span>
                     </div>
@@ -233,6 +235,7 @@ export default function App() {
               key={n.key}
               className={"nav-item" + (view === n.key ? " active" : "")}
               onClick={() => go(n.key)}
+              title={n.label}
             >
               {I && <I />}<span>{n.label}</span>
             </div>
@@ -241,7 +244,7 @@ export default function App() {
         <div className="sidebar-foot">
           <div className="user-chip">
             <span className="avatar">{initial}</span>
-            <div style={{ minWidth: 0 }}>
+            <div className="user-info" style={{ minWidth: 0 }}>
               <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{user.email}</div>
               <a className="subtle" style={{ cursor: "pointer" }} onClick={logout}>Sign out</a>
             </div>

@@ -117,7 +117,9 @@ func main() {
 	if cfg.NotifyEnabled {
 		dispatcher = notify.New(
 			pg.Pool, notify.NewTelegram(cfg.TelegramBaseURL), cfg.NotifyWindowDays,
-			cfg.TelegramDefaultBotToken, cfg.TelegramDefaultChatID, log,
+			cfg.TelegramDefaultBotToken, cfg.TelegramDefaultChatID,
+			cfg.TelegramStockSignalsThreadID, cfg.TelegramIPOAlertsThreadID, cfg.TelegramPromoterThreadID,
+			log,
 		)
 	}
 
@@ -154,7 +156,7 @@ func main() {
 	if cfg.IPOEnabled {
 		var ipoBroadcaster ipo.Broadcaster // keep a true-nil interface if notify is off
 		if dispatcher != nil {
-			ipoBroadcaster = dispatcher
+			ipoBroadcaster = notify.IPOBroadcaster{D: dispatcher}
 		}
 		ipoSvc = ipo.New(ipo.NewClient(), ipo.NewRepo(pg.Pool), ipoBroadcaster, cfg.IPOPollInterval, cfg.IPOSignalCron, log)
 		ipoSvc.StartPolling(ctx)
@@ -165,7 +167,7 @@ func main() {
 	if cfg.PromoterEnabled {
 		var promoterBroadcaster promoter.Broadcaster // keep a true-nil interface if notify is off
 		if dispatcher != nil {
-			promoterBroadcaster = dispatcher
+			promoterBroadcaster = notify.PromoterBroadcaster{D: dispatcher}
 		}
 		promoterSvc = promoter.New(promoter.NewClient(), promoter.NewRepo(pg.Pool), promoterBroadcaster,
 			cfg.PromoterPollInterval, cfg.PromoterAlertWindowDays, cfg.PromoterRetentionDays, log)

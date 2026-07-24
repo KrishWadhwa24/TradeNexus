@@ -99,6 +99,7 @@ h3,
   position: sticky;
   top: 0;
   height: 100vh;
+  transition: width .2s ease;
 }
 
 .brand {
@@ -1010,6 +1011,87 @@ code {
 @media (min-width: 861px) {
   .backdrop {
     display: none;
+  }
+
+  /* Desktop sidebar is an icon-only rail by default and expands to the full
+     nav on hover — no button, no click state. Mobile is untouched: it keeps
+     its own off-canvas drawer further down. */
+  .sidebar {
+    width: 76px;
+    padding: 20px 10px;
+  }
+
+  .sidebar .brand {
+    justify-content: center;
+    padding: 6px 0 22px;
+  }
+
+  .sidebar .brand-text,
+  .sidebar .nav-item span,
+  .sidebar .nav-group-head span,
+  .sidebar .nav-chevron,
+  .sidebar .nav-sub,
+  .sidebar .user-info {
+    display: none;
+  }
+
+  .sidebar .nav-item,
+  .sidebar .nav-group-head {
+    justify-content: center;
+    padding: 11px 0;
+  }
+
+  .sidebar .user-chip {
+    justify-content: center;
+  }
+
+  .sidebar .sidebar-foot {
+    padding: 12px 0 2px;
+  }
+
+  .sidebar:hover {
+    width: 250px;
+    padding: 20px 14px;
+  }
+
+  .sidebar:hover .brand {
+    justify-content: flex-start;
+    padding: 6px 10px 22px;
+  }
+
+  .sidebar:hover .brand-text {
+    display: inline;
+  }
+
+  .sidebar:hover .nav-item span,
+  .sidebar:hover .nav-group-head span {
+    display: inline;
+  }
+
+  .sidebar:hover .nav-chevron {
+    display: block;
+  }
+
+  .sidebar:hover .nav-sub {
+    display: flex;
+  }
+
+  .sidebar:hover .user-info {
+    display: block;
+  }
+
+  .sidebar:hover .nav-item,
+  .sidebar:hover .nav-group-head {
+    justify-content: flex-start;
+    padding: 10px 12px;
+  }
+
+  .sidebar:hover .user-chip {
+    justify-content: flex-start;
+  }
+
+  .sidebar:hover .sidebar-foot {
+    padding: 12px 6px 2px;
   }
 }
 

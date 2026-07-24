@@ -96,6 +96,12 @@ type Config struct {
 	// stock+timeframe+day) even if a user hasn't configured their own bot.
 	TelegramDefaultBotToken string `env:"TELEGRAM_DEFAULT_BOT_TOKEN" envDefault:""`
 	TelegramDefaultChatID   string `env:"TELEGRAM_DEFAULT_CHAT_ID" envDefault:""`
+
+	// If the default chat is a forum supergroup, these route each signal
+	// category to its own topic instead of the General topic. 0 = General.
+	TelegramStockSignalsThreadID int `env:"TELEGRAM_STOCK_SIGNALS_THREAD_ID" envDefault:"0"`
+	TelegramIPOAlertsThreadID    int `env:"TELEGRAM_IPO_ALERTS_THREAD_ID" envDefault:"0"`
+	TelegramPromoterThreadID     int `env:"TELEGRAM_PROMOTER_THREAD_ID" envDefault:"0"`
 }
 
 // IsLocal reports whether we're running in the local dev profile.

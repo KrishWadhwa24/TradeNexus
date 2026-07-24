@@ -31,8 +31,9 @@ func NewTelegram(baseURL string) *Telegram {
 }
 
 type sendMessageReq struct {
-	ChatID string `json:"chat_id"`
-	Text   string `json:"text"`
+	ChatID          string `json:"chat_id"`
+	Text            string `json:"text"`
+	MessageThreadID int    `json:"message_thread_id,omitempty"`
 }
 
 type sendMessageResp struct {
@@ -40,12 +41,15 @@ type sendMessageResp struct {
 	Description string `json:"description"`
 }
 
-// Send delivers a text message via a user's bot token to their chat.
-func (t *Telegram) Send(ctx context.Context, botToken, chatID, text string) error {
+// Send delivers a text message via a user's bot token to their chat. threadID
+// targets a specific topic in a forum supergroup; pass 0 for the chat's
+// General topic (or for chats that aren't forums at all, e.g. a user's own
+// private bot chat).
+func (t *Telegram) Send(ctx context.Context, botToken, chatID string, threadID int, text string) error {
 	if botToken == "" || chatID == "" {
 		return fmt.Errorf("telegram: missing bot token or chat id")
 	}
-	body, _ := json.Marshal(sendMessageReq{ChatID: chatID, Text: text})
+	body, _ := json.Marshal(sendMessageReq{ChatID: chatID, Text: text, MessageThreadID: threadID})
 	url := fmt.Sprintf("%s/bot%s/sendMessage", t.baseURL, botToken)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
