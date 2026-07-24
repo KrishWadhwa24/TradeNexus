@@ -57,13 +57,33 @@ func (s *Service) ListActive(ctx context.Context) ([]IPO, error) {
 // RefreshNow triggers an immediate poll.
 func (s *Service) RefreshNow(ctx context.Context) error { return s.Poll(ctx) }
 
-// Poll fetches the feed, upserts open/upcoming IPOs, prunes everything else
-// (closed/listed/gone), then evaluates last-day signals.
+// Poll fetches the feed, merges in the latest subscription snapshot, upserts
+// open/upcoming IPOs, prunes everything else (closed/listed/gone), then
+// evaluates last-day signals.
 func (s *Service) Poll(ctx context.Context) error {
 	now := time.Now().In(market.IST)
 	items, err := s.client.Fetch(ctx, now)
 	if err != nil {
 		return err
+	}
+
+	// Subscription data is supplementary — an outage on this call shouldn't
+	// fail the whole poll, just leave subscription fields at their prior
+	// (or zero) value for this cycle.
+	subs, err := s.client.FetchSubscriptions(ctx, now)
+	if err != nil {
+		s.log.Warn().Err(err).Msg("ipo: fetch subscriptions failed, skipping merge this cycle")
+	}
+	for i := range items {
+		if sub, ok := subs[items[i].ID]; ok {
+			items[i].QIB = sub.QIB
+			items[i].SHNI = sub.SHNI
+			items[i].BHNI = sub.BHNI
+			items[i].NII = sub.NII
+			items[i].RII = sub.RII
+			items[i].TotalSubscription = sub.Total
+			items[i].AnchorPositive = sub.AnchorPositive
+		}
 	}
 
 	keep := make([]int64, 0, len(items))
@@ -90,16 +110,22 @@ func (s *Service) Poll(ctx context.Context) error {
 // so an alert this late has no value even if the server only just started.
 const closingSignalCutoffHour = 17 // 5:00 PM IST
 
+// qibAlertThreshold is the minimum QIB subscription (times subscribed)
+// required, in addition to the GMP tier, before the close-day signal fires.
+// GMP alone is sentiment; QIB crossing this confirms institutional demand.
+const qibAlertThreshold = 5.0
+
 // RunClosingDaySignals is the authoritative auto-signal check. It is run on a
 // schedule (2:30 PM IST by default) AND opportunistically at startup/poll time
 // (see StartPolling) so a signal still goes out even if the process wasn't
 // running at 2:30 PM — as long as it's checked before 5:00 PM IST. For every
-// MAINBOARD IPO that is open and closes today, it evaluates the GMP tier and
-// sends the Telegram signal if the threshold is met. It deliberately ignores
-// any prior admin "clear" — the close-day GMP check always fires. SME IPOs are
-// skipped entirely (admin-only). An IPO already signaled today (at any tier)
-// is skipped, so running this more than once a day — or a GMP swing crossing
-// multiple tiers in one day — never sends more than one Telegram message.
+// MAINBOARD IPO that is open and closes today, it requires BOTH the GMP tier
+// to qualify (≥10%) AND QIB subscription > qibAlertThreshold before sending
+// the Telegram signal. It deliberately ignores any prior admin "clear" — the
+// close-day check always fires. SME IPOs are skipped entirely (admin-only).
+// An IPO already signaled today (at any tier) is skipped, so running this
+// more than once a day — or a GMP/QIB swing crossing thresholds multiple
+// times in one day — never sends more than one Telegram message.
 func (s *Service) RunClosingDaySignals(ctx context.Context) {
 	if s.bc == nil {
 		return
@@ -123,6 +149,9 @@ func (s *Service) RunClosingDaySignals(ctx context.Context) {
 		tier := tierFor(x.GMPPercent)
 		if tier == "" {
 			continue // below 10% → no signal
+		}
+		if x.QIB <= qibAlertThreshold {
+			continue // GMP tier alone isn't enough — QIB subscription must also confirm demand
 		}
 		// Once signaled today (any tier), never signal again today. This now
 		// runs on every poll tick (not just the 2:30 PM cron), so gating on
@@ -284,6 +313,13 @@ func formatIPOMessage(x IPO, signalText string, closingToday bool) string {
 	}
 	if x.Subscription != "" && x.Subscription != "-" {
 		fmt.Fprintf(&b, "📈 Subscription: %s\n", x.Subscription)
+	}
+	if x.QIB > 0 {
+		fmt.Fprintf(&b, "🏦 QIB: %sx", trimNum(x.QIB))
+		if x.TotalSubscription > 0 {
+			fmt.Fprintf(&b, "  ·  Total: %sx", trimNum(x.TotalSubscription))
+		}
+		b.WriteString("\n")
 	}
 	if x.Price != "" {
 		fmt.Fprintf(&b, "💰 Price: ₹%s", x.Price)

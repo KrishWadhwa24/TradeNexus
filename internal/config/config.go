@@ -36,7 +36,7 @@ type Config struct {
 	AngelTOTPSecret string `env:"ANGEL_TOTP_SECRET" envDefault:""`
 
 	// Angel rate limiting
-	AngelHistRate            float64       `env:"ANGEL_HIST_RATE" envDefault:"2"`
+	AngelHistRate float64 `env:"ANGEL_HIST_RATE" envDefault:"2"`
 	// Burst is deliberately 1: with >1 the bucket can release two requests to
 	// Angel at the same instant, and Angel's real server-side cap is stricter
 	// than our configured rate — bursts of 2+ are what triggers its rate-limit
@@ -76,10 +76,16 @@ type Config struct {
 
 	// IPO tracker (open + upcoming IPOs + GMP signals from the InvestorGain feed)
 	IPOEnabled      bool          `env:"IPO_ENABLED" envDefault:"true"`
-	IPOPollInterval time.Duration `env:"IPO_POLL_INTERVAL" envDefault:"3h"`
+	IPOPollInterval time.Duration `env:"IPO_POLL_INTERVAL" envDefault:"40m"`
 	// IST cron for the authoritative close-day GMP signal check (mainboard only).
 	// Default 14:30 (2:30 PM IST).
 	IPOSignalCron string `env:"IPO_SIGNAL_CRON" envDefault:"30 14 * * *"`
+
+	// Promoter/Director/KMP insider-trading tracker (NSE PIT disclosure feed)
+	PromoterEnabled         bool          `env:"PROMOTER_ENABLED" envDefault:"true"`
+	PromoterPollInterval    time.Duration `env:"PROMOTER_POLL_INTERVAL" envDefault:"90m"`
+	PromoterAlertWindowDays int           `env:"PROMOTER_ALERT_WINDOW_DAYS" envDefault:"15"`
+	PromoterRetentionDays   int           `env:"PROMOTER_RETENTION_DAYS" envDefault:"60"`
 
 	// Notifications (Module 7)
 	NotifyEnabled    bool   `env:"NOTIFY_ENABLED" envDefault:"true"`

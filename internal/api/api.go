@@ -26,6 +26,7 @@ import (
 	"tradenexus/internal/live"
 	"tradenexus/internal/notify"
 	"tradenexus/internal/paper"
+	"tradenexus/internal/promoter"
 	"tradenexus/internal/ratelimit"
 	"tradenexus/internal/signals"
 	"tradenexus/internal/store"
@@ -50,6 +51,7 @@ type Deps struct {
 	Paper       *paper.Service
 	Live        *live.Hub
 	IPO         *ipo.Service
+	Promoter    *promoter.Service
 	JWTSecret   string
 }
 
@@ -71,6 +73,7 @@ type Server struct {
 	paper     *paper.Service
 	live      *live.Hub
 	ipo       *ipo.Service
+	promoter  *promoter.Service
 	jwtSecret string
 
 	// scanRunning guards manual scan-all so repeated clicks don't stack.
@@ -102,6 +105,7 @@ func NewServer(d Deps) *Server {
 		paper:     d.Paper,
 		live:      d.Live,
 		ipo:       d.IPO,
+		promoter:  d.Promoter,
 		jwtSecret: d.JWTSecret,
 	}
 }
@@ -214,6 +218,9 @@ func (s *Server) Router() http.Handler {
 				r.Post("/admin/ipos/refresh", s.handleRefreshIPOs)
 				r.Post("/admin/ipos/{id}/apply", s.handleIPOAdminApply)
 				r.Post("/admin/ipos/{id}/clear-signal", s.handleIPOClearSignal)
+
+				// Promoter trades admin: force-send a specific trade's Telegram alert.
+				r.Post("/admin/promoter-trades/{id}/send-alert", s.handlePromoterSendAlert)
 			})
 
 			// Users, watchlists, prefs, telegram (Module 7)
@@ -240,6 +247,11 @@ func (s *Server) Router() http.Handler {
 
 			// IPOs (open + upcoming, with GMP)
 			r.Get("/ipos", s.handleListIPOs)
+
+			// Promoter/Director/KMP insider-trading feed. "Scan now" is open to
+			// every logged-in user (cooldown-guarded inside the service).
+			r.Get("/promoter-trades", s.handleListPromoterTrades)
+			r.Post("/promoter-trades/scan", s.handlePromoterScanNow)
 
 			// Market data (Module 9): trending + params + dashboard
 			r.Get("/market/trending", s.handleTrending)

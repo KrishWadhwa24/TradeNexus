@@ -35,8 +35,30 @@ type IPO struct {
 	ListingDate  *time.Time `json:"listing_date"`
 	URL          string     `json:"url"`
 	UpdatedOn    string     `json:"updated_on"`
-	SignalTier   string     `json:"signal_tier"`  // '', your_choice, apply, admin_apply (from DB)
+	SignalTier   string     `json:"signal_tier"` // '', your_choice, apply, admin_apply (from DB)
 	SignaledAt   *time.Time `json:"signaled_at"` // when SignalTier was last set (from DB)
+
+	// Subscription breakdown (times subscribed), from the InvestorGain
+	// subscription report. Zero until the IPO opens for bidding.
+	QIB               float64 `json:"qib"`
+	SHNI              float64 `json:"shni"`
+	BHNI              float64 `json:"bhni"`
+	NII               float64 `json:"nii"`
+	RII               float64 `json:"rii"`
+	TotalSubscription float64 `json:"total_subscription"`
+	AnchorPositive    bool    `json:"anchor_positive"`
+}
+
+// Subscription is one IPO's subscription snapshot (times subscribed per
+// investor category), parsed from the InvestorGain subscription report.
+type Subscription struct {
+	QIB            float64
+	SHNI           float64
+	BHNI           float64
+	NII            float64
+	RII            float64
+	Total          float64
+	AnchorPositive bool
 }
 
 // feedResponse decodes rows as generic maps. We look fields up by their exact
@@ -78,8 +100,9 @@ func getInt64(m map[string]any, key string) int64 {
 
 // Client fetches IPO data from InvestorGain.
 type Client struct {
-	http    *http.Client
-	baseURL string // overridable for tests; empty → live endpoint
+	http       *http.Client
+	baseURL    string // overridable for tests; empty → live GMP-feed endpoint
+	subBaseURL string // overridable for tests; empty → live subscription-feed endpoint
 }
 
 // NewClient builds an IPO feed client.
@@ -87,7 +110,13 @@ func NewClient() *Client {
 	return &Client{http: &http.Client{Timeout: 20 * time.Second}}
 }
 
-const liveBase = "https://webnodejs.investorgain.com/cloud/v2/report/data-read/331/1"
+const (
+	liveBase = "https://webnodejs.investorgain.com/cloud/v2/report/data-read/331/1"
+	// subscriptionLiveBase is InvestorGain's per-category subscription report
+	// (QIB/SHNI/BHNI/NII/RII/Total) — same report family as liveBase, different
+	// report id.
+	subscriptionLiveBase = "https://webnodejs.investorgain.com/cloud/v2/report/data-read/333/1"
+)
 
 // financialYear returns the Indian FY label (Apr–Mar), e.g. "2026-27".
 func financialYear(t time.Time) string {
@@ -98,13 +127,22 @@ func financialYear(t time.Time) string {
 	return fmt.Sprintf("%d-%02d", y-1, y%100)
 }
 
-// url builds the month-scoped report URL for time t.
+// url builds the month-scoped GMP report URL for time t.
 func (c *Client) url(t time.Time) string {
 	if c.baseURL != "" {
 		return c.baseURL
 	}
 	return fmt.Sprintf("%s/%d/%d/%s/0/all?search=&v=%s",
 		liveBase, int(t.Month()), t.Year(), financialYear(t), t.Format("15-04"))
+}
+
+// subscriptionURL builds the month-scoped subscription report URL for time t.
+func (c *Client) subscriptionURL(t time.Time) string {
+	if c.subBaseURL != "" {
+		return c.subBaseURL
+	}
+	return fmt.Sprintf("%s/%d/%d/%s/0/all?search=&v=%s",
+		subscriptionLiveBase, int(t.Month()), t.Year(), financialYear(t), t.Format("15-04"))
 }
 
 // Fetch pulls the current month's IPO report and returns cleaned records.
@@ -127,6 +165,56 @@ func (c *Client) Fetch(ctx context.Context, now time.Time) ([]IPO, error) {
 		return nil, fmt.Errorf("ipo fetch HTTP %d", resp.StatusCode)
 	}
 	return ParseFeed(body)
+}
+
+// FetchSubscriptions pulls the current month's subscription report and
+// returns each IPO's snapshot keyed by its InvestorGain id (the same `~id`
+// used by Fetch's IPO.ID, so callers can merge the two by id).
+func (c *Client) FetchSubscriptions(ctx context.Context, now time.Time) (map[int64]Subscription, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.subscriptionURL(now), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36")
+	req.Header.Set("Referer", "https://www.investorgain.com/")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ipo subscription fetch: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("ipo subscription fetch HTTP %d", resp.StatusCode)
+	}
+	return ParseSubscriptionFeed(body)
+}
+
+// ParseSubscriptionFeed decodes the subscription report body into a
+// per-IPO-id map (exported for tests).
+func ParseSubscriptionFeed(body []byte) (map[int64]Subscription, error) {
+	var fr feedResponse
+	if err := json.Unmarshal(body, &fr); err != nil {
+		return nil, fmt.Errorf("ipo subscription decode: %w", err)
+	}
+	out := make(map[int64]Subscription, len(fr.ReportTableData))
+	for _, m := range fr.ReportTableData {
+		id := getInt64(m, "~id")
+		if id == 0 {
+			continue
+		}
+		out[id] = Subscription{
+			QIB:            parseFloat(getStr(m, "QIB")),
+			SHNI:           parseFloat(getStr(m, "SHNI")),
+			BHNI:           parseFloat(getStr(m, "BHNI")),
+			NII:            parseFloat(getStr(m, "NII")),
+			RII:            parseFloat(getStr(m, "RII")),
+			Total:          firstBoldFloat(getStr(m, "Total")),
+			AnchorPositive: strings.Contains(getStr(m, "Anchor"), "✅"),
+		}
+	}
+	return out, nil
 }
 
 // ParseFeed decodes the feed body into cleaned IPO records (exported for tests).
@@ -204,7 +292,14 @@ func boardFromName(nameHTML string) string {
 
 // gmpValue parses the ₹ premium from the GMP HTML (the <b>..</b> value).
 func gmpValue(gmpHTML string) float64 {
-	if m := reBold.FindStringSubmatch(gmpHTML); m != nil {
+	return firstBoldFloat(gmpHTML)
+}
+
+// firstBoldFloat parses the number inside the first <b>..</b> in an HTML
+// snippet — the InvestorGain feeds bury the actual value (GMP, total
+// subscription, …) inside bold tags alongside unrelated markup/labels.
+func firstBoldFloat(html string) float64 {
+	if m := reBold.FindStringSubmatch(html); m != nil {
 		return parseFloat(m[1])
 	}
 	return 0

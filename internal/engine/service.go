@@ -425,6 +425,10 @@ const reconcileWorkers = 5
 // job and the startup-recovery routine. While it runs, intraday Redis
 // population (manual scans, the scheduled ticker) waits — reconciliation
 // always goes first so the two never compete for the same Angel session.
+//
+// Instruments that fail (e.g. Angel rate-limiting a specific request) are
+// retried once in a second pass after the full sweep completes, by which
+// point any transient rate-limit has usually cleared.
 func (s *Service) ReconcileAll(ctx context.Context) ([]ReconcileResult, error) {
 	if s.intraday != nil {
 		s.intraday.BeginReconcile()
@@ -434,13 +438,31 @@ func (s *Service) ReconcileAll(ctx context.Context) ([]ReconcileResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	total := len(ids)
-	s.log.Info().Int("total", total).Msg("reconcile-all: starting")
+	s.log.Info().Int("total", len(ids)).Msg("reconcile-all: starting")
 
+	out, failed := s.reconcileBatch(ctx, ids)
+
+	if len(failed) > 0 {
+		s.log.Info().Int("count", len(failed)).Msg("reconcile-all: retrying failed instruments")
+		retried, stillFailed := s.reconcileBatch(ctx, failed)
+		out = append(out, retried...)
+		for _, id := range stillFailed {
+			s.log.Error().Int64("instrument", id).Msg("reconcile-all: instrument failed after retry")
+		}
+	}
+
+	s.log.Info().Int("total", len(ids)).Int("succeeded", len(out)).Msg("reconcile-all: finished")
+	return out, nil
+}
+
+// reconcileBatch reconciles the given instrument IDs across reconcileWorkers
+// goroutines, logging progress heartbeats. It returns the successful results
+// plus the IDs that failed, for the caller to retry or report.
+func (s *Service) reconcileBatch(ctx context.Context, ids []int64) (out []ReconcileResult, failed []int64) {
+	total := len(ids)
 	const heartbeatEvery = 10
 	var (
 		mu   sync.Mutex
-		out  []ReconcileResult
 		done int32
 	)
 	idCh := make(chan int64)
@@ -451,13 +473,14 @@ func (s *Service) ReconcileAll(ctx context.Context) ([]ReconcileResult, error) {
 			defer wg.Done()
 			for id := range idCh {
 				r, err := s.Reconcile(ctx, id)
+				mu.Lock()
 				if err != nil {
 					s.log.Error().Err(err).Int64("instrument", id).Msg("reconcile-all: instrument failed")
+					failed = append(failed, id)
 				} else {
-					mu.Lock()
 					out = append(out, r)
-					mu.Unlock()
 				}
+				mu.Unlock()
 				if d := atomic.AddInt32(&done, 1); int(d)%heartbeatEvery == 0 || int(d) == total {
 					s.log.Info().Int32("done", d).Int("total", total).Msg("reconcile-all: progress")
 				}
@@ -469,9 +492,7 @@ func (s *Service) ReconcileAll(ctx context.Context) ([]ReconcileResult, error) {
 	}
 	close(idCh)
 	wg.Wait()
-
-	s.log.Info().Int("total", total).Int("succeeded", len(out)).Msg("reconcile-all: finished")
-	return out, nil
+	return out, failed
 }
 
 // DeleteCandlesForDate removes every daily candle on the given date and rebuilds

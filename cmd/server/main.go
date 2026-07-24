@@ -27,6 +27,7 @@ import (
 	"tradenexus/internal/logger"
 	"tradenexus/internal/notify"
 	"tradenexus/internal/paper"
+	"tradenexus/internal/promoter"
 	"tradenexus/internal/ratelimit"
 	"tradenexus/internal/scanner"
 	"tradenexus/internal/scheduler"
@@ -159,6 +160,18 @@ func main() {
 		ipoSvc.StartPolling(ctx)
 	}
 
+	// Promoter/Director/KMP insider-trading tracker (NSE PIT disclosure feed).
+	var promoterSvc *promoter.Service
+	if cfg.PromoterEnabled {
+		var promoterBroadcaster promoter.Broadcaster // keep a true-nil interface if notify is off
+		if dispatcher != nil {
+			promoterBroadcaster = dispatcher
+		}
+		promoterSvc = promoter.New(promoter.NewClient(), promoter.NewRepo(pg.Pool), promoterBroadcaster,
+			cfg.PromoterPollInterval, cfg.PromoterAlertWindowDays, cfg.PromoterRetentionDays, log)
+		promoterSvc.StartPolling(ctx)
+	}
+
 	// 8) Scheduler (daily scan + cleanup + startup reconciliation + fill).
 	sched := scheduler.New(engineSvc, paperSvc, intradayCache, scheduler.Config{
 		Enabled:            cfg.SchedulerEnabled,
@@ -193,6 +206,7 @@ func main() {
 			Paper:       paperSvc,
 			Live:        liveHub,
 			IPO:         ipoSvc,
+			Promoter:    promoterSvc,
 			JWTSecret:   cfg.JWTSecret,
 		}).Router(),
 		ReadHeaderTimeout: 10 * time.Second,

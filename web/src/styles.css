@@ -184,6 +184,53 @@ h3,
   content: "";
 }
 
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-group-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  user-select: none;
+  transition: .12s;
+  text-transform: lowercase;
+}
+
+.nav-group-head svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
+
+.nav-group-head:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.nav-group-head.active {
+  color: var(--accent-2);
+}
+
+.nav-chevron {
+  width: 14px !important;
+  height: 14px !important;
+  margin-left: auto;
+  transition: transform .15s;
+}
+
+.nav-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
 .sidebar-foot {
   margin-top: auto;
   padding: 12px 6px 2px;
@@ -1442,6 +1489,113 @@ code {
   color: var(--accent-2);
 }
 
+.ipo-name-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ipo-name-btn:hover {
+  border: none;
+}
+
+/* ---------- Subscription modal ---------- */
+.sub-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, .62);
+  backdrop-filter: blur(6px);
+  animation: fade .15s ease;
+}
+
+.sub-modal {
+  width: min(100%, 480px);
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 18px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .55);
+  padding: 22px;
+}
+
+.sub-modal h3 {
+  margin: 8px 0 0;
+  font-family: var(--font-display);
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.sub-modal-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .7px;
+  text-transform: uppercase;
+}
+
+.sub-modal-total {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 18px 0 14px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.sub-modal-total-val {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.sub-modal-total-label {
+  font-size: 12px;
+  color: var(--muted);
+  flex: 1;
+}
+
+.sub-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.sub-modal-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.sub-modal-cell .k {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--muted);
+}
+
+.sub-modal-cell .v {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+}
+
 .ipo-badges {
   display: flex;
   flex-wrap: wrap;
@@ -1614,4 +1768,199 @@ code {
   opacity: 1;
   color: var(--red);
   border: none;
+}
+
+/* ---------- Promoter trades ---------- */
+.promoter-filters {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 16px;
+}
+
+.chip-tab {
+  cursor: pointer;
+  background: var(--surface);
+}
+
+.chip-tab small {
+  margin-left: 5px;
+  opacity: .7;
+  font-weight: 700;
+}
+
+.chip-tab.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.chip-tab.chip-buy.is-active {
+  background: var(--green-soft);
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 34%, transparent);
+}
+
+.chip-tab.chip-sell.is-active {
+  background: color-mix(in srgb, var(--red) 14%, var(--surface-2));
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 34%, transparent);
+}
+
+.chip-buy {
+  background: var(--green-soft);
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 34%, transparent);
+}
+
+.chip-sell {
+  background: color-mix(in srgb, var(--red) 14%, var(--surface-2));
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 34%, transparent);
+}
+
+.chip-soft {
+  background: var(--surface-2);
+}
+
+.promoter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.promoter-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 16px 14px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color .12s, transform .12s;
+}
+
+.promoter-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  transform: translateY(-1px);
+}
+
+.promoter-card.is-buy {
+  border-left: 3px solid var(--green);
+}
+
+.promoter-card.is-sell {
+  border-left: 3px solid var(--red);
+}
+
+.promoter-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.promoter-symbol {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -.2px;
+  color: var(--text);
+  margin-right: 8px;
+}
+
+.promoter-company {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.promoter-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.promoter-person {
+  display: flex;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.promoter-person .k {
+  color: var(--muted);
+}
+
+.promoter-person .v {
+  font-weight: 600;
+}
+
+.promoter-meta {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.promoter-meta > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.promoter-meta .k {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--muted);
+}
+
+.promoter-meta .v {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.promoter-holding {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.promoter-holding .k {
+  color: var(--muted);
+}
+
+.promoter-holding .v {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.promoter-arrow {
+  color: var(--muted);
+}
+
+.text-green {
+  color: var(--green);
+}
+
+.text-red {
+  color: var(--red);
+}
+
+.promoter-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-soft);
+  flex-wrap: wrap;
+}
+
+.promoter-filed-at {
+  font-size: 11px;
+  color: var(--muted);
 }
