@@ -188,7 +188,6 @@ func (s *Server) Router() http.Handler {
 			// Angel client (Module 2)
 			r.Post("/angel/login", s.handleAngelLogin)
 			r.Get("/angel/status", s.handleAngelStatus)
-			r.Post("/angel/scripmaster/sync", s.handleScripMasterSync)
 			r.Post("/angel/historical", s.handleAngelHistorical)
 
 			// Instruments (Module 2)
@@ -221,6 +220,10 @@ func (s *Server) Router() http.Handler {
 				r.Delete("/admin/candles", s.handleDeleteCandlesByDate)
 				r.With(middleware.Timeout(65*time.Minute)).Post("/admin/candles/refetch", s.handleRefetchCandlesByDate)
 				r.Post("/admin/dispatch/force", s.handleForceDispatch)
+
+				// Stock universe: re-download the Angel scrip master and upsert
+				// NSE/BSE cash equities (picks up newly listed IPOs, etc.).
+				r.Post("/angel/scripmaster/sync", s.handleScripMasterSync)
 
 				// IPO admin: refresh the feed now, or push a manual "Apply".
 				r.Post("/admin/ipos/refresh", s.handleRefreshIPOs)

@@ -12,6 +12,11 @@ export default function Admin() {
   const [busy, setBusy] = useState("");     // "" | "count" | "delete" | "refetch"
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  // Stock universe sync
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+  const [syncErr, setSyncErr] = useState("");
+
   // Stock candle lookup
   const [sq, setSq] = useState("");
   const [sresults, setSresults] = useState([]);
@@ -51,6 +56,15 @@ export default function Admin() {
     finally { setBusy(""); }
   }
 
+  async function syncUniverse() {
+    setSyncBusy(true); setSyncErr(""); setSyncResult(null);
+    try {
+      const r = await api.post("/v1/angel/scripmaster/sync", {});
+      setSyncResult(r);
+    } catch (e) { setSyncErr(e.message); }
+    finally { setSyncBusy(false); }
+  }
+
   async function searchStock(e) {
     const v = e.target.value;
     setSq(v);
@@ -73,6 +87,29 @@ export default function Admin() {
 
   return (
     <div>
+      <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+        <div className="section-title" style={{ margin: "0 0 6px" }}>Stock universe</div>
+        <div className="subtle" style={{ marginBottom: 14 }}>
+          Re-downloads the full Angel scrip master and upserts every NSE/BSE cash equity —
+          this is how newly listed companies (e.g. an IPO that just started trading) get added.
+          It's safe to run any time: existing stocks are just refreshed, nothing is deleted.
+          There's no schedule for this yet, so re-run it every few months or whenever you know
+          new stocks have listed.
+        </div>
+        <button className="btn-sm btn-primary" onClick={syncUniverse} disabled={syncBusy}>
+          {syncBusy ? "Syncing…" : "Sync stock universe"}
+        </button>
+        {syncResult && (
+          <div className="msg" style={{ marginTop: 12 }}>
+            Fetched {syncResult.fetched}, upserted {syncResult.upserted}
+            {syncResult.by_exchange && (
+              <> ({Object.entries(syncResult.by_exchange).map(([ex, n]) => `${ex}: ${n}`).join(", ")})</>
+            )}.
+          </div>
+        )}
+        {syncErr && <div className="err" style={{ marginTop: 12 }}>{syncErr}</div>}
+      </div>
+
       <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
         <div className="section-title" style={{ margin: "0 0 6px" }}>Stock candle lookup</div>
         <div className="subtle" style={{ marginBottom: 14 }}>
