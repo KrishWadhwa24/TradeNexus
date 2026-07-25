@@ -21,6 +21,7 @@ import (
 	"tradenexus/internal/config"
 	"tradenexus/internal/deals"
 	"tradenexus/internal/engine"
+	"tradenexus/internal/fiidii"
 	"tradenexus/internal/insights"
 	"tradenexus/internal/instruments"
 	"tradenexus/internal/intraday"
@@ -195,8 +196,20 @@ func main() {
 	insightsSvc := insights.New(pg.Pool, cfg.BulkDealMinNetValue, log)
 	insightsSvc.StartRecorder(ctx)
 
+	// FII/DII daily cash-market activity (NSE feed). No history table — only
+	// the latest snapshot is ever kept in memory.
+	var fiidiiSvc *fiidii.Service
+	if cfg.FiiDiiEnabled {
+		var fiidiiBC fiidii.Broadcaster // keep a true-nil interface if notify is off
+		if dispatcher != nil {
+			fiidiiBC = notify.StockBroadcaster{D: dispatcher}
+		}
+		fiidiiSvc = fiidii.New(fiidii.NewClient(), fiidiiBC, calSvc.Cal(), log)
+		fiidiiSvc.StartPolling(ctx)
+	}
+
 	// 8) Scheduler (daily scan + cleanup + startup reconciliation + fill).
-	sched := scheduler.New(engineSvc, paperSvc, intradayCache, scheduler.Config{
+	sched := scheduler.New(engineSvc, paperSvc, intradayCache, fiidiiSvc, scheduler.Config{
 		Enabled:            cfg.SchedulerEnabled,
 		DailyScanCron:      cfg.DailyScanCron,
 		CleanupCron:        cfg.CleanupCron,
@@ -232,6 +245,7 @@ func main() {
 			Promoter:    promoterSvc,
 			Deals:       dealsSvc,
 			Insights:    insightsSvc,
+			FiiDii:      fiidiiSvc,
 			JWTSecret:   cfg.JWTSecret,
 		}).Router(),
 		ReadHeaderTimeout: 10 * time.Second,

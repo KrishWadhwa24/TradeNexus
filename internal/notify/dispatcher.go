@@ -185,6 +185,15 @@ func (d *Dispatcher) Broadcast(ctx context.Context, text string) (int, error) {
 	return d.broadcastToThread(ctx, text, 0)
 }
 
+// BroadcastStock is Broadcast, routed to the stock-signals topic (if
+// configured) when it reaches the default forum-group chat. Used for
+// market-wide alerts (e.g. FII/DII activity) that belong alongside scanner
+// signals but aren't per-instrument, so they go through Broadcast rather
+// than Dispatch's per-watchlist fan-out.
+func (d *Dispatcher) BroadcastStock(ctx context.Context, text string) (int, error) {
+	return d.broadcastToThread(ctx, text, d.stockThreadID)
+}
+
 // BroadcastIPO is Broadcast, routed to the IPO-alerts topic (if configured)
 // when it reaches the default forum-group chat.
 func (d *Dispatcher) BroadcastIPO(ctx context.Context, text string) (int, error) {
@@ -268,6 +277,14 @@ func (d *Dispatcher) TestDefault(ctx context.Context) error {
 		return fmt.Errorf("default Telegram not configured (set TELEGRAM_DEFAULT_BOT_TOKEN / TELEGRAM_DEFAULT_CHAT_ID)")
 	}
 	return d.SendTest(ctx, d.defaultBot, d.defaultChat)
+}
+
+// StockBroadcaster adapts a Dispatcher to the fiidii package's Broadcaster
+// interface, routing broadcasts to the stock-signals forum topic.
+type StockBroadcaster struct{ D *Dispatcher }
+
+func (b StockBroadcaster) Broadcast(ctx context.Context, text string) (int, error) {
+	return b.D.BroadcastStock(ctx, text)
 }
 
 // IPOBroadcaster adapts a Dispatcher to the ipo package's Broadcaster

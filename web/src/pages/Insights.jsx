@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { api } from "../api.js";
+import { api, fmt } from "../api.js";
 
 function fmtPct(n) {
   const v = Number(n) || 0;
@@ -21,11 +21,12 @@ const TABS = [
   { key: "breadth", label: "Market Breadth" },
 ];
 
-export default function Insights() {
+export default function Insights({ isAdmin }) {
   const [tab, setTab] = useState("performance");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [fiidii, setFiidii] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -36,6 +37,11 @@ export default function Insights() {
       tab === "breadth" ? "/v1/insights/breadth?days=30" :
       "/v1/insights/performance";
     api.get(path).then(setData).catch((e) => setErr(e.message)).finally(() => setLoading(false));
+
+    if (tab === "breadth") {
+      setFiidii(null);
+      api.get("/v1/insights/fii-dii").then(setFiidii).catch(() => setFiidii({ available: false }));
+    }
   }, [tab]);
 
   return (
@@ -57,7 +63,7 @@ export default function Insights() {
       ) : tab === "confluence" ? (
         <Confluence stocks={data?.stocks || []} />
       ) : (
-        <Breadth points={data?.points || []} />
+        <Breadth points={data?.points || []} fiidii={fiidii} isAdmin={isAdmin} />
       )}
     </div>
   );
@@ -148,10 +154,86 @@ function Confluence({ stocks }) {
   );
 }
 
+/* ---- FII/DII activity ---- */
+const NSE_MONTHS = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+
+function isStaleNseDate(s) {
+  const [d, mon, y] = String(s).split("-");
+  if (!(mon in NSE_MONTHS)) return false;
+  const asOf = new Date(Number(y), NSE_MONTHS[mon], Number(d));
+  const today = new Date();
+  return !(asOf.getFullYear() === today.getFullYear() && asOf.getMonth() === today.getMonth() && asOf.getDate() === today.getDate());
+}
+
+function FiiDii({ snap, isAdmin }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  async function sendAlert() {
+    setBusy(true); setErr(""); setMsg("");
+    try {
+      await api.post("/v1/admin/fii-dii/send-alert", {});
+      setMsg("Sent to Telegram.");
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+
+  if (!snap) {
+    return null; // still loading
+  }
+  if (!snap.available) {
+    return <div className="empty" style={{ marginBottom: 20 }}>FII/DII activity hasn't been fetched yet — it's only pulled after market close.</div>;
+  }
+  const rows = [["DII", snap.dii], ["FII", snap.fii]];
+  return (
+    <div className="panel" style={{ padding: 16, marginBottom: 20, overflowX: "auto" }}>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div className="section-title" style={{ margin: "0 0 4px" }}>FII / DII Activity</div>
+          <div className="subtle" style={{ marginBottom: 12 }}>
+            NSE cash-market buy/sell, in ₹ crore — as of {snap.date}
+            {isStaleNseDate(snap.date) ? " (last published trading day)" : ""}
+          </div>
+        </div>
+        {isAdmin && (
+          <button className="btn-sm" onClick={sendAlert} disabled={busy} title="Send this snapshot to the Telegram stock-signal topic now">
+            {busy ? "Sending…" : "Send alert now"}
+          </button>
+        )}
+      </div>
+      <table>
+        <thead>
+          <tr><th></th><th>Buy</th><th>Sell</th><th>Net</th></tr>
+        </thead>
+        <tbody>
+          {rows.map(([label, f]) => (
+            <tr key={label}>
+              <td>{label}</td>
+              <td>₹{fmt(f.buy_value)} Cr</td>
+              <td>₹{fmt(f.sell_value)} Cr</td>
+              <td className={f.net_value >= 0 ? "text-green" : "text-red"}>
+                {f.net_value >= 0 ? "+" : ""}₹{fmt(f.net_value)} Cr
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {msg && <div className="msg" style={{ marginTop: 12 }}>{msg}</div>}
+      {err && <div className="err" style={{ marginTop: 12 }}>{err}</div>}
+    </div>
+  );
+}
+
 /* ---- Market Breadth ---- */
-function Breadth({ points }) {
+function Breadth({ points, fiidii, isAdmin }) {
   if (!points.length) {
-    return <div className="empty">No signals in the selected window yet.</div>;
+    return (
+      <>
+        <FiiDii snap={fiidii} isAdmin={isAdmin} />
+        <div className="empty">No signals in the selected window yet.</div>
+      </>
+    );
   }
   const W = 760, H = 260, pad = 34;
   const max = Math.max(1, ...points.map((p) => Math.max(p.buys, p.sells)));
@@ -164,6 +246,7 @@ function Breadth({ points }) {
 
   return (
     <>
+      <FiiDii snap={fiidii} isAdmin={isAdmin} />
       <p className="subtle" style={{ marginTop: 0 }}>
         Daily BUY vs SELL signal counts across all tracked stocks — a market-mood gauge. More green than red = risk-on.
       </p>

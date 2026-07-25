@@ -22,6 +22,7 @@ import (
 	"tradenexus/internal/candles"
 	"tradenexus/internal/deals"
 	"tradenexus/internal/engine"
+	"tradenexus/internal/fiidii"
 	"tradenexus/internal/insights"
 	"tradenexus/internal/instruments"
 	"tradenexus/internal/ipo"
@@ -56,6 +57,7 @@ type Deps struct {
 	Promoter    *promoter.Service
 	Deals       *deals.Service
 	Insights    *insights.Service
+	FiiDii      *fiidii.Service
 	JWTSecret   string
 }
 
@@ -80,6 +82,7 @@ type Server struct {
 	promoter  *promoter.Service
 	deals     *deals.Service
 	insights  *insights.Service
+	fiidii    *fiidii.Service
 	jwtSecret string
 
 	// scanRunning guards manual scan-all so repeated clicks don't stack.
@@ -114,6 +117,7 @@ func NewServer(d Deps) *Server {
 		promoter:  d.Promoter,
 		deals:     d.Deals,
 		insights:  d.Insights,
+		fiidii:    d.FiiDii,
 		jwtSecret: d.JWTSecret,
 	}
 }
@@ -233,6 +237,9 @@ func (s *Server) Router() http.Handler {
 				// Promoter trades admin: force-send a specific trade's Telegram alert.
 				r.Post("/admin/promoter-trades/{id}/send-alert", s.handlePromoterSendAlert)
 				r.Post("/admin/deals/{type}/{symbol}/send-alert", s.handleDealsSendAlert)
+
+				// FII/DII admin: force-send the currently cached snapshot now.
+				r.Post("/admin/fii-dii/send-alert", s.handleFiiDiiSendAlert)
 			})
 
 			// Users, watchlists, prefs, telegram (Module 7)
@@ -275,6 +282,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/insights/performance", s.handleInsightsPerformance)
 			r.Get("/insights/breadth", s.handleInsightsBreadth)
 			r.Get("/insights/confluence", s.handleInsightsConfluence)
+			r.Get("/insights/fii-dii", s.handleFiiDiiLatest)
 
 			// Market data (Module 9): trending + params + dashboard
 			r.Get("/market/trending", s.handleTrending)

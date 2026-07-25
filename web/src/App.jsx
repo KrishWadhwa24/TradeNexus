@@ -171,7 +171,7 @@ export default function App() {
       case "home": return <Home {...p} />;
       case "watchlist": return <Watchlist {...p} />;
       case "analytics": return <Analytics {...p} />;
-      case "insights": return <Insights />;
+      case "insights": return <Insights isAdmin={isAdmin} />;
       case "scanner:pine": return <Scanner source="pine" {...p} />;
       case "scanner:weekly": return <Scanner source="weekly" {...p} />;
       case "patterns:cup_handle": return <Scanner source="patterns" pattern="pattern_cup_handle" {...p} />;

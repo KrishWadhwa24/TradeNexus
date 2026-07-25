@@ -111,6 +111,11 @@ type Config struct {
 	DealsAlertWindowDays int     `env:"DEALS_ALERT_WINDOW_DAYS" envDefault:"7"`        // alert stocks dealt within N days
 	DealsAlertCron       string  `env:"DEALS_ALERT_CRON" envDefault:"0 19 * * *"`      // 19:00 IST daily
 	BulkDealMinNetValue  float64 `env:"BULK_DEAL_MIN_NET_VALUE" envDefault:"50000000"` // ₹5cr net-value filter
+
+	// FII/DII daily cash-market activity (NSE fiidiiTradeReact feed). No history
+	// is kept — only the latest snapshot — and no interval/cron is configurable:
+	// it only ever polls after 4pm IST on a trading day, hourly until published.
+	FiiDiiEnabled bool `env:"FIIDII_ENABLED" envDefault:"true"`
 }
 
 // IsLocal reports whether we're running in the local dev profile.
