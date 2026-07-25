@@ -11,10 +11,14 @@ export function getToken() {
   return token;
 }
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+
 export function livePricesURL(userId) {
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const base = import.meta.env.VITE_API_BASE_URL || window.location.origin;
+  const wsBase = base.replace(/^http/, "ws");
+  //const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const qs = new URLSearchParams({ token });
-  return `${proto}//${window.location.host}/v1/users/${userId}/live-prices?${qs}`;
+  return `${wsBase}/v1/users/${userId}/live-prices?${qs}`;
 }
 
 export function connectLivePrices(userId, { onMessage, onOpen, onClose, onError } = {}) {
@@ -71,7 +75,7 @@ async function req(method, path, body) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
-  const res = await fetch(path, opts);
+  const res = await fetch(API_BASE + path, opts);
 
   if (res.status === 401) {
     setToken("");
@@ -109,7 +113,7 @@ export const api = {
 // download fetches a file with the auth header and saves it (browser <a href>
 // links can't send Authorization, so we must fetch the blob ourselves).
 export async function download(path, filename) {
-  const res = await fetch(path, {
+  const res = await fetch(API_BASE + path, {
     headers: token ? { Authorization: "Bearer " + token } : {},
   });
   if (res.status === 401) {

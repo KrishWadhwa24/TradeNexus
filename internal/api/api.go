@@ -11,10 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/rs/zerolog"
-
 	"tradenexus/internal/analytics"
 	"tradenexus/internal/angel"
 	"tradenexus/internal/auth"
@@ -33,6 +29,11 @@ import (
 	"tradenexus/internal/signals"
 	"tradenexus/internal/store"
 	"tradenexus/internal/users"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+	"github.com/rs/zerolog"
 )
 
 // Deps bundles everything the HTTP handlers need.
@@ -160,6 +161,13 @@ func (s *Server) adminOnly(next http.Handler) http.Handler {
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"https://trade-nexus-smoky.vercel.app", "http://localhost:5173"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	}))
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(s.requestLogger)
