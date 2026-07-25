@@ -10,6 +10,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"tradenexus/internal/engine"
+	"tradenexus/internal/fiidii"
 	"tradenexus/internal/intraday"
 	"tradenexus/internal/market"
 	"tradenexus/internal/paper"
@@ -31,19 +32,30 @@ type Scheduler struct {
 	svc      *engine.Service
 	paper    *paper.Service
 	intraday *intraday.Cache // optional
+	fiidii   *fiidii.Service // optional
 	cfg      Config
 	log      zerolog.Logger
 }
 
-// New builds a scheduler (IST-based cron). intradayCache may be nil.
-func New(svc *engine.Service, paperSvc *paper.Service, intradayCache *intraday.Cache, cfg Config, log zerolog.Logger) *Scheduler {
+// New builds a scheduler (IST-based cron). intradayCache and fiidiiSvc may be nil.
+func New(svc *engine.Service, paperSvc *paper.Service, intradayCache *intraday.Cache, fiidiiSvc *fiidii.Service, cfg Config, log zerolog.Logger) *Scheduler {
 	return &Scheduler{
 		cron:     cron.New(cron.WithLocation(market.IST)),
 		svc:      svc,
 		paper:    paperSvc,
 		intraday: intradayCache,
+		fiidii:   fiidiiSvc,
 		cfg:      cfg,
 		log:      log,
+	}
+}
+
+// notifyReconcileDone tells the FII/DII service the daily reconcile+scan+
+// dispatch pipeline finished for today, so it can send its own alert now if
+// today's FII/DII data is already in hand.
+func (s *Scheduler) notifyReconcileDone() {
+	if s.fiidii != nil {
+		s.fiidii.MarkReconcileDone(time.Now())
 	}
 }
 
@@ -64,6 +76,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 			return
 		}
 		s.log.Info().Int("instruments", len(res)).Msg("scheduler: daily scan done")
+		s.notifyReconcileDone()
 	}); err != nil {
 		return err
 	}
@@ -145,6 +158,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 				s.log.Error().Err(err).Msg("scheduler: startup reconciliation failed")
 			} else {
 				s.log.Info().Int("instruments", len(res)).Msg("scheduler: startup reconciliation done")
+				s.notifyReconcileDone()
 			}
 			cancel()
 		}
