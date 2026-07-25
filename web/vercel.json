@@ -11,15 +11,8 @@
     ],
     "rewrites": [
         {
-            "source": "/((?!v1/).*)",
-            "destination": "/index.html",
-            "has": [
-                {
-                    "type": "header",
-                    "key": "x-vercel-rewritten",
-                    "value": "(?<value>.*)"
-                }
-            ]
+            "source": "/(.*)",
+            "destination": "/index.html"
         }
     ]
 }
