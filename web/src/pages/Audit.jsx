@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api, convLevel, convLabel } from "../api.js";
 import { Icon } from "../icons.jsx";
+import ChartModal from "../components/ChartModal.jsx";
 
 export default function Audit({ isAdmin = false }) {
   const [rows, setRows] = useState([]);
@@ -11,6 +12,7 @@ export default function Audit({ isAdmin = false }) {
   const [firing, setFiring] = useState(null); // signal id currently sending
   const [msg, setMsg] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeChart, setActiveChart] = useState(null); // { id, symbol, tf }
 
   function load() {
     setLoading(true);
@@ -46,7 +48,7 @@ export default function Audit({ isAdmin = false }) {
     <div>
       <div className="toolbar">
         <div className="section-title" style={{ margin: 0 }}>
-          All signals (retained 30 days, then auto-removed)
+          All signals (retained 100 days, then auto-removed)
         </div>
         <div className="row" style={{ flexWrap: "wrap" }}>
           {msg && <span className="msg" style={{ flex: "1 1 100%", marginBottom: 4 }}>{msg}</span>}
@@ -106,7 +108,12 @@ export default function Audit({ isAdmin = false }) {
             <tbody>
               {rows.filter((s) => (s.symbol || "").toLowerCase().includes(searchQuery.toLowerCase())).map((s) => (
                 <tr key={s.id}>
-                  <td data-label="">{s.symbol}</td>
+                  <td data-label="">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {s.symbol}
+                      <button className="btn-sm btn-ghost" style={{ padding: '2px 6px', fontSize: '11px' }} onClick={() => setActiveChart({ id: s.instrument_id, symbol: s.symbol, tf: s.timeframe })}>Chart</button>
+                    </div>
+                  </td>
                   <td data-label="Signal" style={{ textAlign: "center" }}><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
                   <td data-label="Source" className="muted" style={{ textAlign: "center" }}>{s.source}</td>
                   <td data-label="Timeframe" style={{ textAlign: "center" }}>{s.timeframe}</td>
@@ -140,6 +147,15 @@ export default function Audit({ isAdmin = false }) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {activeChart && (
+        <ChartModal
+          instrumentId={activeChart.id}
+          symbol={activeChart.symbol}
+          tf={activeChart.tf}
+          onClose={() => setActiveChart(null)}
+        />
       )}
     </div>
   );

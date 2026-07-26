@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { api, convLevel, convLabel } from "../api.js";
+import ChartModal from "../components/ChartModal.jsx";
+
 
 const PATTERN_LABELS = {
   pattern_cup_handle: "Cup and Handle",
@@ -15,6 +17,8 @@ export default function Scanner({ source, pattern, userId }) {
   const [msg, setMsg] = useState("");
   const [qty, setQty] = useState({});
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeChart, setActiveChart] = useState(null); // { id, symbol }
+
 
   const load = useCallback(() => {
     setLoading(true);
@@ -98,7 +102,12 @@ export default function Scanner({ source, pattern, userId }) {
             <tbody>
               {rows.filter((s) => (s.symbol || "").toLowerCase().includes(searchQuery.toLowerCase())).map((s) => (
                 <tr key={s.id}>
-                  <td data-label="">{s.symbol}</td>
+                  <td data-label="">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {s.symbol}
+                      <button className="btn-sm btn-ghost" style={{ padding: '2px 6px', fontSize: '11px' }} onClick={() => setActiveChart({ id: s.instrument_id, symbol: s.symbol, tf: s.timeframe })}>Chart</button>
+                    </div>
+                  </td>
                   <td data-label="Signal"><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
                   <td data-label="Timeframe">{s.timeframe}</td>
                   {(source === "weekly" || source === "patterns") && (
@@ -130,6 +139,15 @@ export default function Scanner({ source, pattern, userId }) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {activeChart && (
+        <ChartModal
+          instrumentId={activeChart.id}
+          symbol={activeChart.symbol}
+          tf={activeChart.tf}
+          onClose={() => setActiveChart(null)}
+        />
       )}
     </div>
   );

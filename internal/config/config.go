@@ -67,7 +67,7 @@ type Config struct {
 	DailyScanCron      string `env:"DAILY_SCAN_CRON" envDefault:"0 16 * * 1-5"`
 	CleanupCron        string `env:"CLEANUP_CRON" envDefault:"0 1 * * *"`
 	FillScheduledCron  string `env:"FILL_SCHEDULED_CRON" envDefault:"16 9 * * 1-5"`
-	RetentionDays      int    `env:"RETENTION_DAYS" envDefault:"30"`
+	RetentionDays      int    `env:"RETENTION_DAYS" envDefault:"100"`
 	ReconcileOnStartup bool   `env:"RECONCILE_ON_STARTUP" envDefault:"true"`
 
 	// Intraday cache (today's forming candle in Redis, market hours only)
