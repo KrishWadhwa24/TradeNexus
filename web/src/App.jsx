@@ -219,8 +219,10 @@ export default function App() {
       {menuOpen && <div className="backdrop" onClick={() => setMenuOpen(false)} />}
       <aside className={"sidebar" + (menuOpen ? " open" : "") + (sidebarPinned ? " pinned" : " pinned-collapsed")}>
         <div className="brand">
-          <span className="prompt">&gt;_</span>
-          <span className="brand-text">Trade<em>Nexus</em></span>
+          <div className="brand-logo" onClick={() => go("home")} title="Go to home">
+            <span className="prompt">&gt;_</span>
+            <span className="brand-text">Trade<em>Nexus</em></span>
+          </div>
           <button className="sidebar-collapse-btn" onClick={toggleSidebarPin} title={sidebarPinned ? "Collapse sidebar" : "Expand sidebar"}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               {sidebarPinned

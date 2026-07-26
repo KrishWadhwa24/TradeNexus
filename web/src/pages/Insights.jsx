@@ -212,10 +212,10 @@ function FiiDii({ snap, isAdmin }) {
         <tbody>
           {rows.map(([label, f]) => (
             <tr key={label}>
-              <td>{label}</td>
-              <td>₹{fmt(f.buy_value)} Cr</td>
-              <td>₹{fmt(f.sell_value)} Cr</td>
-              <td className={f.net_value >= 0 ? "text-green" : "text-red"}>
+              <td data-label="">{label}</td>
+              <td data-label="Buy">₹{fmt(f.buy_value)} Cr</td>
+              <td data-label="Sell">₹{fmt(f.sell_value)} Cr</td>
+              <td data-label="Net" className={f.net_value >= 0 ? "text-green" : "text-red"}>
                 {f.net_value >= 0 ? "+" : ""}₹{fmt(f.net_value)} Cr
               </td>
             </tr>
