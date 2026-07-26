@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api, connectLivePrices, fmt, pct } from "../api.js";
-import { HeroChart, EmptyArt } from "../icons.jsx";
+import { HeroChart } from "../icons.jsx";
 
 export default function Home({ userId }) {
   const [rows, setRows] = useState([]);
@@ -64,7 +64,12 @@ export default function Home({ userId }) {
       ) : err ? (
         <div className="err">{err}</div>
       ) : !rows.length ? (
-        <div className="empty"><EmptyArt /><div>No watchlist data yet. Add stocks to your watchlist and sync them.</div></div>
+        <div className="empty">
+          <svg viewBox="0 0 24 24" style={{ width: 64, height: 64, opacity: 0.4, marginBottom: 12 }} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 17l6-6 4 4 8-8" /><path d="M15 6h6v6" />
+          </svg>
+          <div>No watchlist data yet. Add stocks to your watchlist and sync them.</div>
+        </div>
       ) : (
         <div className="panel">
           <table>

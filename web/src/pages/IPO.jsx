@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api.js";
 import { Icon } from "../icons.jsx";
+import { SkeletonGrid } from "../Skeleton.jsx";
 
 function gmpLevel(pct) {
   if (pct >= 20) return "high";
@@ -166,7 +167,7 @@ export default function IPO({ isAdmin = false }) {
       </div>
 
       {loading ? (
-        <div className="spinner">Loading IPOs…</div>
+        <SkeletonGrid count={6} lines={5} />
       ) : err ? (
         <div className="err">{err}</div>
       ) : !rows.length ? (
@@ -177,10 +178,14 @@ export default function IPO({ isAdmin = false }) {
             const profit = estProfit(x);
             const hasGmp = x.gmp > 0 || x.gmp_percent > 0;
             return (
-              <div className={"ipo-card" + (x.status === "open" ? " is-open" : "")} key={x.id}>
+              <div
+                className={"ipo-card clickable" + (x.status === "open" ? " is-open" : "")}
+                key={x.id}
+                onClick={() => setSelected(x)}
+              >
                 <div className="ipo-card-top">
                   <div className="ipo-id">
-                    <button className="ipo-name ipo-name-btn" onClick={() => setSelected(x)}>{x.name}</button>
+                    <span className="ipo-name">{x.name}</span>
                     <div className="ipo-badges">
                       <span className="chip">{x.board || x.category}</span>
                       <span className={"chip " + (x.status === "open" ? "chip-open" : "chip-soon")}>{x.status}</span>
@@ -225,7 +230,7 @@ export default function IPO({ isAdmin = false }) {
                 </div>
 
                 {(x.signal_tier || isAdmin) && (
-                  <div className="ipo-foot">
+                  <div className="ipo-foot" onClick={(e) => e.stopPropagation()}>
                     {x.signal_tier && (
                       <span className={"conv conv-" + gmpLevel(x.gmp_percent)}>
                         {TIER_LABEL[x.signal_tier] || x.signal_tier}

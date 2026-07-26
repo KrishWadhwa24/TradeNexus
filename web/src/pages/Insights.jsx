@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api, fmt } from "../api.js";
+import { SkeletonPerfGrid, SkeletonGrid } from "../Skeleton.jsx";
 
 function fmtPct(n) {
   const v = Number(n) || 0;
@@ -55,7 +56,9 @@ export default function Insights({ isAdmin }) {
       </div>
 
       {loading ? (
-        <div className="spinner">Loading insights…</div>
+        tab === "performance" ? <SkeletonPerfGrid count={4} /> :
+        tab === "confluence" ? <SkeletonGrid count={6} lines={2} /> :
+        <SkeletonGrid count={3} lines={3} />
       ) : err ? (
         <div className="err">{err}</div>
       ) : tab === "performance" ? (
@@ -187,7 +190,7 @@ function FiiDii({ snap, isAdmin }) {
   }
   const rows = [["DII", snap.dii], ["FII", snap.fii]];
   return (
-    <div className="panel" style={{ padding: 16, marginBottom: 20, overflowX: "auto" }}>
+    <div className="panel fiidii-panel" style={{ padding: 16, marginBottom: 20, overflowX: "auto" }}>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <div className="section-title" style={{ margin: "0 0 4px" }}>FII / DII Activity</div>

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api.js";
+import { SkeletonGrid } from "../Skeleton.jsx";
 
 const DAY_OPTIONS = [7, 15, 30, 60];
 
@@ -121,7 +122,7 @@ export default function PromoterTrades({ isAdmin = false }) {
       )}
 
       {loading ? (
-        <div className="spinner">Loading promoter trades…</div>
+        <SkeletonGrid count={6} lines={5} />
       ) : err ? (
         <div className="err">{err}</div>
       ) : !visible.length ? (
