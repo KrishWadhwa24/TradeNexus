@@ -1,11 +1,15 @@
 import React, { useEffect, useState } from "react";
 import { api, connectLivePrices, download, fmt, fmtInt, pct } from "../api.js";
+import ChartModal from "../components/ChartModal.jsx";
+
 
 export default function Analytics({ userId }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeChart, setActiveChart] = useState(null); // { id, symbol }
+
 
   useEffect(() => {
     if (!userId) return;
@@ -90,7 +94,12 @@ export default function Analytics({ userId }) {
             <tbody>
               {rows.filter((r) => r.symbol.toLowerCase().includes(searchQuery.toLowerCase())).map((r) => (
                 <tr key={r.instrument_id}>
-                  <td>{r.symbol}</td>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {r.symbol}
+                      <button className="btn-sm btn-ghost" style={{ padding: '2px 6px', fontSize: '11px' }} onClick={() => setActiveChart({ id: r.instrument_id, symbol: r.symbol })}>Chart</button>
+                    </div>
+                  </td>
                   <td>{fmt(r.price)}</td>
                   <td className={r.pct_change >= 0 ? "pos" : "neg"}>{pct(r.pct_change)}</td>
                   <td>{fmt(r.rsi14)}</td>
@@ -106,6 +115,14 @@ export default function Analytics({ userId }) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {activeChart && (
+        <ChartModal
+          instrumentId={activeChart.id}
+          symbol={activeChart.symbol}
+          onClose={() => setActiveChart(null)}
+        />
       )}
     </div>
   );
