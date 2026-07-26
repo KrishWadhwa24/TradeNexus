@@ -82,6 +82,10 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("navCollapsedGroups") || "{}"); } catch { return {}; }
   });
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [sidebarPinned, setSidebarPinned] = useState(() => {
+    const saved = localStorage.getItem("sidebarPinned");
+    return saved === null ? true : saved === "true";
+  });
   const [showLogin, setShowLogin] = useState(false); // false → marketing landing
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem("user") || "null"); } catch { return null; }
@@ -112,6 +116,14 @@ export default function App() {
 
   function toggleGroup(key) {
     setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function toggleSidebarPin() {
+    setSidebarPinned((prev) => {
+      const next = !prev;
+      localStorage.setItem("sidebarPinned", String(next));
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -205,10 +217,20 @@ export default function App() {
   return (
     <div className="app">
       {menuOpen && <div className="backdrop" onClick={() => setMenuOpen(false)} />}
-      <aside className={"sidebar" + (menuOpen ? " open" : "")}>
+      <aside className={"sidebar" + (menuOpen ? " open" : "") + (sidebarPinned ? " pinned" : " pinned-collapsed")}>
         <div className="brand">
-          <span className="prompt">&gt;_</span>
-          <span className="brand-text">Trade<em>Nexus</em></span>
+          <div className="brand-logo" onClick={() => go("home")} title="Go to home">
+            <span className="prompt">&gt;_</span>
+            <span className="brand-text">Trade<em>Nexus</em></span>
+          </div>
+          <button className="sidebar-collapse-btn" onClick={toggleSidebarPin} title={sidebarPinned ? "Collapse sidebar" : "Expand sidebar"}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              {sidebarPinned
+                ? <path d="M15 18l-6-6 6-6" />
+                : <path d="M9 18l6-6-6-6" />
+              }
+            </svg>
+          </button>
         </div>
         {nav.map((n) => {
           if (n.items) {

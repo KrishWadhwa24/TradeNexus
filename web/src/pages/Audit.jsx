@@ -47,8 +47,8 @@ export default function Audit({ isAdmin = false }) {
         <div className="section-title" style={{ margin: 0 }}>
           All signals (retained 30 days, then auto-removed)
         </div>
-        <div className="row">
-          {msg && <span className="msg">{msg}</span>}
+        <div className="row" style={{ flexWrap: "wrap" }}>
+          {msg && <span className="msg" style={{ flex: "1 1 100%", marginBottom: 4 }}>{msg}</span>}
           <select value={source} onChange={(e) => setSource(e.target.value)}>
             <option value="">All sources</option>
             <option value="pine">Pine</option>
@@ -79,8 +79,8 @@ export default function Audit({ isAdmin = false }) {
       ) : !rows.length ? (
         <div className="empty">No signals recorded.</div>
       ) : (
-        <div className="panel">
-          <table>
+        <div className="panel" style={{ width: "100%" }}>
+          <table className="audit-table" style={{ minWidth: 720 }}>
             <thead>
               <tr>
                 <th>Symbol</th><th>Signal</th><th>Source</th><th>Timeframe</th>
@@ -91,22 +91,22 @@ export default function Audit({ isAdmin = false }) {
             <tbody>
               {rows.map((s) => (
                 <tr key={s.id}>
-                  <td>{s.symbol}</td>
-                  <td><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
-                  <td className="muted">{s.source}</td>
-                  <td>{s.timeframe}</td>
-                  <td>
+                  <td data-label="">{s.symbol}</td>
+                  <td data-label="Signal"><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
+                  <td data-label="Source" className="muted">{s.source}</td>
+                  <td data-label="Timeframe">{s.timeframe}</td>
+                  <td data-label="Conviction">
                     {convLevel(s.source, s.confidence) ? (
                       <span className={"conv conv-" + convLevel(s.source, s.confidence)}>
                         {convLabel(s.source, s.confidence)}
                       </span>
                     ) : "—"}
                   </td>
-                  <td className="muted">{s.scanner_name}</td>
-                  <td className="muted">{s.candle_date?.slice(0, 10)}</td>
-                  <td className="muted">{new Date(s.created_at).toLocaleString()}</td>
+                  <td data-label="Scanner(s)" className="muted">{s.scanner_name}</td>
+                  <td data-label="Candle date" className="muted">{s.candle_date?.slice(0, 10)}</td>
+                  <td data-label="Generated" className="muted">{new Date(s.created_at).toLocaleString()}</td>
                   {isAdmin && (
-                    <td>
+                    <td data-label="Alert">
                       <button
                         className="btn-sm fire-btn"
                         title="Re-send this alert on Telegram"

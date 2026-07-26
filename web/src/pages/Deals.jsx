@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api.js";
 import { Icon } from "../icons.jsx";
+import { SkeletonGrid } from "../Skeleton.jsx";
 
 function fmtNum(n) {
   if (n === null || n === undefined) return "—";
@@ -188,7 +189,7 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
       </div>
 
       {loading ? (
-        <div className="spinner">Loading {label.toLowerCase()} deals…</div>
+        <SkeletonGrid count={6} lines={4} />
       ) : err ? (
         <div className="err">{err}</div>
       ) : tab === "audit" ? (

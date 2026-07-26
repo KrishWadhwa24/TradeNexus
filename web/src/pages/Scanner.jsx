@@ -78,22 +78,22 @@ export default function Scanner({ source, pattern, userId }) {
         <div className="empty">No signals in the last 7 days.</div>
       ) : (
         <div className="panel">
-          <table>
+          <table className="scanner-table">
             <thead>
               <tr>
                 <th>Symbol</th><th>Signal</th><th>Timeframe</th>
                 {(source === "weekly" || source === "patterns") && <th>Conviction</th>}
-                <th>Scanner(s)</th><th>Candle date</th><th>Buy</th>
+                <th>Scanner(s)</th><th>Candle date</th><th>Action</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((s) => (
                 <tr key={s.id}>
-                  <td>{s.symbol}</td>
-                  <td><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
-                  <td>{s.timeframe}</td>
+                  <td data-label="">{s.symbol}</td>
+                  <td data-label="Signal"><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
+                  <td data-label="Timeframe">{s.timeframe}</td>
                   {(source === "weekly" || source === "patterns") && (
-                    <td>
+                    <td data-label="Conviction">
                       {convLevel(source, s.confidence) ? (
                         <span className={"conv conv-" + convLevel(source, s.confidence)}>
                           {convLabel(source, s.confidence)}
@@ -101,9 +101,9 @@ export default function Scanner({ source, pattern, userId }) {
                       ) : "—"}
                     </td>
                   )}
-                  <td className="muted">{PATTERN_LABELS[s.scanner_name] || s.scanner_name}</td>
-                  <td className="muted">{s.candle_date?.slice(0, 10)}</td>
-                  <td>
+                  <td data-label="Scanner(s)" className="muted">{PATTERN_LABELS[s.scanner_name] || s.scanner_name}</td>
+                  <td data-label="Candle date" className="muted">{s.candle_date?.slice(0, 10)}</td>
+                  <td data-label="Action">
                     {s.direction === "BUY" ? (
                       <div className="row" style={{ justifyContent: "flex-end" }}>
                         <input

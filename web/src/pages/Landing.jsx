@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { Icon } from "../icons";
 
 const inr = (n) => (n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -267,10 +268,10 @@ export default function Landing({ onGetStarted }) {
 }
 
 const FEATURES = [
-  { icon: "◈", title: "Pine Chase Momentum", desc: "The full Chase-Momentum Pro strategy replayed on daily, weekly & monthly bars — trend stack, fresh breakout, volume spike and strong-candle confirmation." },
-  { icon: "▤", title: "4 weekly confluence scanners", desc: "52-week breakouts, EMA-stack continuation and price-action structure. Confidence is N-of-4, so you see how many independent signals agree." },
-  { icon: "◭", title: "Confirmed pattern breakouts", desc: "Cup & handle, rectangle box and downtrend breakouts — only fired on a closed, confirmed breakout candle, not a forming one." },
-  { icon: "✈", title: "Telegram alerts", desc: "Rich alerts with conviction, RSI, relative volume and CMP — deduped per stock, timeframe and day, delivered within a 7-day freshness window." },
-  { icon: "◐", title: "Paper trading", desc: "Buy any signal on paper, track booked & unbooked P&L, and see which scanners actually make you money before risking real capital." },
-  { icon: "🚀", title: "IPO GMP tracker", desc: "Live grey-market premium for every open & upcoming IPO, with an automatic apply signal on the closing day when the premium justifies it." },
+  { icon: <Icon.trending />, title: "Pine Chase Momentum", desc: "The full Chase-Momentum Pro strategy replayed on daily, weekly & monthly bars — trend stack, fresh breakout, volume spike and strong-candle confirmation." },
+  { icon: <Icon.list />, title: "4 weekly confluence scanners", desc: "52-week breakouts, EMA-stack continuation and price-action structure. Confidence is N-of-4, so you see how many independent signals agree." },
+  { icon: <Icon.chart />, title: "Confirmed pattern breakouts", desc: "Cup & handle, rectangle box and downtrend breakouts — only fired on a closed, confirmed breakout candle, not a forming one." },
+  { icon: <Icon.fire />, title: "Telegram alerts", desc: "Rich alerts with conviction, RSI, relative volume and CMP — deduped per stock, timeframe and day, delivered within a 7-day freshness window." },
+  { icon: <Icon.wallet />, title: "Paper trading", desc: "Buy any signal on paper, track booked & unbooked P&L, and see which scanners actually make you money before risking real capital." },
+  { icon: <Icon.rocket />, title: "IPO GMP tracker", desc: "Live grey-market premium for every open & upcoming IPO, with an automatic apply signal on the closing day when the premium justifies it." },
 ];
