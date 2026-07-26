@@ -10,7 +10,7 @@ function Stat({ label, value, cls }) {
   );
 }
 
-export default function Profile({ userId }) {
+export default function Profile({ userId, onLogout }) {
   const [sum, setSum] = useState(null);
   const [capital, setCapital] = useState("");
   const [tg, setTg] = useState({ bot_token: "", chat_id: "", enabled: true });
@@ -108,6 +108,19 @@ export default function Profile({ userId }) {
         <Stat label="Booked profit" value={fmt(sum.booked_profit)} cls="pos" />
         <Stat label="Booked loss" value={fmt(sum.booked_loss)} cls="neg" />
         <Stat label="Open positions" value={sum.open_positions} />
+      </div>
+
+      <div className="section-title" style={{ marginTop: 32 }}>Session</div>
+      <div className="panel" style={{ padding: 18, marginBottom: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontWeight: 600 }}>Sign out</div>
+            <div className="subtle" style={{ fontSize: "0.9em", marginTop: 4 }}>End your current session and return to the login screen.</div>
+          </div>
+          <button className="btn-sm" onClick={onLogout} style={{ minWidth: 100 }}>
+            Sign out
+          </button>
+        </div>
       </div>
     </div>
   );

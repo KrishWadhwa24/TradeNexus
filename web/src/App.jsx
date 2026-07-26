@@ -195,7 +195,7 @@ export default function App() {
       case "block": return <Deals type="block" isAdmin={isAdmin} />;
       case "audit": return <Audit isAdmin={isAdmin} />;
       case "paper": return <Paper {...p} />;
-      case "profile": return <Profile {...p} />;
+      case "profile": return <Profile {...p} onLogout={logout} />;
       case "admin": return isAdmin ? <Admin /> : <Home {...p} />;
       default: return null;
     }
@@ -280,7 +280,6 @@ export default function App() {
             <span className="avatar">{initial}</span>
             <div className="user-info" style={{ minWidth: 0 }}>
               <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{user.email}</div>
-              <a className="subtle" style={{ cursor: "pointer" }} onClick={logout}>Sign out</a>
             </div>
           </div>
         </div>
