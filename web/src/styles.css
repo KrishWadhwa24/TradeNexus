@@ -100,7 +100,15 @@ h3,
   top: 0;
   height: 100vh;
   transition: width .2s ease;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
+
+/* Hide scrollbar but keep functional */
+.sidebar::-webkit-scrollbar { width: 4px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.sidebar::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
 .brand {
   display: flex;
@@ -142,12 +150,18 @@ h3,
   transition: .12s;
   position: relative;
   text-transform: lowercase;
+  line-height: 1;
 }
 
 .nav-item svg {
   width: 17px;
   height: 17px;
   flex-shrink: 0;
+  display: block;
+}
+
+.nav-item span {
+  line-height: 1.2;
 }
 
 .nav-item:hover {
@@ -204,12 +218,18 @@ h3,
   user-select: none;
   transition: .12s;
   text-transform: lowercase;
+  line-height: 1;
 }
 
 .nav-group-head svg {
   width: 17px;
   height: 17px;
   flex-shrink: 0;
+  display: block;
+}
+
+.nav-group-head span {
+  line-height: 1.2;
 }
 
 .nav-group-head:hover {
@@ -561,10 +581,13 @@ button:hover {
   border-radius: var(--radius);
   overflow-x: auto;
   box-shadow: var(--shadow);
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
 }
 
 .panel table {
   min-width: 560px;
+  width: 100%;
 }
 
 table {
@@ -2309,7 +2332,7 @@ code {
 /* ---------- Insights ---------- */
 .ins-perf-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(440px, 100%), 1fr));
   gap: 16px;
 }
 
@@ -2319,6 +2342,7 @@ code {
   border-radius: 14px;
   padding: 16px;
   box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
 .ins-perf-title {
@@ -2340,6 +2364,7 @@ code {
 
 @media (max-width: 560px) {
   .ins-horizons { grid-template-columns: repeat(2, 1fr); }
+  .ins-perf-grid { grid-template-columns: 1fr; }
 }
 
 .ins-horizon {
@@ -2445,3 +2470,185 @@ code {
 }
 
 .err-boundary .row { justify-content: center; }
+
+/* ---------- Skeleton loaders ---------- */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: .45; }
+  50% { opacity: .15; }
+}
+
+.skeleton {
+  pointer-events: none;
+}
+
+.skeleton-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 16px 14px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+.skeleton-line {
+  height: 14px;
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.skeleton-line.w80 { width: 80%; }
+.skeleton-line.w60 { width: 60%; }
+.skeleton-line.w50 { width: 50%; }
+.skeleton-line.w40 { width: 40%; }
+.skeleton-line.w30 { width: 30%; }
+
+.skeleton-title {
+  height: 20px;
+  width: 55%;
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.skeleton-block {
+  height: 42px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.skeleton-row {
+  display: flex;
+  gap: 8px;
+}
+
+.skeleton-chip {
+  height: 22px;
+  width: 60px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+  gap: 16px;
+}
+
+/* ---------- Sidebar collapse toggle ---------- */
+.sidebar-collapse-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 7px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  cursor: pointer;
+  transition: .12s;
+  flex-shrink: 0;
+}
+
+.sidebar-collapse-btn:hover {
+  color: var(--accent-2);
+  border-color: var(--accent);
+}
+
+.sidebar-collapse-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+@media (min-width: 861px) {
+  .sidebar-collapse-btn { display: flex; }
+}
+
+/* When sidebar is pinned-open (not in hover-expand mode) */
+.sidebar.pinned {
+  width: 250px !important;
+  padding: 20px 14px !important;
+}
+
+.sidebar.pinned .brand-text { display: inline !important; }
+.sidebar.pinned .nav-item span,
+.sidebar.pinned .nav-group-head span { display: inline !important; }
+.sidebar.pinned .nav-chevron { display: block !important; }
+.sidebar.pinned .nav-sub { display: flex !important; }
+.sidebar.pinned .user-info { display: block !important; }
+
+.sidebar.pinned .nav-item,
+.sidebar.pinned .nav-group-head {
+  justify-content: flex-start !important;
+  padding: 10px 12px !important;
+}
+
+.sidebar.pinned .brand {
+  justify-content: flex-start !important;
+  padding: 6px 10px 22px !important;
+}
+
+.sidebar.pinned .user-chip {
+  justify-content: flex-start !important;
+}
+
+.sidebar.pinned .sidebar-foot {
+  padding: 12px 6px 2px !important;
+}
+
+/* Collapsed pinned sidebar (icon-only mode) */
+.sidebar.pinned-collapsed {
+  width: 76px !important;
+  padding: 20px 10px !important;
+}
+
+.sidebar.pinned-collapsed .brand {
+  justify-content: center !important;
+  padding: 6px 0 22px !important;
+}
+
+.sidebar.pinned-collapsed .brand-text,
+.sidebar.pinned-collapsed .nav-item span,
+.sidebar.pinned-collapsed .nav-group-head span,
+.sidebar.pinned-collapsed .nav-chevron,
+.sidebar.pinned-collapsed .nav-sub,
+.sidebar.pinned-collapsed .user-info {
+  display: none !important;
+}
+
+.sidebar.pinned-collapsed .nav-item,
+.sidebar.pinned-collapsed .nav-group-head {
+  justify-content: center !important;
+  padding: 11px 0 !important;
+}
+
+.sidebar.pinned-collapsed .user-chip {
+  justify-content: center !important;
+}
+
+.sidebar.pinned-collapsed .sidebar-foot {
+  padding: 12px 0 2px !important;
+}
+
+/* ---------- IPO card clickable ---------- */
+.ipo-card.clickable {
+  cursor: pointer;
+}
+
+.ipo-card.clickable:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  transform: translateY(-2px);
+}
+
+.ipo-card.clickable:active {
+  transform: translateY(0);
+}
+
+/* ---------- FII/DII table fix ---------- */
+.fiidii-panel table {
+  min-width: 380px;
+  width: 100%;
+}
