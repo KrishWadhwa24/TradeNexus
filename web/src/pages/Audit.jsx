@@ -92,8 +92,14 @@ export default function Audit({ isAdmin = false }) {
           <table className="audit-table" style={{ minWidth: 720 }}>
             <thead>
               <tr>
-                <th>Symbol</th><th>Signal</th><th>Source</th><th>Timeframe</th>
-                <th>Conviction</th><th>Scanner(s)</th><th>Candle date</th><th>Generated</th>
+                <th>Symbol</th>
+                <th style={{ textAlign: "center" }}>Signal</th>
+                <th style={{ textAlign: "center" }}>Source</th>
+                <th style={{ textAlign: "center" }}>TF</th>
+                <th style={{ textAlign: "center" }}>Conviction</th>
+                <th style={{ textAlign: "left" }}>Scanner(s)</th>
+                <th>Candle date</th>
+                <th>Generated</th>
                 {isAdmin && <th>Alert</th>}
               </tr>
             </thead>
@@ -101,19 +107,21 @@ export default function Audit({ isAdmin = false }) {
               {rows.filter((s) => (s.symbol || "").toLowerCase().includes(searchQuery.toLowerCase())).map((s) => (
                 <tr key={s.id}>
                   <td data-label="">{s.symbol}</td>
-                  <td data-label="Signal"><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
-                  <td data-label="Source" className="muted">{s.source}</td>
-                  <td data-label="Timeframe">{s.timeframe}</td>
-                  <td data-label="Conviction">
+                  <td data-label="Signal" style={{ textAlign: "center" }}><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
+                  <td data-label="Source" className="muted" style={{ textAlign: "center" }}>{s.source}</td>
+                  <td data-label="Timeframe" style={{ textAlign: "center" }}>{s.timeframe}</td>
+                  <td data-label="Conviction" style={{ textAlign: "center" }}>
                     {convLevel(s.source, s.confidence) ? (
                       <span className={"conv conv-" + convLevel(s.source, s.confidence)}>
                         {convLabel(s.source, s.confidence)}
                       </span>
                     ) : "—"}
                   </td>
-                  <td data-label="Scanner(s)" className="muted">{s.scanner_name}</td>
+                  <td data-label="Scanner(s)" className="muted" style={{ textAlign: "left" }}>{s.scanner_name}</td>
                   <td data-label="Candle date" className="muted">{s.candle_date?.slice(0, 10)}</td>
-                  <td data-label="Generated" className="muted">{new Date(s.created_at).toLocaleString()}</td>
+                  <td data-label="Generated" className="muted" style={{ whiteSpace: "normal", minWidth: 140 }}>
+                    {new Date(s.created_at).toLocaleString()}
+                  </td>
                   {isAdmin && (
                     <td data-label="Alert">
                       <button
