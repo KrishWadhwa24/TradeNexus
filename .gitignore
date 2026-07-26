@@ -3,3 +3,4 @@ bin/
 *.log
 .DS_Store
 web/node_modules/
+IMPLEMENTATION_PLAN.md

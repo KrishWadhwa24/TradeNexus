@@ -46,6 +46,7 @@ export default function PromoterTrades({ isAdmin = false }) {
   const [busy, setBusy] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [filter, setFilter] = useState("all"); // all | buy | sell
+  const [searchQuery, setSearchQuery] = useState("");
 
   function load(d = days) {
     setLoading(true);
@@ -87,9 +88,13 @@ export default function PromoterTrades({ isAdmin = false }) {
     }
   }
 
-  const visible = rows.filter((x) => filter === "all" || (filter === "buy") === isBuy(x.event_type));
-  const buyCount = rows.filter((x) => isBuy(x.event_type)).length;
-  const sellCount = rows.length - buyCount;
+  const filteredBySearch = rows.filter((x) => 
+    (x.symbol || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (x.company_name || "").toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  const visible = filteredBySearch.filter((x) => filter === "all" || (filter === "buy") === isBuy(x.event_type));
+  const buyCount = filteredBySearch.filter((x) => isBuy(x.event_type)).length;
+  const sellCount = filteredBySearch.length - buyCount;
 
   return (
     <div>
@@ -97,6 +102,14 @@ export default function PromoterTrades({ isAdmin = false }) {
         <div className="section-title" style={{ margin: 0 }}>Promoter &amp; Director/KMP market buys and sells — NSE PIT feed</div>
         <div className="row">
           {msg && <span className="msg">{msg}</span>}
+          <input
+            className="btn-sm"
+            type="text"
+            placeholder="Search symbol/company"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ minWidth: 150 }}
+          />
           <select className="btn-sm" value={days} onChange={(e) => setDays(Number(e.target.value))}>
             {DAY_OPTIONS.map((d) => <option key={d} value={d}>{d} days</option>)}
           </select>

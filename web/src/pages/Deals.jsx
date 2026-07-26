@@ -143,6 +143,7 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const label = type === "block" ? "Block" : "Bulk";
 
@@ -179,6 +180,14 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
         </div>
         <div className="row">
           {msg && <span className="msg">{msg}</span>}
+          <input
+            className="btn-sm"
+            type="text"
+            placeholder="Search stock"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ minWidth: 150 }}
+          />
           <button className="btn-sm" onClick={load}>Reload</button>
         </div>
       </div>
@@ -202,7 +211,10 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
                 <tr><th>Stock</th><th>Bought</th><th>Sold</th><th>Shares</th><th>Deal Date</th><th>Alerted</th></tr>
               </thead>
               <tbody>
-                {audit.map((a, i) => (
+                {audit.filter((a) => 
+                  (a.symbol || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+                  (a.security_name || "").toLowerCase().includes(searchQuery.toLowerCase())
+                ).map((a, i) => (
                   <tr key={i}>
                     <td style={{ textAlign: "left" }}>
                       <b>{a.symbol}</b>
@@ -223,7 +235,10 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
         <div className="empty">No {label.toLowerCase()} deals{type === "bulk" ? " above the ₹5 Cr net threshold" : ""} in the last 30 days.</div>
       ) : (
         <div className="promoter-grid">
-          {stocks.map((x) => {
+          {stocks.filter((x) => 
+            (x.symbol || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (x.security_name || "").toLowerCase().includes(searchQuery.toLowerCase())
+          ).map((x) => {
             const buy = x.top_net_qty >= 0;
             return (
               <div className={"promoter-card" + (buy ? " is-buy" : " is-sell")} key={x.symbol}>
