@@ -5,6 +5,7 @@ export default function Analytics({ userId }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     if (!userId) return;
@@ -59,6 +60,14 @@ export default function Analytics({ userId }) {
       <div className="toolbar">
         <div className="section-title" style={{ margin: 0 }}>Watchlist parameters (live price + indicators)</div>
         <div className="row">
+          <input
+            className="btn-sm"
+            type="text"
+            placeholder="Search symbol"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ minWidth: 150 }}
+          />
           <button className="btn-sm" onClick={exportCsv} disabled={!rows.length}>Export CSV</button>
           <button className="btn-sm" onClick={() => download("/v1/analytics/export.xlsx", "tradenexus_signals.xlsx").catch((e) => setErr(e.message))}>
             Export signals (.xlsx)
@@ -79,7 +88,7 @@ export default function Analytics({ userId }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {rows.filter((r) => r.symbol.toLowerCase().includes(searchQuery.toLowerCase())).map((r) => (
                 <tr key={r.instrument_id}>
                   <td>{r.symbol}</td>
                   <td>{fmt(r.price)}</td>

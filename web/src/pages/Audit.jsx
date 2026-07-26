@@ -10,6 +10,7 @@ export default function Audit({ isAdmin = false }) {
   const [source, setSource] = useState("");
   const [firing, setFiring] = useState(null); // signal id currently sending
   const [msg, setMsg] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   function load() {
     setLoading(true);
@@ -49,6 +50,14 @@ export default function Audit({ isAdmin = false }) {
         </div>
         <div className="row" style={{ flexWrap: "wrap" }}>
           {msg && <span className="msg" style={{ flex: "1 1 100%", marginBottom: 4 }}>{msg}</span>}
+          <input
+            className="btn-sm"
+            type="text"
+            placeholder="Search symbol"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ minWidth: 150 }}
+          />
           <select value={source} onChange={(e) => setSource(e.target.value)}>
             <option value="">All sources</option>
             <option value="pine">Pine</option>
@@ -89,7 +98,7 @@ export default function Audit({ isAdmin = false }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((s) => (
+              {rows.filter((s) => (s.symbol || "").toLowerCase().includes(searchQuery.toLowerCase())).map((s) => (
                 <tr key={s.id}>
                   <td data-label="">{s.symbol}</td>
                   <td data-label="Signal"><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>

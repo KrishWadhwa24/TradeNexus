@@ -103,6 +103,7 @@ export default function IPO({ isAdmin = false }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   function load() {
     setLoading(true);
@@ -161,6 +162,14 @@ export default function IPO({ isAdmin = false }) {
         <div className="section-title" style={{ margin: 0 }}>Open &amp; upcoming IPOs — live GMP</div>
         <div className="row">
           {msg && <span className="msg">{msg}</span>}
+          <input
+            className="btn-sm"
+            type="text"
+            placeholder="Search IPO"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ minWidth: 150 }}
+          />
           {isAdmin && <button className="btn-sm" onClick={refresh}>Refresh feed</button>}
           <button className="btn-sm" onClick={load}>Reload</button>
         </div>
@@ -174,7 +183,7 @@ export default function IPO({ isAdmin = false }) {
         <div className="empty">No open or upcoming IPOs right now.</div>
       ) : (
         <div className="ipo-grid">
-          {rows.map((x) => {
+          {rows.filter((x) => (x.name || "").toLowerCase().includes(searchQuery.toLowerCase())).map((x) => {
             const profit = estProfit(x);
             const hasGmp = x.gmp > 0 || x.gmp_percent > 0;
             return (

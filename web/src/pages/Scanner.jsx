@@ -14,6 +14,7 @@ export default function Scanner({ source, pattern, userId }) {
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [qty, setQty] = useState({});
+  const [searchQuery, setSearchQuery] = useState("");
 
   const load = useCallback(() => {
     setLoading(true);
@@ -69,6 +70,14 @@ export default function Scanner({ source, pattern, userId }) {
         </div>
         <div className="row">
           {msg && <span className="msg">{msg}</span>}
+          <input
+            className="btn-sm"
+            type="text"
+            placeholder="Search symbol"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ minWidth: 150 }}
+          />
           <button className="btn-sm" onClick={runScan}>Run scan now</button>
           <button className="btn-sm" onClick={load}>Refresh</button>
         </div>
@@ -87,7 +96,7 @@ export default function Scanner({ source, pattern, userId }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((s) => (
+              {rows.filter((s) => (s.symbol || "").toLowerCase().includes(searchQuery.toLowerCase())).map((s) => (
                 <tr key={s.id}>
                   <td data-label="">{s.symbol}</td>
                   <td data-label="Signal"><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>

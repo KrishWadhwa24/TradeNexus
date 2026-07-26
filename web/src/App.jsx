@@ -115,7 +115,13 @@ export default function App() {
   }, [collapsedGroups]);
 
   function toggleGroup(key) {
-    setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+    if (!sidebarPinned) {
+      setSidebarPinned(true);
+      localStorage.setItem("sidebarPinned", "true");
+      setCollapsedGroups((prev) => ({ ...prev, [key]: false }));
+    } else {
+      setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+    }
   }
 
   function toggleSidebarPin() {
