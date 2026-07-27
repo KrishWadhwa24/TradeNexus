@@ -32,26 +32,26 @@ type Calendar interface {
 	IsTradingDay(t time.Time) bool
 }
 
-// Service holds only the most recently fetched snapshot in memory — by
-// design there's no history table; once a newer snapshot arrives, the old
-// one is simply gone.
+// Service holds only the most recently fetched snapshot in memory — only the
+// per-date auto-alert ledger (Repo) survives a restart.
 type Service struct {
 	client *Client
 	bc     Broadcaster // optional; nil disables the Telegram alert
 	cal    Calendar
+	repo   *Repo
 	log    zerolog.Logger
 
 	mu                sync.RWMutex
 	latest            Snapshot
 	readyDate         string // IST date (2006-01-02) we've confirmed THAT DAY's data for
 	reconcileDoneDate string // IST date the daily reconcile+scan+dispatch pipeline finished for
-	alertedDate       string // IST date the auto Telegram alert has already been sent for
+	alertedDate       string // IST date the auto Telegram alert has already been sent for, this process
 }
 
 // New builds the FII/DII service. bc may be nil (disables the Telegram alert
 // entirely; the API/table still works off whatever's fetched).
-func New(client *Client, bc Broadcaster, cal Calendar, log zerolog.Logger) *Service {
-	return &Service{client: client, bc: bc, cal: cal, log: log}
+func New(client *Client, bc Broadcaster, cal Calendar, repo *Repo, log zerolog.Logger) *Service {
+	return &Service{client: client, bc: bc, cal: cal, repo: repo, log: log}
 }
 
 // Latest returns the most recently fetched snapshot, and false if nothing has
@@ -184,8 +184,9 @@ func (s *Service) fetchAndStore(ctx context.Context) error {
 
 // maybeSendAlert sends the auto Telegram alert once both the FII/DII data AND
 // the daily reconcile pipeline are confirmed done for the same date, and it
-// hasn't already been sent for that date. Whichever of the two finishes
-// second is what actually triggers the send.
+// hasn't already been sent for that date — checked against the DB ledger so
+// a server restart never re-sends a date that already went out. Whichever of
+// the two finishes second is what actually triggers the send.
 func (s *Service) maybeSendAlert() {
 	if s.bc == nil {
 		return
@@ -195,7 +196,7 @@ func (s *Service) maybeSendAlert() {
 	ready := date != "" && date == s.reconcileDoneDate && date != s.alertedDate
 	snap := s.latest
 	if ready {
-		s.alertedDate = date // claim it now so a concurrent trigger can't double-send
+		s.alertedDate = date // claim it now so a concurrent trigger in this process can't double-send
 	}
 	s.mu.Unlock()
 	if !ready {
@@ -204,16 +205,48 @@ func (s *Service) maybeSendAlert() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if _, err := s.bc.Broadcast(ctx, formatMessage(snap)); err != nil {
-		s.log.Error().Err(err).Msg("fiidii: auto alert send failed")
-		s.mu.Lock()
-		if s.alertedDate == date {
-			s.alertedDate = "" // allow the next trigger to retry
-		}
-		s.mu.Unlock()
+
+	day, err := parseNSEDate(snap.Date)
+	if err != nil {
+		s.log.Error().Err(err).Str("date", snap.Date).Msg("fiidii: bad snapshot date")
 		return
 	}
+	// Ledger check guards against a restart: the in-memory claim above only
+	// protects this process, but the alert may already have gone out for this
+	// date in a previous run.
+	if done, err := s.repo.AlreadyAlerted(ctx, day); err != nil {
+		s.log.Error().Err(err).Msg("fiidii: alert-ledger check failed")
+		s.unclaimAlert(date)
+		return
+	} else if done {
+		s.log.Info().Str("date", snap.Date).Msg("fiidii: auto alert already sent, skipping")
+		return
+	}
+
+	if _, err := s.bc.Broadcast(ctx, formatMessage(snap)); err != nil {
+		s.log.Error().Err(err).Msg("fiidii: auto alert send failed")
+		s.unclaimAlert(date)
+		return
+	}
+	if err := s.repo.MarkAlerted(ctx, day); err != nil {
+		s.log.Error().Err(err).Msg("fiidii: mark alerted failed")
+	}
 	s.log.Info().Str("date", snap.Date).Msg("fiidii: auto alert sent")
+}
+
+// unclaimAlert releases the in-memory claim so the next trigger can retry.
+func (s *Service) unclaimAlert(date string) {
+	s.mu.Lock()
+	if s.alertedDate == date {
+		s.alertedDate = ""
+	}
+	s.mu.Unlock()
+}
+
+// parseNSEDate parses an NSE-formatted date ("02-Jan-2006") as used in
+// Snapshot.Date.
+func parseNSEDate(nseDate string) (time.Time, error) {
+	return time.Parse("02-Jan-2006", nseDate)
 }
 
 // formatMessage builds the Telegram alert for a DII/FII snapshot.
