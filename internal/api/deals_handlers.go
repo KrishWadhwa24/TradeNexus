@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -82,4 +84,21 @@ func (s *Server) handleDealsSendAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "sent", "type": t, "symbol": symbol})
+}
+
+// POST /v1/admin/deals/refresh — poll the NSE bulk/block deal feed
+// immediately (covers both types). Admin only.
+func (s *Server) handleRefreshDeals(w http.ResponseWriter, r *http.Request) {
+	if s.deals == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "deals tracking disabled"})
+		return
+	}
+	// Own context so a slow upstream fetch / paced alert sends aren't cut by
+	// the request timeout.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		s.deals.RefreshNow(ctx)
+	}()
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": "refreshing"})
 }

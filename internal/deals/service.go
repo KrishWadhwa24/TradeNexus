@@ -178,6 +178,13 @@ func (s *Service) Poll(ctx context.Context, from, to time.Time) error {
 	return nil
 }
 
+// RefreshNow triggers an immediate fetch+store+alert pass for both deal
+// types — the same work the daily alert cron performs. Used by the manual
+// "refresh feed" admin action.
+func (s *Service) RefreshNow(ctx context.Context) {
+	s.ProcessRecent(ctx)
+}
+
 // ProcessRecent fetches the alert window for both deal types, stores the rows,
 // and fires one alert per not-yet-alerted (stock, day) whose deal date is
 // within the alert window. Idempotent via the ledger, so the daily cron and the

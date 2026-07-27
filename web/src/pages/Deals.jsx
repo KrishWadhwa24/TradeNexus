@@ -159,6 +159,17 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
 
   useEffect(load, [type, tab]);
 
+  async function refresh() {
+    setMsg("Refreshing feed…");
+    try {
+      await api.post("/v1/admin/deals/refresh", {});
+      setMsg("Feed refresh started — reloading in 6s…");
+      setTimeout(() => { setMsg(""); load(); }, 6000);
+    } catch (e) {
+      setMsg("Refresh failed: " + e.message);
+    }
+  }
+
   async function fireAlert(symbol) {
     setBusy(symbol);
     setMsg("");
@@ -188,6 +199,7 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
             onChange={(e) => setSearchQuery(e.target.value)}
             style={{ minWidth: 150 }}
           />
+          {isAdmin && <button className="btn-sm" onClick={refresh}>Refresh feed</button>}
           <button className="btn-sm" onClick={load}>Reload</button>
         </div>
       </div>

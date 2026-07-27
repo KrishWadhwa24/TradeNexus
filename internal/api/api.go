@@ -244,6 +244,7 @@ func (s *Server) Router() http.Handler {
 
 				// Promoter trades admin: force-send a specific trade's Telegram alert.
 				r.Post("/admin/promoter-trades/{id}/send-alert", s.handlePromoterSendAlert)
+				r.Post("/admin/deals/refresh", s.handleRefreshDeals)
 				r.Post("/admin/deals/{type}/{symbol}/send-alert", s.handleDealsSendAlert)
 
 				// FII/DII admin: force-send the currently cached snapshot now.
