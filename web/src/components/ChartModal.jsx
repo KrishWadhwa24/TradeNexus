@@ -74,7 +74,7 @@ export default function ChartModal({ instrumentId, symbol, tf = "1D", onClose })
       try {
         setLoading(true);
         // 1. Fetch candles
-        const rCandles = await api.get(`/v1/instruments/${instrumentId}/candles?tf=${tf}&limit=300`);
+        const rCandles = await api.get(`/v1/instruments/${instrumentId}/candles?tf=${tf}&limit=800`);
         if (!rCandles.candles || rCandles.candles.length === 0) {
           setError("No candle data available.");
           setLoading(false);
