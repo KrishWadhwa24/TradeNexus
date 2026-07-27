@@ -196,15 +196,16 @@ func main() {
 	insightsSvc := insights.New(pg.Pool, cfg.BulkDealMinNetValue, log)
 	insightsSvc.StartRecorder(ctx)
 
-	// FII/DII daily cash-market activity (NSE feed). No history table — only
-	// the latest snapshot is ever kept in memory.
+	// FII/DII daily cash-market activity (NSE feed). Only the latest snapshot
+	// is kept in memory; the per-date alert ledger is in Postgres so a
+	// restart never re-sends an alert already sent for that date.
 	var fiidiiSvc *fiidii.Service
 	if cfg.FiiDiiEnabled {
 		var fiidiiBC fiidii.Broadcaster // keep a true-nil interface if notify is off
 		if dispatcher != nil {
 			fiidiiBC = notify.StockBroadcaster{D: dispatcher}
 		}
-		fiidiiSvc = fiidii.New(fiidii.NewClient(), fiidiiBC, calSvc.Cal(), log)
+		fiidiiSvc = fiidii.New(fiidii.NewClient(), fiidiiBC, calSvc.Cal(), fiidii.NewRepo(pg.Pool), log)
 		fiidiiSvc.StartPolling(ctx)
 	}
 
