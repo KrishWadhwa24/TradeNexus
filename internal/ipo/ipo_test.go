@@ -67,6 +67,15 @@ const sampleFeed = `{
       "~gmp_percent_calc": "41.53",
       "~IPO_Category": "SME",
       "~ipo_name": "Devson Catalyst"
+    },
+    {
+      "Name": "<a>Indo-MIM</a> <span class=\"badge rounded-pill bg-secondary d-inline ms-2\">IPO</span><span class=\"badge rounded-pill bg-danger d-inline ms-2\">CT</span>",
+      "GMP": "&#8377;<b>193</b> (39.79%)",
+      "~id": 1594,
+      "~gmp_percent_calc": "39.79",
+      "~Srt_Close": "2026-07-27",
+      "~IPO_Category": "IPO",
+      "~ipo_name": "Indo-MIM"
     }
   ]
 }`
@@ -76,8 +85,8 @@ func TestParseFeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(items) != 5 {
-		t.Fatalf("expected 5 items, got %d", len(items))
+	if len(items) != 6 {
+		t.Fatalf("expected 6 items, got %d", len(items))
 	}
 	by := map[int64]IPO{}
 	for _, x := range items {
@@ -106,6 +115,10 @@ func TestParseFeed(t *testing.T) {
 	}
 	if by[2204].Status != "listed" {
 		t.Errorf("devson should be listed, got %q", by[2204].Status)
+	}
+	// "CT" (closing today) badge must count as still open, not dropped.
+	if by[1594].Status != "open" {
+		t.Errorf("indo-mim (CT badge) should be open, got %q", by[1594].Status)
 	}
 	// Board parse for SME.
 	if by[2129].Board != "BSE SME" {
