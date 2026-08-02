@@ -9,6 +9,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
+	"tradenexus/internal/cronx"
 	"tradenexus/internal/engine"
 	"tradenexus/internal/fiidii"
 	"tradenexus/internal/intraday"
@@ -40,7 +41,7 @@ type Scheduler struct {
 // New builds a scheduler (IST-based cron). intradayCache and fiidiiSvc may be nil.
 func New(svc *engine.Service, paperSvc *paper.Service, intradayCache *intraday.Cache, fiidiiSvc *fiidii.Service, cfg Config, log zerolog.Logger) *Scheduler {
 	return &Scheduler{
-		cron:     cron.New(cron.WithLocation(market.IST)),
+		cron:     cron.New(cron.WithLocation(market.IST), cron.WithChain(cronx.Recover(log))),
 		svc:      svc,
 		paper:    paperSvc,
 		intraday: intradayCache,

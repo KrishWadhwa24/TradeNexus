@@ -126,25 +126,26 @@ func (s *Service) persist(ctx context.Context, instID int64, rep scanner.Report,
 
 	// Daily Pine (closed candle only — the last daily bar is already closed).
 	if len(daily) > 0 && (rep.DailyPine.Buy || rep.DailyPine.Sell) {
-		if err := add(pineSignal(instID, market.TF1D, lastTime(daily), rep.DailyPine)); err != nil {
+		if err := add(pineSignal(instID, market.TF1D, lastTime(daily), lastClose(daily), rep.DailyPine)); err != nil {
 			return n, err
 		}
 	}
 	// Weekly Pine (forming bar allowed).
 	if len(weekly) > 0 && (rep.WeeklyPine.Buy || rep.WeeklyPine.Sell) {
-		if err := add(pineSignal(instID, market.TF1W, lastTime(weekly), rep.WeeklyPine)); err != nil {
+		if err := add(pineSignal(instID, market.TF1W, lastTime(weekly), lastClose(weekly), rep.WeeklyPine)); err != nil {
 			return n, err
 		}
 	}
 	// Monthly Pine (forming bar allowed).
 	if len(monthly) > 0 && (rep.MonthlyPine.Buy || rep.MonthlyPine.Sell) {
-		if err := add(pineSignal(instID, market.TF1M, lastTime(monthly), rep.MonthlyPine)); err != nil {
+		if err := add(pineSignal(instID, market.TF1M, lastTime(monthly), lastClose(monthly), rep.MonthlyPine)); err != nil {
 			return n, err
 		}
 	}
 	// Weekly scanners: fire when >= 1 of 4 (confidence = N/4).
 	if len(weekly) > 0 && rep.Weekly.Confidence >= 1 {
 		conf := rep.Weekly.Confidence
+		price := lastClose(weekly)
 		if err := add(signals.Signal{
 			InstrumentID: instID,
 			Source:       "weekly",
@@ -155,24 +156,25 @@ func (s *Service) persist(ctx context.Context, instID int64, rep scanner.Report,
 			Confidence:   &conf,
 			RSI:          rep.Weekly.RSI,
 			Volume:       rep.Weekly.Volume,
+			Price:        &price,
 			Reasons:      rep.Weekly.Details,
 		}); err != nil {
 			return n, err
 		}
 	}
-	if err := s.persistPatternSignals(add, instID, market.TF1D, lastTimeOrZero(daily), rep.Patterns.Daily); err != nil {
+	if err := s.persistPatternSignals(add, instID, market.TF1D, lastTimeOrZero(daily), lastCloseOrZero(daily), rep.Patterns.Daily); err != nil {
 		return n, err
 	}
-	if err := s.persistPatternSignals(add, instID, market.TF1W, lastTimeOrZero(weekly), rep.Patterns.Weekly); err != nil {
+	if err := s.persistPatternSignals(add, instID, market.TF1W, lastTimeOrZero(weekly), lastCloseOrZero(weekly), rep.Patterns.Weekly); err != nil {
 		return n, err
 	}
-	if err := s.persistPatternSignals(add, instID, market.TF1M, lastTimeOrZero(monthly), rep.Patterns.Monthly); err != nil {
+	if err := s.persistPatternSignals(add, instID, market.TF1M, lastTimeOrZero(monthly), lastCloseOrZero(monthly), rep.Patterns.Monthly); err != nil {
 		return n, err
 	}
 	return n, nil
 }
 
-func (s *Service) persistPatternSignals(add func(signals.Signal) error, instID int64, tf string, date time.Time, res scanner.PatternTimeframeResult) error {
+func (s *Service) persistPatternSignals(add func(signals.Signal) error, instID int64, tf string, date time.Time, price float64, res scanner.PatternTimeframeResult) error {
 	if date.IsZero() {
 		return nil
 	}
@@ -197,6 +199,7 @@ func (s *Service) persistPatternSignals(add func(signals.Signal) error, instID i
 			Direction:    "BUY",
 			CandleDate:   date,
 			Confidence:   &conv, // pattern conviction (0-100), shown in alerts
+			Price:        &price,
 			Reasons:      p.sig.Reasons,
 		}); err != nil {
 			return err
@@ -205,7 +208,7 @@ func (s *Service) persistPatternSignals(add func(signals.Signal) error, instID i
 	return nil
 }
 
-func pineSignal(instID int64, tf string, date time.Time, sig scanner.PineSignal) signals.Signal {
+func pineSignal(instID int64, tf string, date time.Time, price float64, sig scanner.PineSignal) signals.Signal {
 	dir := "BUY"
 	if sig.Sell {
 		dir = "SELL"
@@ -217,6 +220,7 @@ func pineSignal(instID int64, tf string, date time.Time, sig scanner.PineSignal)
 		Timeframe:    tf,
 		Direction:    dir,
 		CandleDate:   date,
+		Price:        &price,
 		Reasons:      sig.Reasons,
 		Metrics:      sig.Metrics,
 	}
@@ -239,6 +243,15 @@ func lastTimeOrZero(c []market.Candle) time.Time {
 		return time.Time{}
 	}
 	return lastTime(c)
+}
+
+func lastClose(c []market.Candle) float64 { return c[len(c)-1].Close }
+
+func lastCloseOrZero(c []market.Candle) float64 {
+	if len(c) == 0 {
+		return 0
+	}
+	return lastClose(c)
 }
 
 // appendToday splices today's forming candle onto the confirmed daily history.

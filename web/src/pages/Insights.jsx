@@ -228,12 +228,138 @@ function FiiDii({ snap, isAdmin }) {
   );
 }
 
+/* ---- FII/DII weekly/monthly trend ---- */
+function FiiDiiTrend() {
+  const [period, setPeriod] = useState("weekly");
+  const [points, setPoints] = useState(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    setPoints(null);
+    setErr("");
+    api.get(`/v1/insights/fii-dii/history?period=${period}&count=${period === "monthly" ? 12 : 16}`)
+      .then((r) => setPoints(r.points || []))
+      .catch((e) => setErr(e.message));
+  }, [period]);
+
+  const fmtPeriod = (d) => {
+    const t = new Date(String(d).slice(0, 10) + "T00:00:00");
+    if (isNaN(t)) return d;
+    return period === "monthly"
+      ? t.toLocaleDateString("en-IN", { month: "short", year: "2-digit" })
+      : t.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  };
+
+  return (
+    <div className="panel" style={{ padding: 16, marginBottom: 20 }}>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div className="section-title" style={{ margin: "0 0 4px" }}>FII / DII Net Trend</div>
+          <div className="subtle" style={{ marginBottom: 12 }}>
+            Net buy (+) / sell (−) per {period === "monthly" ? "month" : "week"}, in ₹ crore — spot whether flows have turned net positive or negative.
+          </div>
+        </div>
+        <div className="row">
+          <button className={"chip chip-tab" + (period === "weekly" ? " is-active" : "")} onClick={() => setPeriod("weekly")}>Weekly</button>
+          <button className={"chip chip-tab" + (period === "monthly" ? " is-active" : "")} onClick={() => setPeriod("monthly")}>Monthly</button>
+        </div>
+      </div>
+
+      {err ? (
+        <div className="err">{err}</div>
+      ) : !points ? (
+        <div className="spinner">Loading…</div>
+      ) : !points.length ? (
+        <div className="empty">No FII/DII history stored yet — it builds up day by day going forward.</div>
+      ) : (
+        <>
+          <FiiDiiTotals points={points} />
+          <div className="ins-legend fiidii-legend">
+            <span><i className="ins-dot ins-dot-buy" /> Net buy</span>
+            <span><i className="ins-dot ins-dot-sell" /> Net sell</span>
+            <span><i className="fiidii-swatch fiidii-swatch-fii" /> FII</span>
+            <span><i className="fiidii-swatch fiidii-swatch-dii" /> DII</span>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <FiiDiiBarChart points={points} labelFor={fmtPeriod} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// FiiDiiTotals summarizes the whole visible window into two headline numbers,
+// so "was FII/DII net positive or negative overall" is answerable at a glance
+// without reading the bars.
+function FiiDiiTotals({ points }) {
+  const totalFii = points.reduce((a, p) => a + p.fii.net_value, 0);
+  const totalDii = points.reduce((a, p) => a + p.dii.net_value, 0);
+  return (
+    <div className="fiidii-totals">
+      {[["FII", totalFii], ["DII", totalDii]].map(([label, v]) => (
+        <div className={"fiidii-total-card" + (v >= 0 ? " is-pos" : " is-neg")} key={label}>
+          <div className="fiidii-total-label">{label} · this window</div>
+          <div className="fiidii-total-value">{v >= 0 ? "+" : ""}₹{fmt(v)} Cr</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FiiDiiBarChart({ points, labelFor }) {
+  const W = 780, H = 320, padLeft = 68, padRight = 16, padTop = 24, bottomPad = 30;
+  const maxAbs = Math.max(1, ...points.flatMap((p) => [Math.abs(p.fii.net_value), Math.abs(p.dii.net_value)]));
+  const top = padTop, bottom = H - padTop - bottomPad;
+  const zeroY = top + (bottom - top) / 2;
+  const scale = (bottom - top) / 2 / maxAbs;
+  const y = (v) => zeroY - v * scale;
+  const n = points.length;
+  const groupW = (W - padLeft - padRight) / n;
+  const barW = Math.max(5, Math.min(22, groupW * 0.34));
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="ins-chart fiidii-chart" preserveAspectRatio="xMidYMid meet">
+      {[1, 0.5, 0, -0.5, -1].map((f) => (
+        <line key={f} x1={padLeft} x2={W - padRight} y1={y(maxAbs * f)} y2={y(maxAbs * f)}
+              className={f === 0 ? "ins-grid fiidii-zero-line" : "ins-grid"} />
+      ))}
+      {points.map((p, i) => {
+        const cx = padLeft + groupW * (i + 0.5);
+        const fiiTop = Math.min(y(p.fii.net_value), zeroY);
+        const fiiH = Math.max(0, Math.abs(y(p.fii.net_value) - zeroY));
+        const diiTop = Math.min(y(p.dii.net_value), zeroY);
+        const diiH = Math.max(0, Math.abs(y(p.dii.net_value) - zeroY));
+        return (
+          <g key={i} className="fiidii-bar-group">
+            <rect x={cx - barW - 2} y={fiiTop} width={barW} height={fiiH} rx="2.5"
+                  className={"fiidii-bar fiidii-bar-fii" + (p.fii.net_value >= 0 ? " is-pos" : " is-neg")}>
+              <title>FII net: {p.fii.net_value >= 0 ? "+" : ""}₹{fmt(p.fii.net_value)} Cr ({labelFor(p.period_start)})</title>
+            </rect>
+            <rect x={cx + 2} y={diiTop} width={barW} height={diiH} rx="2.5"
+                  className={"fiidii-bar fiidii-bar-dii" + (p.dii.net_value >= 0 ? " is-pos" : " is-neg")}>
+              <title>DII net: {p.dii.net_value >= 0 ? "+" : ""}₹{fmt(p.dii.net_value)} Cr ({labelFor(p.period_start)})</title>
+            </rect>
+            {(n <= 10 || i % Math.ceil(n / 8) === 0) && (
+              <text x={cx} y={bottom + 18} className="ins-axis" textAnchor="middle">{labelFor(p.period_start)}</text>
+            )}
+          </g>
+        );
+      })}
+      <text x={padLeft - 10} y={y(maxAbs) + 4} className="ins-axis" textAnchor="end">₹{Math.round(maxAbs)}Cr</text>
+      <text x={padLeft - 10} y={zeroY + 4} className="ins-axis" textAnchor="end">0</text>
+      <text x={padLeft - 10} y={y(-maxAbs) + 4} className="ins-axis" textAnchor="end">-₹{Math.round(maxAbs)}Cr</text>
+    </svg>
+  );
+}
+
 /* ---- Market Breadth ---- */
 function Breadth({ points, fiidii, isAdmin }) {
   if (!points.length) {
     return (
       <>
         <FiiDii snap={fiidii} isAdmin={isAdmin} />
+        <FiiDiiTrend />
         <div className="empty">No signals in the selected window yet.</div>
       </>
     );
@@ -250,6 +376,7 @@ function Breadth({ points, fiidii, isAdmin }) {
   return (
     <>
       <FiiDii snap={fiidii} isAdmin={isAdmin} />
+      <FiiDiiTrend />
       <p className="subtle" style={{ marginTop: 0 }}>
         Daily BUY vs SELL signal counts across all tracked stocks — a market-mood gauge. More green than red = risk-on.
       </p>

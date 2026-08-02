@@ -11,6 +11,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
+	"tradenexus/internal/cronx"
 	"tradenexus/internal/market"
 )
 
@@ -246,7 +247,7 @@ func (s *Service) StartPolling(ctx context.Context) {
 	}()
 
 	// Authoritative close-day GMP check on an IST cron (default 2:30 PM).
-	c := cron.New(cron.WithLocation(market.IST))
+	c := cron.New(cron.WithLocation(market.IST), cron.WithChain(cronx.Recover(s.log)))
 	if _, err := c.AddFunc(s.signalCron, func() {
 		sc, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()

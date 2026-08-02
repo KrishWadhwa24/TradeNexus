@@ -622,6 +622,15 @@ td:first-child {
   text-align: left;
 }
 
+.sort-indicator-idle {
+  opacity: 0.35;
+}
+
+.sort-indicator-active {
+  color: var(--accent, #4da6ff);
+  opacity: 1;
+}
+
 thead th {
   font-size: 11px;
   color: var(--muted);
@@ -2485,6 +2494,68 @@ code {
 .ins-line-sell { stroke: var(--red); }
 .ins-pt-buy { fill: var(--green); }
 .ins-pt-sell { fill: var(--red); }
+
+/* ---------- FII/DII trend chart ---------- */
+.fiidii-totals {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.fiidii-total-card {
+  flex: 1 1 160px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+}
+
+.fiidii-total-card.is-pos { border-left-color: var(--green); }
+.fiidii-total-card.is-neg { border-left-color: var(--red); }
+
+.fiidii-total-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  margin-bottom: 4px;
+}
+
+.fiidii-total-value {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.fiidii-total-card.is-pos .fiidii-total-value { color: var(--green); }
+.fiidii-total-card.is-neg .fiidii-total-value { color: var(--red); }
+
+.fiidii-legend { margin-bottom: 10px; }
+
+.fiidii-swatch {
+  width: 12px;
+  height: 12px;
+  display: inline-block;
+  border-radius: 2px;
+}
+
+.fiidii-swatch-fii { background: var(--muted); }
+.fiidii-swatch-dii { background: transparent; border: 1.5px solid var(--muted); }
+
+.fiidii-chart { min-width: 640px; }
+.fiidii-zero-line { stroke: var(--text, var(--muted)); opacity: .5; }
+
+.fiidii-bar { transition: opacity .12s ease; }
+.fiidii-bar-group:hover .fiidii-bar { opacity: .6; }
+.fiidii-bar-group:hover .fiidii-bar:hover { opacity: 1; }
+
+.fiidii-bar-fii.is-pos { fill: var(--green); }
+.fiidii-bar-fii.is-neg { fill: var(--red); }
+
+.fiidii-bar-dii.is-pos { fill: color-mix(in srgb, var(--green) 18%, transparent); stroke: var(--green); stroke-width: 1.5; }
+.fiidii-bar-dii.is-neg { fill: color-mix(in srgb, var(--red) 18%, transparent); stroke: var(--red); stroke-width: 1.5; }
 
 /* ---------- Error boundary ---------- */
 .err-boundary {

@@ -292,6 +292,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/insights/breadth", s.handleInsightsBreadth)
 			r.Get("/insights/confluence", s.handleInsightsConfluence)
 			r.Get("/insights/fii-dii", s.handleFiiDiiLatest)
+			r.Get("/insights/fii-dii/history", s.handleFiiDiiHistory)
 
 			// Market data (Module 9): trending + params + dashboard
 			r.Get("/market/trending", s.handleTrending)

@@ -105,7 +105,7 @@ func (s *Service) MarkReconcileDone(now time.Time) {
 // published, and going quiet for the rest of the day once it is.
 func (s *Service) StartPolling(ctx context.Context) {
 	go func() {
-		s.bootstrap(ctx)
+		s.safeCall(ctx, s.bootstrap)
 		for {
 			now := time.Now().In(market.IST)
 			d := s.nextDelay(now)
@@ -114,10 +114,21 @@ func (s *Service) StartPolling(ctx context.Context) {
 				return
 			case <-time.After(d):
 			}
-			s.tick(ctx)
+			s.safeCall(ctx, s.tick)
 		}
 	}()
 	s.log.Info().Msg("fiidii poller started")
+}
+
+// safeCall recovers a panic in fn so one bad tick logs and the poll loop
+// keeps running instead of taking down the whole process.
+func (s *Service) safeCall(ctx context.Context, fn func(context.Context)) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error().Interface("panic", r).Msg("fiidii: recovered panic in poll loop")
+		}
+	}()
+	fn(ctx)
 }
 
 func (s *Service) bootstrap(ctx context.Context) {
@@ -168,6 +179,12 @@ func (s *Service) fetchAndStore(ctx context.Context) error {
 		return err
 	}
 
+	if day, perr := parseNSEDate(snap.Date); perr == nil {
+		if err := s.repo.UpsertFlow(ctx, day, snap); err != nil {
+			s.log.Error().Err(err).Str("date", snap.Date).Msg("fiidii: store flow failed")
+		}
+	}
+
 	isToday := isTodayIST(snap.Date)
 	s.mu.Lock()
 	s.latest = snap
@@ -180,6 +197,16 @@ func (s *Service) fetchAndStore(ctx context.Context) error {
 		s.maybeSendAlert()
 	}
 	return nil
+}
+
+// Weekly returns DII/FII flow summed per week over the last `weeks` weeks.
+func (s *Service) Weekly(ctx context.Context, weeks int) ([]PeriodFlow, error) {
+	return s.repo.ListWeekly(ctx, weeks)
+}
+
+// Monthly returns DII/FII flow summed per month over the last `months` months.
+func (s *Service) Monthly(ctx context.Context, months int) ([]PeriodFlow, error) {
+	return s.repo.ListMonthly(ctx, months)
 }
 
 // maybeSendAlert sends the auto Telegram alert once both the FII/DII data AND

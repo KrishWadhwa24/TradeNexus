@@ -9,6 +9,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
+	"tradenexus/internal/cronx"
 	"tradenexus/internal/market"
 )
 
@@ -42,7 +43,7 @@ func (s *Service) StartRecorder(ctx context.Context) {
 		s.recordOutcomes(rc)
 	}()
 
-	c := cron.New(cron.WithLocation(market.IST))
+	c := cron.New(cron.WithLocation(market.IST), cron.WithChain(cronx.Recover(s.log)))
 	if _, err := c.AddFunc("10 3 * * *", func() {
 		rc, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()

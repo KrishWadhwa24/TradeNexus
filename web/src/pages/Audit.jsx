@@ -99,6 +99,7 @@ export default function Audit({ isAdmin = false }) {
                 <th style={{ textAlign: "center" }}>Source</th>
                 <th style={{ textAlign: "center" }}>TF</th>
                 <th style={{ textAlign: "center" }}>Conviction</th>
+                <th style={{ textAlign: "right" }}>Price</th>
                 <th style={{ textAlign: "left" }}>Scanner(s)</th>
                 <th>Candle date</th>
                 <th>Generated</th>
@@ -123,6 +124,9 @@ export default function Audit({ isAdmin = false }) {
                         {convLabel(s.source, s.confidence)}
                       </span>
                     ) : "—"}
+                  </td>
+                  <td data-label="Price" className="muted" style={{ textAlign: "right" }}>
+                    {s.price != null ? `₹${s.price.toFixed(2)}` : "—"}
                   </td>
                   <td data-label="Scanner(s)" className="muted" style={{ textAlign: "left" }}>{s.scanner_name}</td>
                   <td data-label="Candle date" className="muted">{s.candle_date?.slice(0, 10)}</td>

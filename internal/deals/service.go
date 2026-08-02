@@ -11,6 +11,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
+	"tradenexus/internal/cronx"
 	"tradenexus/internal/market"
 )
 
@@ -153,6 +154,9 @@ func (s *Service) ListAudit(ctx context.Context, t Type) ([]AuditEntry, error) {
 			sum := summarize(grp, netByClient(grp))
 			e.SecurityName = sum.SecurityName
 			e.BuyValue, e.SellValue, e.TradedQty = sum.BuyValue, sum.SellValue, sum.TradedQty
+			if sum.TopNetQty != 0 {
+				e.Price = absF(sum.TopNetValue / float64(sum.TopNetQty))
+			}
 		}
 		out = append(out, e)
 	}
@@ -355,7 +359,7 @@ func (s *Service) StartPolling(ctx context.Context) {
 		}
 	}()
 
-	c := cron.New(cron.WithLocation(market.IST))
+	c := cron.New(cron.WithLocation(market.IST), cron.WithChain(cronx.Recover(s.log)))
 	if _, err := c.AddFunc(s.alertCron, func() {
 		pc, cancel := context.WithTimeout(context.Background(), alertJobTimeout)
 		defer cancel()
