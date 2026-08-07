@@ -104,6 +104,7 @@ type AuditEntry struct {
 	BuyValue     float64   `json:"buy_value"`
 	SellValue    float64   `json:"sell_value"`
 	TradedQty    int64     `json:"traded_qty"`
+	Price        float64   `json:"price"` // top net participant's price — the stock's price when the signal fired
 }
 
 // netByClient aggregates raw rows into one ClientNet per client name, ordered

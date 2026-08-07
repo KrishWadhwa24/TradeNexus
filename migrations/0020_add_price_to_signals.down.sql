@@ -1,0 +1,2 @@
+ALTER TABLE signals
+DROP COLUMN price;

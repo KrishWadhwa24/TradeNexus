@@ -11,6 +11,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
+	"tradenexus/internal/cronx"
 	"tradenexus/internal/market"
 )
 
@@ -224,7 +225,7 @@ func (s *Service) StartPolling(ctx context.Context) {
 		}
 	}
 	go func() {
-		poll() // startup
+		cronx.Safe(s.log, poll) // startup
 		t := time.NewTicker(s.interval)
 		defer t.Stop()
 		for {
@@ -232,12 +233,12 @@ func (s *Service) StartPolling(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				poll()
+				cronx.Safe(s.log, poll)
 			}
 		}
 	}()
 
-	c := cron.New(cron.WithLocation(market.IST))
+	c := cron.New(cron.WithLocation(market.IST), cron.WithChain(cronx.Recover(s.log)))
 	if _, err := c.AddFunc("20 2 * * *", func() {
 		pc, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()

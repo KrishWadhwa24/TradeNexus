@@ -11,6 +11,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
+	"tradenexus/internal/cronx"
 	"tradenexus/internal/market"
 )
 
@@ -153,6 +154,9 @@ func (s *Service) ListAudit(ctx context.Context, t Type) ([]AuditEntry, error) {
 			sum := summarize(grp, netByClient(grp))
 			e.SecurityName = sum.SecurityName
 			e.BuyValue, e.SellValue, e.TradedQty = sum.BuyValue, sum.SellValue, sum.TradedQty
+			if sum.TopNetQty != 0 {
+				e.Price = absF(sum.TopNetValue / float64(sum.TopNetQty))
+			}
 		}
 		out = append(out, e)
 	}
@@ -317,7 +321,7 @@ func (s *Service) SendAlert(ctx context.Context, t Type, symbol string) error {
 // (if we're already past NSE's publish time), then a daily fetch+alert cron and
 // a daily retention prune, until ctx is cancelled.
 func (s *Service) StartPolling(ctx context.Context) {
-	go func() {
+	go cronx.Safe(s.log, func() {
 		now := time.Now().In(market.IST)
 		bc, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		if err := s.Poll(bc, now.AddDate(0, 0, -s.retention), now); err != nil {
@@ -330,7 +334,7 @@ func (s *Service) StartPolling(ctx context.Context) {
 		pc, pcancel := context.WithTimeout(context.Background(), alertJobTimeout)
 		defer pcancel()
 		s.ProcessRecent(pc)
-	}()
+	})
 
 	// Evening store-only refresh: NSE occasionally trickles in late rows after
 	// the 18:30 publish. This keeps the website current between the daily alert
@@ -344,18 +348,20 @@ func (s *Service) StartPolling(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				now := time.Now().In(market.IST)
-				if !afterPublish(now) { // only in the post-publish evening window
-					continue
-				}
-				rc, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-				_ = s.Poll(rc, now, now)
-				cancel()
+				cronx.Safe(s.log, func() {
+					now := time.Now().In(market.IST)
+					if !afterPublish(now) { // only in the post-publish evening window
+						return
+					}
+					rc, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+					_ = s.Poll(rc, now, now)
+					cancel()
+				})
 			}
 		}
 	}()
 
-	c := cron.New(cron.WithLocation(market.IST))
+	c := cron.New(cron.WithLocation(market.IST), cron.WithChain(cronx.Recover(s.log)))
 	if _, err := c.AddFunc(s.alertCron, func() {
 		pc, cancel := context.WithTimeout(context.Background(), alertJobTimeout)
 		defer cancel()

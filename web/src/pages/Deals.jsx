@@ -220,7 +220,7 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
           <div className="panel">
             <table>
               <thead>
-                <tr><th>Stock</th><th>Bought</th><th>Sold</th><th>Shares</th><th>Deal Date</th><th>Alerted</th></tr>
+                <tr><th>Stock</th><th>Bought</th><th>Sold</th><th>Shares</th><th>Price</th><th>Deal Date</th><th>Alerted</th></tr>
               </thead>
               <tbody>
                 {audit.filter((a) => 
@@ -235,6 +235,7 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
                     <td className="text-green">{fmtVal(a.buy_value)}</td>
                     <td className="text-red">{fmtVal(a.sell_value)}</td>
                     <td>{fmtNum(a.traded_qty)}</td>
+                    <td>{a.price ? `₹${a.price.toFixed(2)}` : "—"}</td>
                     <td>{fmtDate(a.deal_date)}</td>
                     <td>{fmtDateTime(a.alerted_at)}</td>
                   </tr>

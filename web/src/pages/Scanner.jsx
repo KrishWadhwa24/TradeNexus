@@ -44,7 +44,7 @@ export default function Scanner({ source, pattern, userId }) {
       if (r.status === "already_running") {
         setMsg("A scan is already running — hang tight.");
       } else {
-        setMsg("Scan started. Signals will appear shortly — refreshing in 8s…");
+        setMsg("Scan started. Signals will appear shortly.");
         setTimeout(() => { setMsg(""); load(); }, 8000);
       }
     } catch (e) {
@@ -96,6 +96,7 @@ export default function Scanner({ source, pattern, userId }) {
               <tr>
                 <th>Symbol</th><th>Signal</th><th>Timeframe</th>
                 {(source === "weekly" || source === "patterns") && <th>Conviction</th>}
+                <th style={{ textAlign: "right" }}>Price</th>
                 <th>Scanner(s)</th><th>Candle date</th><th>Action</th>
               </tr>
             </thead>
@@ -119,6 +120,9 @@ export default function Scanner({ source, pattern, userId }) {
                       ) : "—"}
                     </td>
                   )}
+                  <td data-label="Price" className="muted" style={{ textAlign: "right" }}>
+                    {s.price != null ? `₹${s.price.toFixed(2)}` : "—"}
+                  </td>
                   <td data-label="Scanner(s)" className="muted">{PATTERN_LABELS[s.scanner_name] || s.scanner_name}</td>
                   <td data-label="Candle date" className="muted">{s.candle_date?.slice(0, 10)}</td>
                   <td data-label="Action">

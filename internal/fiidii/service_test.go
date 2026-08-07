@@ -142,3 +142,69 @@ func TestMaybeSendAlert_RetriesAfterBroadcastFailure(t *testing.T) {
 		t.Fatalf("ledger should be marked after the successful retry")
 	}
 }
+
+// TestListWeeklyMonthly_Aggregates checks that daily flows stored via
+// UpsertFlow get summed correctly per week and per month, and that an
+// UpsertFlow on an existing date overwrites rather than double-counts.
+func TestListWeeklyMonthly_Aggregates(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+
+	// Two days in the current calendar month, one in the previous month —
+	// relative to "now" since ListMonthly filters by a rolling cutoff.
+	now := time.Now()
+	thisMonthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	days := []time.Time{
+		thisMonthStart,
+		thisMonthStart.AddDate(0, 0, 1),
+		thisMonthStart.AddDate(0, -1, 0),
+	}
+	t.Cleanup(func() {
+		for _, d := range days {
+			repo.pool.Exec(ctx, `DELETE FROM fiidii_flows WHERE trade_date = $1`, d)
+		}
+	})
+
+	mk := func(dii, fii float64) Snapshot {
+		return Snapshot{DII: Flow{BuyValue: dii, SellValue: 0, NetValue: dii}, FII: Flow{BuyValue: fii, SellValue: 0, NetValue: fii}}
+	}
+	for i, d := range days {
+		if err := repo.UpsertFlow(ctx, d, mk(float64(100*(i+1)), float64(-50*(i+1)))); err != nil {
+			t.Fatalf("UpsertFlow(%v): %v", d, err)
+		}
+	}
+	// Re-upsert the first day with different values — must overwrite, not add.
+	if err := repo.UpsertFlow(ctx, days[0], mk(999, 999)); err != nil {
+		t.Fatalf("UpsertFlow overwrite: %v", err)
+	}
+
+	monthly, err := repo.ListMonthly(ctx, 24)
+	if err != nil {
+		t.Fatalf("ListMonthly: %v", err)
+	}
+	var curNet, prevNet float64
+	var curFound, prevFound bool
+	prevMonthStart := thisMonthStart.AddDate(0, -1, 0)
+	for _, p := range monthly {
+		if sameMonth(p.PeriodStart, thisMonthStart) {
+			curNet, curFound = p.DII.NetValue, true
+		}
+		if sameMonth(p.PeriodStart, prevMonthStart) {
+			prevNet, prevFound = p.DII.NetValue, true
+		}
+	}
+	if !curFound || !prevFound {
+		t.Fatalf("expected both current and previous month buckets, got %+v", monthly)
+	}
+	// day0 overwritten to 999, day1 is 200 -> current month DII net = 1199.
+	if curNet != 1199 {
+		t.Fatalf("current month DII net = %v, want 1199 (overwrite must replace, not add)", curNet)
+	}
+	if prevNet != 300 { // day2: 100*3
+		t.Fatalf("previous month DII net = %v, want 300", prevNet)
+	}
+}
+
+func sameMonth(a, b time.Time) bool {
+	return a.Year() == b.Year() && a.Month() == b.Month()
+}

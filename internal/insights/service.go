@@ -9,6 +9,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
+	"tradenexus/internal/cronx"
 	"tradenexus/internal/market"
 )
 
@@ -36,13 +37,13 @@ func New(pool *pgxpool.Pool, minNetValue float64, log zerolog.Logger) *Service {
 // StartRecorder records outcomes once at startup, then daily at 03:10 IST
 // (after the overnight scan/cleanup jobs), until ctx is cancelled.
 func (s *Service) StartRecorder(ctx context.Context) {
-	go func() {
+	go cronx.Safe(s.log, func() {
 		rc, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		s.recordOutcomes(rc)
-	}()
+	})
 
-	c := cron.New(cron.WithLocation(market.IST))
+	c := cron.New(cron.WithLocation(market.IST), cron.WithChain(cronx.Recover(s.log)))
 	if _, err := c.AddFunc("10 3 * * *", func() {
 		rc, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
