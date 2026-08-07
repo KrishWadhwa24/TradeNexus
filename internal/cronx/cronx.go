@@ -14,6 +14,20 @@ func Recover(log zerolog.Logger) cron.JobWrapper {
 	return cron.Recover(logAdapter{log})
 }
 
+// Safe recovers a panic inside fn, logging it instead of letting it crash
+// the whole process. Use it around bare goroutines (ticker loops, one-shot
+// startup sequences) that aren't cron jobs and so aren't covered by
+// Recover's cron.JobWrapper — an unrecovered panic in any goroutine takes
+// down the entire process, including every other package's scheduled work.
+func Safe(log zerolog.Logger, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error().Interface("panic", r).Msg("cronx: recovered panic in background goroutine")
+		}
+	}()
+	fn()
+}
+
 type logAdapter struct{ log zerolog.Logger }
 
 func (l logAdapter) Info(msg string, kv ...interface{}) {

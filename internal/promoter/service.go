@@ -225,7 +225,7 @@ func (s *Service) StartPolling(ctx context.Context) {
 		}
 	}
 	go func() {
-		poll() // startup
+		cronx.Safe(s.log, poll) // startup
 		t := time.NewTicker(s.interval)
 		defer t.Stop()
 		for {
@@ -233,7 +233,7 @@ func (s *Service) StartPolling(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				poll()
+				cronx.Safe(s.log, poll)
 			}
 		}
 	}()

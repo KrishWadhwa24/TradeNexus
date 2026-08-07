@@ -123,14 +123,16 @@ func (s *Scheduler) Start(ctx context.Context) error {
 			t := time.NewTicker(s.cfg.IntradayInterval)
 			defer t.Stop()
 			for range t.C {
-				if !s.intraday.MarketOpen(time.Now().In(market.IST)) {
-					continue
-				}
-				c, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-				if _, err := s.intraday.Refresh(c); err != nil {
-					s.log.Error().Err(err).Msg("scheduler: intraday refresh failed")
-				}
-				cancel()
+				s.safeCall(func() {
+					if !s.intraday.MarketOpen(time.Now().In(market.IST)) {
+						return
+					}
+					c, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+					if _, err := s.intraday.Refresh(c); err != nil {
+						s.log.Error().Err(err).Msg("scheduler: intraday refresh failed")
+					}
+					cancel()
+				})
 			}
 		}()
 		s.log.Info().Dur("interval", s.cfg.IntradayInterval).Msg("intraday cache refresher started")
@@ -142,7 +144,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	// then reconcile/backfill, then (only if the market is open) warm the
 	// intraday cache. Running them one after the other avoids concurrent bulk
 	// Angel workflows tripping the rate limiter.
-	go func() {
+	go s.safeCall(func() {
 		if s.paper != nil {
 			bootCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			if n, err := s.paper.FillScheduledIfMarketOpen(bootCtx); err != nil {
@@ -170,8 +172,19 @@ func (s *Scheduler) Start(ctx context.Context) error {
 			}
 			cancel()
 		}
-	}()
+	})
 	return nil
+}
+
+// safeCall recovers a panic in fn so one bad startup/tick step logs and the
+// scheduler keeps running instead of taking down the whole process.
+func (s *Scheduler) safeCall(fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error().Interface("panic", r).Msg("scheduler: recovered panic")
+		}
+	}()
+	fn()
 }
 
 // Stop halts the cron scheduler, waiting for running jobs to finish.

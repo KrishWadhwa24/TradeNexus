@@ -44,7 +44,7 @@ export default function Scanner({ source, pattern, userId }) {
       if (r.status === "already_running") {
         setMsg("A scan is already running — hang tight.");
       } else {
-        setMsg("Scan started. Signals will appear shortly — refreshing in 8s…");
+        setMsg("Scan started. Signals will appear shortly.");
         setTimeout(() => { setMsg(""); load(); }, 8000);
       }
     } catch (e) {

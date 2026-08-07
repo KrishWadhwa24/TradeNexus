@@ -231,8 +231,11 @@ func (s *Service) StartPolling(ctx context.Context) {
 		}
 	}
 	go func() {
-		poll()                       // startup
-		s.catchUpClosingDaySignals() // catch up on today's close-day signal if we missed the cron
+		startup := func() {
+			poll()                       // startup
+			s.catchUpClosingDaySignals() // catch up on today's close-day signal if we missed the cron
+		}
+		cronx.Safe(s.log, startup)
 		t := time.NewTicker(s.interval)
 		defer t.Stop()
 		for {
@@ -240,8 +243,10 @@ func (s *Service) StartPolling(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				poll()
-				s.catchUpClosingDaySignals()
+				cronx.Safe(s.log, func() {
+					poll()
+					s.catchUpClosingDaySignals()
+				})
 			}
 		}
 	}()
