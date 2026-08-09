@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api } from "../api.js";
 
 // Admin-only candle tools: inspect / delete / refetch a specific trading day.
@@ -11,6 +11,53 @@ export default function Admin() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");     // "" | "count" | "delete" | "refetch"
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Featured stocks (shown on the public landing page, before sign-in)
+  const [featured, setFeatured] = useState([]);
+  const [featuredMax, setFeaturedMax] = useState(10);
+  const [fq, setFq] = useState("");
+  const [fresults, setFresults] = useState([]);
+  const [fBusy, setFBusy] = useState(false);
+  const [fErr, setFErr] = useState("");
+
+  const loadFeatured = React.useCallback(async () => {
+    try {
+      const r = await api.get("/v1/public/featured-stocks");
+      setFeatured(r.stocks || []);
+      setFeaturedMax(r.max || 10);
+    } catch (e) { setFErr(e.message); }
+  }, []);
+
+  useEffect(() => { loadFeatured(); }, [loadFeatured]);
+
+  async function searchFeatured(e) {
+    const v = e.target.value;
+    setFq(v);
+    if (v.trim().length < 1) { setFresults([]); return; }
+    try {
+      const r = await api.get(`/v1/instruments/search?q=${encodeURIComponent(v)}&limit=12`);
+      setFresults(r.instruments || []);
+    } catch { setFresults([]); }
+  }
+
+  async function addFeatured(inst) {
+    setFBusy(true); setFErr("");
+    try {
+      await api.post("/v1/admin/featured-stocks", { instrument_id: inst.id });
+      setFq(""); setFresults([]);
+      await loadFeatured();
+    } catch (e) { setFErr(e.message); }
+    finally { setFBusy(false); }
+  }
+
+  async function removeFeatured(inst) {
+    setFBusy(true); setFErr("");
+    try {
+      await api.del(`/v1/admin/featured-stocks/${inst.id}`);
+      await loadFeatured();
+    } catch (e) { setFErr(e.message); }
+    finally { setFBusy(false); }
+  }
 
   // Stock universe sync
   const [syncBusy, setSyncBusy] = useState(false);
@@ -87,6 +134,58 @@ export default function Admin() {
 
   return (
     <div>
+      <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+        <div className="section-title" style={{ margin: "0 0 6px" }}>
+          Featured stocks (home page) — {featured.length}/{featuredMax}
+        </div>
+        <div className="subtle" style={{ marginBottom: 14 }}>
+          Shown to every visitor on the home page, before sign-in — a fixed, curated list independent
+          of any individual watchlist. Pick up to {featuredMax}.
+        </div>
+        <input
+          style={{ width: "100%", maxWidth: 460 }}
+          placeholder="Search NSE/BSE stocks (e.g. RELI, TATA)…"
+          value={fq}
+          onChange={searchFeatured}
+          disabled={featured.length >= featuredMax}
+        />
+        {featured.length >= featuredMax && (
+          <div className="subtle" style={{ marginTop: 8 }}>
+            List is full — remove one below to add another.
+          </div>
+        )}
+        {fresults.length > 0 && (
+          <div className="search-results" style={{ maxWidth: 460 }}>
+            {fresults.map((r) => (
+              <div className="search-row" key={r.id}>
+                <div><b>{r.trading_symbol}</b> <span className="subtle">{r.name}</span></div>
+                <button
+                  className="btn-primary btn-sm pill"
+                  onClick={() => addFeatured(r)}
+                  disabled={fBusy || featured.some((f) => f.id === r.id)}
+                >
+                  {featured.some((f) => f.id === r.id) ? "Added" : "Add"}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {fErr && <div className="err" style={{ marginTop: 12 }}>{fErr}</div>}
+        {featured.length > 0 && (
+          <div className="cards" style={{ marginTop: 14 }}>
+            {featured.map((f) => (
+              <div className="card" key={f.id}>
+                <div className="label">{f.trading_symbol}</div>
+                <div className="value" style={{ fontSize: 14 }}>{f.name}</div>
+                <button className="btn-sm" style={{ marginTop: 10 }} disabled={fBusy} onClick={() => removeFeatured(f)}>
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
         <div className="section-title" style={{ margin: "0 0 6px" }}>Stock universe</div>
         <div className="subtle" style={{ marginBottom: 14 }}>

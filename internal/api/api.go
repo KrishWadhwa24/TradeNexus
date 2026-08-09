@@ -187,6 +187,9 @@ func (s *Server) Router() http.Handler {
 		r.Post("/auth/login", s.handleLogin)
 		r.Get("/users/{uid}/live-prices", s.handleLivePrices)
 		r.Get("/public/live-prices", s.handlePublicLivePrices) // landing: snapshot + live ticks (WS)
+		// Admin-curated list shown on the landing page — read is harmless to
+		// expose publicly (it must be, since the landing page is pre-auth).
+		r.Get("/public/featured-stocks", s.handleListFeaturedStocks)
 
 		// Everything below requires a valid JWT.
 		r.Group(func(r chi.Router) {
@@ -249,6 +252,10 @@ func (s *Server) Router() http.Handler {
 
 				// FII/DII admin: force-send the currently cached snapshot now.
 				r.Post("/admin/fii-dii/send-alert", s.handleFiiDiiSendAlert)
+
+				// Featured stocks: the admin-curated list shown on the landing page.
+				r.Post("/admin/featured-stocks", s.handleAddFeaturedStock)
+				r.Delete("/admin/featured-stocks/{id}", s.handleRemoveFeaturedStock)
 			})
 
 			// Users, watchlists, prefs, telegram (Module 7)

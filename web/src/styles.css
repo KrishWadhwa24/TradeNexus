@@ -1373,7 +1373,10 @@ code {
 .lp .down { color: #f0616d; }
 .lp .muted { color: #7d8590; }
 .lp .grad {
-  background: linear-gradient(100deg, #3ecf8e, #6d6efc 60%, #a78bfa);
+  /* Matches the site's actual brand gradient (.lp-primary button) — a
+     mismatched green+purple combo here read as a stray "positive" indicator
+     rather than a deliberate accent. */
+  background: linear-gradient(100deg, #6d6efc, #8b8bff);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
