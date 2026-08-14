@@ -186,7 +186,6 @@ export default function Landing({ onGetStarted }) {
         <div className="lp-dash">
           <div className="lp-dash-top">
             <span className="lp-live"><i /> {live ? "LIVE" : "CONNECTING"}</span>
-            <span className="lp-dash-sub">NSE top movers · same live feed as the dashboard</span>
           </div>
           <table className="lp-dash-table">
             <thead>
