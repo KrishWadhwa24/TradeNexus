@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { getToken, setToken } from "./api.js";
 import { Icon } from "./icons.jsx";
 import CommandPalette from "./CommandPalette.jsx";
@@ -34,17 +34,9 @@ const NAV = [
       { key: "patterns:rectangle", label: "Rectangle Box", icon: "scan" },
     ],
   },
-  {
-    group: "markets", label: "Markets", icon: "trending", items: [
-      { key: "ipo", label: "IPO Tracker", icon: "rocket" },
-      { key: "promoter", label: "Promoter Trades", icon: "pulse" },
-      { key: "bulk", label: "Bulk Deals", icon: "list" },
-      { key: "block", label: "Block Deals", icon: "list" },
-    ],
-  },
+
   { key: "audit", label: "Audit", icon: "list" },
   { key: "paper", label: "Paper Trading", icon: "wallet" },
-  { key: "profile", label: "Profile", icon: "user" },
   { key: "admin", label: "Admin", icon: "shield", admin: true },
 ];
 
@@ -74,10 +66,43 @@ const GROUP_OF_KEY = NAV.filter((n) => n.items).reduce((acc, g) => {
   return acc;
 }, {});
 
+// The ordered list of tabs driven by bottom-nav swipe gestures.
+const SWIPE_TABS = ["home", "ipo", "promoter", "bulk", "block"];
+
+// Returns true when every scrollable ancestor is at its leftmost position
+// (nothing left to pan through, so a right-swipe can open the sidebar or go prev-tab).
+function canSwipeLeft(el) {
+  let node = el;
+  while (node && node !== document.body) {
+    const ox = window.getComputedStyle(node).overflowX;
+    if ((ox === "auto" || ox === "scroll") && node.scrollWidth > node.clientWidth) {
+      if (node.scrollLeft > 4) return false;
+    }
+    node = node.parentElement;
+  }
+  return true;
+}
+
+// Returns true when every scrollable ancestor is at its rightmost position
+// (nothing right to pan through, so a left-swipe can advance to the next tab).
+function canSwipeRight(el) {
+  let node = el;
+  while (node && node !== document.body) {
+    const ox = window.getComputedStyle(node).overflowX;
+    if ((ox === "auto" || ox === "scroll") && node.scrollWidth > node.clientWidth) {
+      if (node.scrollLeft < node.scrollWidth - node.clientWidth - 4) return false;
+    }
+    node = node.parentElement;
+  }
+  return true;
+}
+
 export default function App() {
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "dark");
   const [view, setView] = useState(localStorage.getItem("view") || "home");
+  const [slideDir, setSlideDir] = useState("fade");
   const [menuOpen, setMenuOpen] = useState(false);
+  const swipeRef = useRef({}); // { startX, startY, target }
   const [collapsedGroups, setCollapsedGroups] = useState(() => {
     try { return JSON.parse(localStorage.getItem("navCollapsedGroups") || "{}"); } catch { return {}; }
   });
@@ -138,10 +163,18 @@ export default function App() {
     return () => window.removeEventListener("auth-expired", onExpire);
   }, []);
 
-  // Give the login screen a real history entry so the browser Back button
-  // returns to the landing page instead of leaving the app entirely.
+  // Handle browser back button (both for login and internal app views)
   useEffect(() => {
-    const onPopState = () => setShowLogin(false);
+    // Set the initial state so the first back navigation works properly
+    window.history.replaceState({ view }, "");
+
+    const onPopState = (e) => {
+      if (e.state && e.state.view) {
+        setSlideDir("fade"); // Default to fade on browser back/forward
+        setView(e.state.view);
+      }
+      setShowLogin(false); // Always close login screen if it was open
+    };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
@@ -208,7 +241,20 @@ export default function App() {
   }
 
   const initial = (user.email || "?").slice(0, 1).toUpperCase();
-  function go(key) { setView(key); setMenuOpen(false); }
+  function go(key) { 
+    if (key !== view) {
+      const fromIdx = SWIPE_TABS.indexOf(view);
+      const toIdx = SWIPE_TABS.indexOf(key);
+      if (fromIdx !== -1 && toIdx !== -1) {
+        setSlideDir(toIdx > fromIdx ? "left" : "right");
+      } else {
+        setSlideDir("fade");
+      }
+      window.history.pushState({ view: key }, "");
+      setView(key);
+    }
+    setMenuOpen(false); 
+  }
 
   const nav = NAV
     .filter((n) => !n.admin || isAdmin)
@@ -223,7 +269,24 @@ export default function App() {
   return (
     <div className="app">
       {menuOpen && <div className="backdrop" onClick={() => setMenuOpen(false)} />}
-      <aside className={"sidebar" + (menuOpen ? " open" : "") + (sidebarPinned ? " pinned" : " pinned-collapsed")}>
+      <aside
+        className={"sidebar" + (menuOpen ? " open" : "") + (sidebarPinned ? " pinned" : " pinned-collapsed")}
+        onTouchStart={(e) => {
+          const t = e.touches[0];
+          swipeRef.current = { startX: t.clientX, startY: t.clientY, target: e.target };
+        }}
+        onTouchEnd={(e) => {
+          const { startX, startY } = swipeRef.current;
+          if (startX == null) return;
+          const t = e.changedTouches[0];
+          const dx = t.clientX - startX;
+          const dy = t.clientY - startY;
+          swipeRef.current = {};
+          if (Math.abs(dx) < Math.abs(dy)) return; // more vertical than horizontal
+          if (Math.abs(dx) < 50) return;            // too short
+          if (dx < 0 && menuOpen) setMenuOpen(false); // swipe left → close
+        }}
+      >
         <div className="brand">
           <div className="brand-logo" onClick={() => go("home")} title="Go to home">
             <span className="prompt">&gt;_</span>
@@ -281,17 +344,51 @@ export default function App() {
             </div>
           );
         })}
-        <div className="sidebar-foot">
-          <div className="user-chip">
-            <span className="avatar">{initial}</span>
-            <div className="user-info" style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{user.email}</div>
-            </div>
-          </div>
-        </div>
+
       </aside>
 
-      <div className="main">
+      <div
+        className="main"
+        onTouchStart={(e) => {
+          const t = e.touches[0];
+          swipeRef.current = { startX: t.clientX, startY: t.clientY, target: e.target };
+        }}
+        onTouchEnd={(e) => {
+          const { startX, startY, target } = swipeRef.current;
+          if (startX == null) return;
+          const t = e.changedTouches[0];
+          const dx = t.clientX - startX;
+          const dy = t.clientY - startY;
+          swipeRef.current = {};
+
+          // Ignore swipes that started in a portaled modal (they bubble in React but aren't in .main DOM)
+          if (target && !target.closest('.main')) return;
+
+          if (Math.abs(dx) < Math.abs(dy)) return; // more vertical — ignore
+          if (Math.abs(dx) < 50) return;            // too short — ignore
+
+          const tabIdx = SWIPE_TABS.indexOf(view);
+
+          if (dx < 0) {
+            // ── Swipe LEFT (finger moves right-to-left) ──
+            // Close sidebar if open, otherwise advance to next tab.
+            if (menuOpen) { setMenuOpen(false); return; }
+            if (!canSwipeRight(target)) return; // content still has room to scroll right
+            const next = tabIdx !== -1 && tabIdx < SWIPE_TABS.length - 1
+              ? SWIPE_TABS[tabIdx + 1] : null;
+            if (next) go(next);
+          } else {
+            // ── Swipe RIGHT (finger moves left-to-right) ──
+            // Go to previous tab; if already on the first tab open the sidebar.
+            if (!canSwipeLeft(target)) return; // content still has room to scroll left
+            if (tabIdx > 0) {
+              go(SWIPE_TABS[tabIdx - 1]);
+            } else if (!menuOpen) {
+              setMenuOpen(true);
+            }
+          }
+        }}
+      >
         <div className="topbar">
           <div className="row" style={{ gap: 12 }}>
             <button className="icon-btn hamburger" onClick={() => setMenuOpen(true)} aria-label="Menu"><Icon.menu /></button>
@@ -310,12 +407,47 @@ export default function App() {
             >
               {theme === "dark" ? <Icon.sun /> : <Icon.moon />}
             </button>
+            <button
+              className="avatar-btn"
+              title="Profile"
+              onClick={() => go("profile")}
+              style={{
+                width: 32, height: 32, borderRadius: '50%',
+                background: 'var(--accent)', color: 'var(--bg)',
+                display: 'grid', placeItems: 'center',
+                fontWeight: 700, fontSize: 13, border: 'none',
+                cursor: 'pointer', padding: 0
+              }}
+            >
+              {initial}
+            </button>
           </div>
         </div>
-        <div className="content" key={view}><ErrorBoundary>{render()}</ErrorBoundary></div>
+        <div className={`content slide-${slideDir}`} key={view}><ErrorBoundary>{render()}</ErrorBoundary></div>
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
+
+      {/* ── Groww-style bottom nav (mobile only) ── */}
+      <nav className="bottom-nav" aria-label="Quick navigation">
+        {[
+          { key: "home",     label: "Dashboard",      icon: <Icon.home /> },
+          { key: "ipo",      label: "IPO",             icon: <Icon.rocket /> },
+          { key: "promoter", label: "Promoter",        icon: <Icon.pulse /> },
+          { key: "bulk",     label: "Bulk Deals",      icon: <Icon.list /> },
+          { key: "block",    label: "Block Deals",     icon: <Icon.list /> },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            className={"bn-tab" + (view === tab.key ? " bn-active" : "")}
+            onClick={() => go(tab.key)}
+            aria-label={tab.label}
+          >
+            <span className="bn-icon">{tab.icon}</span>
+            <span className="bn-label">{tab.label}</span>
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }

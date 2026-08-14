@@ -105,6 +105,27 @@ export default function IPO({ isAdmin = false }) {
   const [selected, setSelected] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
 
+  function openModal(x) {
+    setSelected(x);
+    window.history.pushState({ view: "ipo", modal: "details" }, "");
+  }
+
+  function closeModal() {
+    // Going back will trigger the popstate listener to clear `selected`
+    window.history.back();
+  }
+
+  // Handle browser back button to close modal without leaving the page
+  useEffect(() => {
+    const onPop = () => {
+      if (selected) {
+        setSelected(null);
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [selected]);
+
   function load() {
     setLoading(true);
     setErr("");
@@ -190,7 +211,7 @@ export default function IPO({ isAdmin = false }) {
               <div
                 className={"ipo-card clickable" + (x.status === "open" ? " is-open" : "")}
                 key={x.id}
-                onClick={() => setSelected(x)}
+                onClick={() => openModal(x)}
               >
                 <div className="ipo-card-top">
                   <div className="ipo-id">
@@ -238,37 +259,37 @@ export default function IPO({ isAdmin = false }) {
                   <span><b>Lists</b> {fmtDate(x.listing_date)}</span>
                 </div>
 
-                {(x.signal_tier || isAdmin) && (
-                  <div className="ipo-foot" onClick={(e) => e.stopPropagation()}>
-                    {x.signal_tier && (
-                      <span className={"conv conv-" + gmpLevel(x.gmp_percent)}>
-                        {TIER_LABEL[x.signal_tier] || x.signal_tier}
-                        {isAdmin && (
-                          <button
-                            className="conv-x"
-                            title="Remove this signal for all users (does not touch Telegram)"
-                            disabled={busy === x.id}
-                            onClick={() => clearSignal(x)}
-                          >
-                            ×
-                          </button>
-                        )}
-                      </span>
-                    )}
-                    {isAdmin && (
-                      <button className="btn-sm btn-primary" disabled={busy === x.id} onClick={() => apply(x)}>
-                        {busy === x.id ? "Sending…" : "Send Apply"}
-                      </button>
-                    )}
-                  </div>
-                )}
+                <div className="ipo-foot" onClick={(e) => e.stopPropagation()}>
+                  <button className="btn-sm" onClick={() => openModal(x)}>Details</button>
+                  
+                  {x.signal_tier && (
+                    <span className={"conv conv-" + gmpLevel(x.gmp_percent)} style={{ marginLeft: "auto" }}>
+                      {TIER_LABEL[x.signal_tier] || x.signal_tier}
+                      {isAdmin && (
+                        <button
+                          className="conv-x"
+                          title="Remove this signal for all users (does not touch Telegram)"
+                          disabled={busy === x.id}
+                          onClick={() => clearSignal(x)}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </span>
+                  )}
+                  {isAdmin && (
+                    <button className="btn-sm btn-primary" disabled={busy === x.id} onClick={() => apply(x)}>
+                      {busy === x.id ? "Sending…" : "Send Apply"}
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
         </div>
       )}
 
-      {selected && <SubscriptionModal ipo={selected} onClose={() => setSelected(null)} />}
+      {selected && <SubscriptionModal ipo={selected} onClose={closeModal} />}
     </div>
   );
 }
