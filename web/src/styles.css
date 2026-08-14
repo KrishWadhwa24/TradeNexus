@@ -328,6 +328,25 @@ h3,
   width: 100%;
 }
 
+@keyframes slide-left {
+  from { transform: translateX(30px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slide-right {
+  from { transform: translateX(-30px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.content.slide-left { animation: slide-left 0.25s ease-out; }
+.content.slide-right { animation: slide-right 0.25s ease-out; }
+.content.slide-fade { animation: fade-in 0.2s ease-out; }
+
 /* ---------- Controls ---------- */
 button,
 select,
@@ -1062,6 +1081,8 @@ code {
 
   .content {
     padding: 18px 16px;
+    /* leave room for the fixed bottom nav */
+    padding-bottom: calc(18px + 70px);
   }
 
   .topbar {
@@ -1654,6 +1675,98 @@ code {
   /* lp-links is hidden on mobile so nothing fills the flex gap —
      push the CTA to the far right manually */
   .lp-nav-cta { margin-left: auto; }
+}
+
+/* ======================= BOTTOM NAV (mobile) ======================= */
+.bottom-nav {
+  display: none; /* shown only on mobile via media query */
+}
+
+@media (max-width: 860px) {
+  .bottom-nav {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 45;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border-top: 1px solid rgba(255, 255, 255, .07);
+    padding: 0 4px;
+    /* hide scrollbar visually but keep it scrollable */
+    scrollbar-width: none;
+  }
+
+  .bottom-nav::-webkit-scrollbar { display: none; }
+
+  .bn-tab {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-width: 72px;
+    padding: 10px 10px 12px;
+    background: none;
+    border: none;
+    border-radius: 0;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .3px;
+    cursor: pointer;
+    transition: color .15s;
+    position: relative;
+  }
+
+  .bn-tab::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%) scaleX(0);
+    width: 28px;
+    height: 2.5px;
+    border-radius: 0 0 3px 3px;
+    background: linear-gradient(90deg, #6d6efc, #8b8bff);
+    transition: transform .18s ease, opacity .18s;
+    opacity: 0;
+  }
+
+  .bn-tab.bn-active {
+    color: #8b8bff;
+  }
+
+  .bn-tab.bn-active::after {
+    transform: translateX(-50%) scaleX(1);
+    opacity: 1;
+  }
+
+  .bn-icon {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+  }
+
+  .bn-icon svg {
+    width: 20px;
+    height: 20px;
+    stroke: currentColor;
+  }
+
+  .bn-label {
+    white-space: nowrap;
+  }
 }
 
 /* ---------- IPO cards ---------- */
@@ -2437,7 +2550,6 @@ code {
   .deal-hero { flex-wrap: wrap; }
   .deal-hero-div { display: none; }
   .deal-hero-stat { flex-basis: 45%; }
-  .deal-raw-price { display: none; }
 }
 /* ---------- Insights ---------- */
 .ins-perf-grid {
