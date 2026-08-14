@@ -1461,7 +1461,7 @@ code {
   background: linear-gradient(100deg, #6d6efc, #8b8bff);
   color: #fff; border: none; border-radius: 10px;
   padding: 10px 18px; font-weight: 600; font-family: var(--font-mono);
-  font-size: 13.5px; cursor: pointer;
+  font-size: 13.5px; cursor: pointer; white-space: nowrap;
   transition: filter .12s, transform .12s;
   box-shadow: 0 8px 24px rgba(109, 110, 252, .35);
 }
@@ -1472,7 +1472,7 @@ code {
   background: rgba(255, 255, 255, .05); color: #e8eaed;
   border: 1px solid rgba(255, 255, 255, .12); border-radius: 10px;
   padding: 10px 18px; font-weight: 600; font-family: var(--font-mono);
-  font-size: 13.5px; cursor: pointer;
+  font-size: 13.5px; cursor: pointer; white-space: nowrap;
   transition: border-color .12s, background .12s;
 }
 .lp-ghost:hover { border-color: rgba(255, 255, 255, .3); background: rgba(255, 255, 255, .08); }
@@ -1633,6 +1633,27 @@ code {
   .lp-links { display: none; }
   .lp-feat-grid, .lp-steps { grid-template-columns: 1fr; }
   .lp-dash-table .lp-name { display: none; }
+
+  /* Tone down the hero glow on mobile — the 900px blob overwhelms the narrow
+     viewport and creates an ugly purple wash on small screens. */
+  .lp-hero-glow {
+    width: 480px;
+    height: 300px;
+    top: -60px;
+    background: radial-gradient(closest-side, rgba(109, 110, 252, .10), rgba(62, 207, 142, .04) 55%, transparent 75%);
+    filter: blur(30px);
+  }
+
+  /* Compact nav buttons on mobile — keep them small and single-line */
+  .lp-nav-cta .lp-primary,
+  .lp-nav-cta .lp-ghost {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  /* lp-links is hidden on mobile so nothing fills the flex gap —
+     push the CTA to the far right manually */
+  .lp-nav-cta { margin-left: auto; }
 }
 
 /* ---------- IPO cards ---------- */
