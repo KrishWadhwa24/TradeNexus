@@ -3,4 +3,9 @@ bin/
 *.log
 .DS_Store
 web/node_modules/
+<<<<<<< Updated upstream
+=======
+web/.env.local
+node_modules
+>>>>>>> Stashed changes
 IMPLEMENTATION_PLAN.md

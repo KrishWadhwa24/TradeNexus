@@ -21,6 +21,15 @@ export function livePricesURL(userId) {
   return `${wsBase}/v1/users/${userId}/live-prices?${qs}`;
 }
 
+// publicLivePricesURL is the pre-login landing page's equivalent — no auth,
+// no user id. Must also respect VITE_API_BASE_URL (the backend is a separate
+// deployment from this static frontend), not just window.location.host.
+export function publicLivePricesURL() {
+  const base = import.meta.env.VITE_API_BASE_URL || window.location.origin;
+  const wsBase = base.replace(/^http/, "ws");
+  return `${wsBase}/v1/public/live-prices`;
+}
+
 export function connectLivePrices(userId, { onMessage, onOpen, onClose, onError } = {}) {
   let ws = null;
   let retryTimer = null;

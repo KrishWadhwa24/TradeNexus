@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Icon } from "../icons";
+import { publicLivePricesURL } from "../api.js";
 
 const inr = (n) => (n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -18,8 +19,9 @@ function useLiveStocks() {
     let ws = null;
     let retry = null;
 
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${proto}//${window.location.host}/v1/public/live-prices`;
+    // Must respect VITE_API_BASE_URL — the backend is a separate deployment
+    // from this static frontend (e.g. a Cloudflare tunnel), not the same host.
+    const url = publicLivePricesURL();
 
     const connect = () => {
       if (stopped) return;
