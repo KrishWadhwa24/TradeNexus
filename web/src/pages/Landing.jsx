@@ -31,7 +31,10 @@ function useLiveStocks() {
         if (!msg) return;
 
         if (msg.type === "snapshot") {
-          const list = (msg.rows || []).slice(0, 8).map((p) => {
+          // No client-side cap here — the backend already caps at
+          // instruments.MaxFeatured (10) when serving the admin-curated
+          // featured list; slicing again here would silently hide some.
+          const list = (msg.rows || []).map((p) => {
             prevClose.current[p.symbol] = p.prev_close || p.last_close || p.price || 0;
             return { sym: p.symbol, px: p.price || 0, chg: p.pct_change || 0, rsi: p.rsi14 || 0, dir: 0 };
           });
@@ -110,7 +113,7 @@ export default function Landing({ onGetStarted }) {
         <div className="lp-hero-grid">
           <div className="lp-hero-copy">
             <span className="lp-kicker">// NSE + BSE · REAL-TIME SCANNER</span>
-            <h1 className="lp-title">Catch the move<br />before the <span className="grad">crowd does.</span></h1>
+            <h1 className="lp-title">Catch the move<br />before the <span className="grad">crowd</span> does.</h1>
             <p className="lp-lead">
               TradeNexus scans every NSE &amp; BSE stock across daily, weekly and monthly timeframes —
               Chase-Momentum Pine logic, four weekly confluence scanners, and confirmed chart-pattern

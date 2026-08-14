@@ -77,26 +77,36 @@ func (s *Server) handleLivePrices(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /v1/public/live-prices — PUBLIC (no auth) real-time price stream for a
-// small set of trending stocks, for the pre-login landing page. Reuses the same
-// Angel live hub as the authenticated dashboard feed — real ticks, no polling.
+// small set of stocks, for the pre-login landing page. Reuses the same Angel
+// live hub as the authenticated dashboard feed — real ticks, no polling.
+// Shows the admin-curated featured list (see internal/instruments/featured.go)
+// so every visitor sees the same deliberately-chosen stocks; falls back to
+// algorithmic top-movers only if the admin hasn't curated a list yet, so the
+// landing page is never empty by default.
 func (s *Server) handlePublicLivePrices(w http.ResponseWriter, r *http.Request) {
 	if s.live == nil || s.analytics == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "live prices not configured"})
 		return
 	}
 
-	movers, err := s.analytics.TopMovers(r.Context(), 8)
+	items, err := s.inst.ListFeatured(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	var items []instruments.Instrument
-	for _, m := range movers {
-		it, gerr := s.inst.GetByID(r.Context(), m.InstrumentID)
-		if gerr != nil {
-			continue
+	if len(items) == 0 {
+		movers, err := s.analytics.TopMovers(r.Context(), 8)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
 		}
-		items = append(items, it)
+		for _, m := range movers {
+			it, gerr := s.inst.GetByID(r.Context(), m.InstrumentID)
+			if gerr != nil {
+				continue
+			}
+			items = append(items, it)
+		}
 	}
 
 	ch, cancel, err := s.live.Subscribe(r.Context(), items)

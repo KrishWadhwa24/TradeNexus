@@ -4,10 +4,95 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 
 	"tradenexus/internal/auth"
 	"tradenexus/internal/users"
 )
+
+const googleTokenInfoURL = "https://oauth2.googleapis.com/tokeninfo"
+
+type googleAuthBody struct {
+	IDToken string `json:"id_token"`
+}
+
+// googleTokenInfo mirrors Google's tokeninfo response — email_verified comes
+// back as a string ("true"/"false"), a long-standing quirk of this endpoint.
+type googleTokenInfo struct {
+	Aud           string `json:"aud"`
+	Email         string `json:"email"`
+	EmailVerified string `json:"email_verified"`
+	ErrorDesc     string `json:"error_description"`
+}
+
+// POST /v1/auth/google {id_token} — "Sign in with Google". Verifies the ID
+// token against Google's own tokeninfo endpoint: Google does the actual
+// signature verification, we just check it was issued for our client ID and
+// the email is verified. Deliberately avoids pulling in a JWKS-verification
+// dependency — Google's own docs flag tokeninfo as lower-throughput than
+// their client libraries, which doesn't matter at this app's scale, and it
+// means zero new Go dependencies for this feature.
+func (s *Server) handleGoogleLogin(w http.ResponseWriter, r *http.Request) {
+	if s.googleClientID == "" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Google sign-in not configured"})
+		return
+	}
+	var b googleAuthBody
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.IDToken == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id_token is required"})
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		googleTokenInfoURL+"?id_token="+url.QueryEscape(b.IDToken), nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "google verification failed: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	var info googleTokenInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "google verification decode failed"})
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		msg := info.ErrorDesc
+		if msg == "" {
+			msg = "invalid Google token"
+		}
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": msg})
+		return
+	}
+	if info.Aud != s.googleClientID {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "token was not issued for this app"})
+		return
+	}
+	if info.EmailVerified != "true" || info.Email == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Google account email is not verified"})
+		return
+	}
+
+	// CreateUser is idempotent (upsert-by-email) — the same call handles both
+	// "brand new Google-only user" and "user already registered, signing in
+	// with Google this time" without touching their existing password_hash.
+	id, err := s.users.CreateUser(r.Context(), info.Email)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	_, _, isAdmin, err := s.users.AuthByEmail(r.Context(), info.Email)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	s.issueToken(w, id, info.Email, isAdmin)
+}
 
 type authBody struct {
 	Email    string `json:"email"`

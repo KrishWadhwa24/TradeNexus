@@ -57,6 +57,10 @@ type Config struct {
 
 	// Auth
 	JWTSecret string `env:"JWT_SECRET" envDefault:"dev-change-me-please"`
+	// GoogleClientID is the OAuth client ID for "Sign in with Google" — public
+	// value (safe to also expose to the frontend), used to check the "aud"
+	// claim on a Google ID token so we only accept tokens issued for this app.
+	GoogleClientID string `env:"GOOGLE_CLIENT_ID" envDefault:""`
 
 	// Admin bootstrap: if both are set, an admin account is upserted on boot.
 	AdminEmail    string `env:"ADMIN_EMAIL" envDefault:""`
