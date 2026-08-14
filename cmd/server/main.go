@@ -227,27 +227,28 @@ func main() {
 	srv := &http.Server{
 		Addr: ":" + cfg.HTTPPort,
 		Handler: api.NewServer(api.Deps{
-			Log:         log,
-			PG:          pg,
-			RDB:         rdb,
-			Limiter:     angelLimiter,
-			Angel:       angelClient,
-			Instruments: instRepo,
-			Candles:     candleRepo,
-			Engine:      engineSvc,
-			Signals:     signalRepo,
-			Calendar:    calSvc,
-			Users:       userRepo,
-			Notifier:    dispatcher,
-			Analytics:   analyticsSvc,
-			Paper:       paperSvc,
-			Live:        liveHub,
-			IPO:         ipoSvc,
-			Promoter:    promoterSvc,
-			Deals:       dealsSvc,
-			Insights:    insightsSvc,
-			FiiDii:      fiidiiSvc,
-			JWTSecret:   cfg.JWTSecret,
+			Log:            log,
+			PG:             pg,
+			RDB:            rdb,
+			Limiter:        angelLimiter,
+			Angel:          angelClient,
+			Instruments:    instRepo,
+			Candles:        candleRepo,
+			Engine:         engineSvc,
+			Signals:        signalRepo,
+			Calendar:       calSvc,
+			Users:          userRepo,
+			Notifier:       dispatcher,
+			Analytics:      analyticsSvc,
+			Paper:          paperSvc,
+			Live:           liveHub,
+			IPO:            ipoSvc,
+			Promoter:       promoterSvc,
+			Deals:          dealsSvc,
+			Insights:       insightsSvc,
+			FiiDii:         fiidiiSvc,
+			JWTSecret:      cfg.JWTSecret,
+			GoogleClientID: cfg.GoogleClientID,
 		}).Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -277,3 +278,6 @@ func main() {
 	}
 	log.Info().Msg("bye")
 }
+
+
+//end

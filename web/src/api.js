@@ -143,6 +143,7 @@ export async function download(path, filename) {
 export const authApi = {
   login: (email, password) => req("POST", "/v1/auth/login", { email, password }),
   register: (email, password) => req("POST", "/v1/auth/register", { email, password }),
+  google: (idToken) => req("POST", "/v1/auth/google", { id_token: idToken }),
 };
 
 // convLevel maps a signal's confidence to "low" | "med" | "high" so the UI can
