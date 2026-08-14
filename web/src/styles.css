@@ -812,6 +812,31 @@ tbody tr:hover {
   grid-template-columns: 1.05fr .95fr;
 }
 
+.back-home-btn {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
+  transition: background .15s, border-color .15s, transform .15s;
+}
+.back-home-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-2);
+  transform: translateX(-2px);
+}
+
 @media (max-width: 860px) {
   .auth-wrap {
     grid-template-columns: 1fr;
