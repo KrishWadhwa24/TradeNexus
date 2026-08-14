@@ -39,52 +39,54 @@ import (
 
 // Deps bundles everything the HTTP handlers need.
 type Deps struct {
-	Log         zerolog.Logger
-	PG          *store.Postgres
-	RDB         *store.Redis
-	Limiter     *ratelimit.Limiter
-	Angel       *angel.Client
-	Instruments *instruments.Repo
-	Candles     *candles.Repo
-	Engine      *engine.Service
-	Signals     *signals.Repo
-	Calendar    *calendar.Service
-	Users       *users.Repo
-	Notifier    *notify.Dispatcher
-	Analytics   *analytics.Service
-	Paper       *paper.Service
-	Live        *live.Hub
-	IPO         *ipo.Service
-	Promoter    *promoter.Service
-	Deals       *deals.Service
-	Insights    *insights.Service
-	FiiDii      *fiidii.Service
-	JWTSecret   string
+	Log            zerolog.Logger
+	PG             *store.Postgres
+	RDB            *store.Redis
+	Limiter        *ratelimit.Limiter
+	Angel          *angel.Client
+	Instruments    *instruments.Repo
+	Candles        *candles.Repo
+	Engine         *engine.Service
+	Signals        *signals.Repo
+	Calendar       *calendar.Service
+	Users          *users.Repo
+	Notifier       *notify.Dispatcher
+	Analytics      *analytics.Service
+	Paper          *paper.Service
+	Live           *live.Hub
+	IPO            *ipo.Service
+	Promoter       *promoter.Service
+	Deals          *deals.Service
+	Insights       *insights.Service
+	FiiDii         *fiidii.Service
+	JWTSecret      string
+	GoogleClientID string
 }
 
 // Server holds shared dependencies for handlers.
 type Server struct {
-	log       zerolog.Logger
-	pg        *store.Postgres
-	rdb       *store.Redis
-	limiter   *ratelimit.Limiter
-	angel     *angel.Client
-	inst      *instruments.Repo
-	candles   *candles.Repo
-	engine    *engine.Service
-	signals   *signals.Repo
-	cal       *calendar.Service
-	users     *users.Repo
-	notifier  *notify.Dispatcher
-	analytics *analytics.Service
-	paper     *paper.Service
-	live      *live.Hub
-	ipo       *ipo.Service
-	promoter  *promoter.Service
-	deals     *deals.Service
-	insights  *insights.Service
-	fiidii    *fiidii.Service
-	jwtSecret string
+	log            zerolog.Logger
+	pg             *store.Postgres
+	rdb            *store.Redis
+	limiter        *ratelimit.Limiter
+	angel          *angel.Client
+	inst           *instruments.Repo
+	candles        *candles.Repo
+	engine         *engine.Service
+	signals        *signals.Repo
+	cal            *calendar.Service
+	users          *users.Repo
+	notifier       *notify.Dispatcher
+	analytics      *analytics.Service
+	paper          *paper.Service
+	live           *live.Hub
+	ipo            *ipo.Service
+	promoter       *promoter.Service
+	deals          *deals.Service
+	insights       *insights.Service
+	fiidii         *fiidii.Service
+	jwtSecret      string
+	googleClientID string
 
 	// scanRunning guards manual scan-all so repeated clicks don't stack.
 	scanRunning atomic.Bool
@@ -99,27 +101,28 @@ type Server struct {
 // NewServer constructs the API server with its dependencies.
 func NewServer(d Deps) *Server {
 	return &Server{
-		log:       d.Log,
-		pg:        d.PG,
-		rdb:       d.RDB,
-		limiter:   d.Limiter,
-		angel:     d.Angel,
-		inst:      d.Instruments,
-		candles:   d.Candles,
-		engine:    d.Engine,
-		signals:   d.Signals,
-		cal:       d.Calendar,
-		users:     d.Users,
-		notifier:  d.Notifier,
-		analytics: d.Analytics,
-		paper:     d.Paper,
-		live:      d.Live,
-		ipo:       d.IPO,
-		promoter:  d.Promoter,
-		deals:     d.Deals,
-		insights:  d.Insights,
-		fiidii:    d.FiiDii,
-		jwtSecret: d.JWTSecret,
+		log:            d.Log,
+		pg:             d.PG,
+		rdb:            d.RDB,
+		limiter:        d.Limiter,
+		angel:          d.Angel,
+		inst:           d.Instruments,
+		candles:        d.Candles,
+		engine:         d.Engine,
+		signals:        d.Signals,
+		cal:            d.Calendar,
+		users:          d.Users,
+		notifier:       d.Notifier,
+		analytics:      d.Analytics,
+		paper:          d.Paper,
+		live:           d.Live,
+		ipo:            d.IPO,
+		promoter:       d.Promoter,
+		deals:          d.Deals,
+		insights:       d.Insights,
+		fiidii:         d.FiiDii,
+		jwtSecret:      d.JWTSecret,
+		googleClientID: d.GoogleClientID,
 	}
 }
 
@@ -185,6 +188,7 @@ func (s *Server) Router() http.Handler {
 		// Public auth endpoints.
 		r.Post("/auth/register", s.handleRegister)
 		r.Post("/auth/login", s.handleLogin)
+		r.Post("/auth/google", s.handleGoogleLogin)
 		r.Get("/users/{uid}/live-prices", s.handleLivePrices)
 		r.Get("/public/live-prices", s.handlePublicLivePrices) // landing: snapshot + live ticks (WS)
 		// Admin-curated list shown on the landing page — read is harmless to
