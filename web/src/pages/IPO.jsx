@@ -48,6 +48,11 @@ function SubscriptionModal({ ipo, onClose }) {
     ["NII", ipo.nii],
     ["RII", ipo.rii],
   ];
+
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
   // Rendered via a portal straight onto <body> — modals must never inherit
   // an ancestor's layout (a page with tall scrollable content can otherwise
   // throw off a plain `position: fixed` centering, depending on the browser).

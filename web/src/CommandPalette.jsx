@@ -20,9 +20,13 @@ export default function CommandPalette({ open, onClose, commands }) {
     if (open) {
       setQ("");
       setActive(0);
+      document.body.style.overflow = "hidden";
       // focus after paint
       const id = window.setTimeout(() => inputRef.current?.focus(), 20);
-      return () => window.clearTimeout(id);
+      return () => {
+        window.clearTimeout(id);
+        document.body.style.overflow = "";
+      };
     }
   }, [open]);
 
@@ -32,7 +36,6 @@ export default function CommandPalette({ open, onClose, commands }) {
 
   function choose(cmd) {
     if (!cmd) return;
-    onClose();
     cmd.run();
   }
 

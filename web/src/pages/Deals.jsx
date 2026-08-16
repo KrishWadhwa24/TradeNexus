@@ -50,6 +50,11 @@ function DetailModal({ type, symbol, onClose }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
   return createPortal(
     <div className="deal-backdrop" role="presentation" onClick={onClose}>
       <div className="deal-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
@@ -146,6 +151,26 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
   const [searchQuery, setSearchQuery] = useState("");
 
   const label = type === "block" ? "Block" : "Bulk";
+
+  function openModal(symbol) {
+    setSelected(symbol);
+    window.history.pushState({ view: type, modal: "details" }, "");
+  }
+
+  function closeModal() {
+    window.history.back();
+  }
+
+  // Handle browser back button to close modal
+  useEffect(() => {
+    const onPop = () => {
+      if (selected) {
+        setSelected(null);
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [selected]);
 
   function load() {
     setLoading(true);
@@ -257,7 +282,7 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
               <div className={"promoter-card" + (buy ? " is-buy" : " is-sell")} key={x.symbol}>
                 <div className="promoter-card-top">
                   <div>
-                    <button className="ipo-name ipo-name-btn deals-symbol" onClick={() => setSelected(x.symbol)}>{x.symbol}</button>
+                    <button className="ipo-name ipo-name-btn deals-symbol" onClick={() => openModal(x.symbol)}>{x.symbol}</button>
                     <span className="promoter-company">{x.security_name}</span>
                   </div>
                   <span className={"chip " + (buy ? "chip-buy" : "chip-sell")}>{buy ? "TOP BUYER" : "TOP SELLER"}</span>
@@ -282,7 +307,7 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
                 <div className="promoter-foot">
                   <span className="promoter-filed-at">Latest: {fmtDate(x.last_deal_date)}</span>
                   <div className="row" style={{ gap: 8 }}>
-                    <button className="btn-sm" onClick={() => setSelected(x.symbol)}>Details</button>
+                    <button className="btn-sm" onClick={() => openModal(x.symbol)}>Details</button>
                     {isAdmin && (
                       <button className="btn-sm" disabled={busy === x.symbol} onClick={() => fireAlert(x.symbol)}>
                         {busy === x.symbol ? "Sending…" : "Fire alert"}
@@ -296,7 +321,7 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
         </div>
       )}
 
-      {selected && <DetailModal type={type} symbol={selected} onClose={() => setSelected(null)} />}
+      {selected && <DetailModal type={type} symbol={selected} onClose={closeModal} />}
     </div>
   );
 }
