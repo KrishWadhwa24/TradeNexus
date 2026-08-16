@@ -52,6 +52,13 @@ html,
 body,
 #root {
   height: 100%;
+  width: 100%;
+  /* No overflow:hidden here — only the authenticated dashboard shell (.app)
+     needs to be locked to one viewport with its own internal scroll area;
+     it already sets that itself below. Locking it globally broke normal
+     page scroll (Landing, Login) wherever content is taller than one
+     screen — a nested-scroll-container pattern that's especially fragile
+     on mobile touch scrolling. */
 }
 
 body {
@@ -84,7 +91,9 @@ h3,
 /* ---------- Layout ---------- */
 .app {
   display: flex;
-  min-height: 100vh;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -294,6 +303,79 @@ h3,
   min-width: 0;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  position: relative;
+}
+
+/* ── Custom Pull-to-Refresh ── */
+.ptr-indicator {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 0;
+  overflow: visible;
+  z-index: 200;
+  pointer-events: none;
+  transition: none;
+}
+
+.ptr-indicator.ptr-snapping {
+  transition: height 0.25s ease-out;
+}
+
+.ptr-spinner {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0,0,0,.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.3) translateY(4px);
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+/* Arrow icon via pseudo-element */
+.ptr-spinner::after {
+  content: "";
+  width: 20px;
+  height: 20px;
+  border: 3px solid transparent;
+  border-top-color: var(--accent);
+  border-right-color: var(--accent);
+  border-radius: 50%;
+  display: block;
+}
+
+/* Show spinner as soon as user starts pulling */
+.ptr-indicator.ptr-pulling .ptr-spinner {
+  opacity: 0.6;
+  transform: scale(0.7) translateY(4px);
+}
+
+.ptr-indicator.ptr-active .ptr-spinner {
+  opacity: 1;
+  transform: scale(1) translateY(4px);
+}
+
+.ptr-indicator.ptr-refreshing .ptr-spinner {
+  opacity: 1;
+  transform: scale(1) translateY(4px);
+  animation: ptr-spin 0.6s linear infinite;
+}
+
+@keyframes ptr-spin {
+  to { transform: rotate(360deg); }
 }
 
 .topbar {
@@ -1058,7 +1140,18 @@ code {
 }
 
 /* ---------- Responsive ---------- */
+.show-on-mobile {
+  display: none !important;
+}
+
 @media (max-width: 860px) {
+  .hide-on-mobile {
+    display: none !important;
+  }
+  .show-on-mobile {
+    display: inline !important;
+  }
+
   .sidebar {
     position: fixed;
     top: 0;
@@ -1081,8 +1174,8 @@ code {
 
   .content {
     padding: 18px 16px;
-    /* leave room for the fixed bottom nav */
-    padding-bottom: calc(18px + 70px);
+    /* leave room for the fixed bottom nav + iPhone home bar */
+    padding-bottom: calc(18px + 70px + env(safe-area-inset-bottom));
   }
 
   .topbar {
@@ -1105,6 +1198,18 @@ code {
   .cards {
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     gap: 12px;
+  }
+
+  .panel table {
+    min-width: 0;
+    width: 100%;
+  }
+
+  th,
+  td {
+    padding: 10px 8px; /* reduce padding on mobile to fit columns */
+    font-size: 12.5px;
+    text-align: center !important;
   }
 
   .card .value {
@@ -1685,6 +1790,7 @@ code {
 @media (max-width: 860px) {
   .bottom-nav {
     display: flex;
+    justify-content: center;
     position: fixed;
     bottom: 0;
     left: 0;
@@ -1698,7 +1804,7 @@ code {
     backdrop-filter: blur(18px);
     -webkit-backdrop-filter: blur(18px);
     border-top: 1px solid rgba(255, 255, 255, .07);
-    padding: 0 4px;
+    padding: 0 4px env(safe-area-inset-bottom) 4px;
     /* hide scrollbar visually but keep it scrollable */
     scrollbar-width: none;
   }
@@ -1706,7 +1812,7 @@ code {
   .bottom-nav::-webkit-scrollbar { display: none; }
 
   .bn-tab {
-    flex: 0 0 auto;
+    flex: 1 1 0%;
     scroll-snap-align: start;
     display: flex;
     flex-direction: column;

@@ -74,15 +74,24 @@ export default function Home({ userId }) {
         <div className="panel">
           <table>
             <thead>
-              <tr><th>#</th><th>Symbol</th><th>Last</th><th>Prev close</th><th>Change</th></tr>
+              <tr>
+                <th className="hide-on-mobile">#</th>
+                <th>Symbol</th>
+                <th>
+                  <span className="hide-on-mobile">Last</span>
+                  <span className="show-on-mobile">Price</span>
+                </th>
+                <th className="hide-on-mobile">Prev close</th>
+                <th>Change</th>
+              </tr>
             </thead>
             <tbody>
               {rows.map((m, i) => (
                 <tr key={m.instrument_id}>
-                  <td className="muted">{i + 1}</td>
+                  <td className="muted hide-on-mobile">{i + 1}</td>
                   <td><b>{m.symbol}</b></td>
                   <td>{fmt(m.last_close)}</td>
-                  <td className="muted">{fmt(m.prev_close)}</td>
+                  <td className="muted hide-on-mobile">{fmt(m.prev_close)}</td>
                   <td className={m.pct_change >= 0 ? "pos" : "neg"}>{pct(m.pct_change)}</td>
                 </tr>
               ))}

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { getToken, setToken } from "./api.js";
 import { Icon } from "./icons.jsx";
 import CommandPalette from "./CommandPalette.jsx";
@@ -32,6 +32,14 @@ const NAV = [
       { key: "patterns:cup_handle", label: "Cup and Handle", icon: "scan" },
       { key: "patterns:downtrend_breakout", label: "Downtrend Breakout", icon: "scan" },
       { key: "patterns:rectangle", label: "Rectangle Box", icon: "scan" },
+    ],
+  },
+  {
+    group: "markets", label: "Markets", icon: "trending", mobileHidden: true, items: [
+      { key: "ipo", label: "IPO Tracker", icon: "rocket" },
+      { key: "promoter", label: "Promoter Trades", icon: "pulse" },
+      { key: "bulk", label: "Bulk Deals", icon: "list" },
+      { key: "block", label: "Block Deals", icon: "list" },
     ],
   },
 
@@ -103,6 +111,10 @@ export default function App() {
   const [slideDir, setSlideDir] = useState("fade");
   const [menuOpen, setMenuOpen] = useState(false);
   const swipeRef = useRef({}); // { startX, startY, target }
+  const mainRef = useRef(null);
+  const [ptrState, setPtrState] = useState("idle"); // idle | pulling | active | refreshing
+  const [ptrHeight, setPtrHeight] = useState(0);
+  const ptrRef = useRef({ startY: 0, pulling: false });
   const [collapsedGroups, setCollapsedGroups] = useState(() => {
     try { return JSON.parse(localStorage.getItem("navCollapsedGroups") || "{}"); } catch { return {}; }
   });
@@ -174,22 +186,90 @@ export default function App() {
         setView(e.state.view);
       }
       setShowLogin(false); // Always close login screen if it was open
+      setPaletteOpen(false); // ALWAYS close the command palette if it was open
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
+
+  function openPalette() {
+    setPaletteOpen(true);
+    window.history.pushState(Object.assign({}, window.history.state, { modal: "cmdk" }), "");
+  }
 
   // Cmd/Ctrl-K toggles the command palette.
   useEffect(() => {
     const onKey = (e) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
         e.preventDefault();
-        setPaletteOpen((o) => !o);
+        if (paletteOpen) {
+          window.history.back();
+        } else {
+          openPalette();
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [paletteOpen]);
+
+  // ── Custom pull-to-refresh (replaces native since body is overflow:hidden) ──
+  const PTR_THRESHOLD = 60;
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+
+    const onTouchStart = (e) => {
+      // Only start tracking if scrolled to the very top
+      if (el.scrollTop > 0) return;
+      ptrRef.current = { startY: e.touches[0].clientY, pulling: false };
+    };
+
+    const onTouchMove = (e) => {
+      const { startY } = ptrRef.current;
+      if (startY === 0) return;
+      const dy = e.touches[0].clientY - startY;
+      if (dy < 0) { ptrRef.current.startY = 0; return; } // pulling up, ignore
+
+      // Don't interfere until we're sure user is pulling down at the top
+      if (el.scrollTop > 0) { ptrRef.current.startY = 0; return; }
+
+      ptrRef.current.pulling = true;
+      // Apply resistance (diminishing returns past threshold)
+      const pull = Math.min(dy * 0.45, 100);
+      setPtrHeight(pull);
+      setPtrState(pull >= PTR_THRESHOLD ? "active" : "pulling");
+
+      // Prevent the page bounce on iOS
+      if (dy > 0 && el.scrollTop <= 0) {
+        e.preventDefault();
+      }
+    };
+
+    const onTouchEnd = () => {
+      if (!ptrRef.current.pulling) { ptrRef.current = { startY: 0, pulling: false }; return; }
+
+      if (ptrHeight >= PTR_THRESHOLD) {
+        setPtrState("refreshing");
+        setPtrHeight(0);
+        // Reload after a brief visual delay
+        setTimeout(() => window.location.reload(), 600);
+      } else {
+        setPtrState("idle");
+        setPtrHeight(0);
+      }
+      ptrRef.current = { startY: 0, pulling: false };
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [ptrHeight]);
 
   function onAuthed(u) {
     setUser(u);
@@ -250,10 +330,14 @@ export default function App() {
       } else {
         setSlideDir("fade");
       }
-      window.history.pushState({ view: key }, "");
+      
+      // Always use replaceState for top-level navigation so we don't build up
+      // a massive back-button history of tab switches.
+      window.history.replaceState({ view: key }, "");
       setView(key);
     }
     setMenuOpen(false); 
+    setPaletteOpen(false);
   }
 
   const nav = NAV
@@ -262,8 +346,8 @@ export default function App() {
   const leafItems = nav.flatMap((n) => n.items || [n]);
   const commands = [
     ...leafItems.map((n) => ({ id: "nav-" + n.key, label: n.label, hint: "Go to page", run: () => go(n.key) })),
-    { id: "theme", label: "Toggle theme (dark / light)", hint: "Appearance", run: () => setTheme(theme === "dark" ? "light" : "dark") },
-    { id: "signout", label: "Sign out", hint: "Session", run: logout },
+    { id: "theme", label: "Toggle theme (dark / light)", hint: "Appearance", run: () => { setTheme(theme === "dark" ? "light" : "dark"); window.history.back(); } },
+    { id: "signout", label: "Sign out", hint: "Session", run: () => { logout(); window.history.back(); } },
   ];
 
   return (
@@ -307,7 +391,7 @@ export default function App() {
             const collapsed = !!collapsedGroups[n.group];
             const hasActive = n.items.some((it) => it.key === view);
             return (
-              <div className="nav-group" key={n.group}>
+              <div className={"nav-group" + (n.mobileHidden ? " hide-on-mobile" : "")} key={n.group}>
                 <div
                   className={"nav-group-head" + (hasActive ? " active" : "")}
                   onClick={() => toggleGroup(n.group)}
@@ -336,7 +420,7 @@ export default function App() {
           return (
             <div
               key={n.key}
-              className={"nav-item" + (view === n.key ? " active" : "")}
+              className={"nav-item" + (view === n.key ? " active" : "") + (n.mobileHidden ? " hide-on-mobile" : "")}
               onClick={() => go(n.key)}
               title={n.label}
             >
@@ -349,22 +433,33 @@ export default function App() {
 
       <div
         className="main"
+        ref={mainRef}
         onTouchStart={(e) => {
           const t = e.touches[0];
-          swipeRef.current = { startX: t.clientX, startY: t.clientY, target: e.target };
+          swipeRef.current = { startX: t.clientX, startY: t.clientY, target: e.target, isLocked: false, isVertical: false };
+        }}
+        onTouchMove={(e) => {
+          const state = swipeRef.current;
+          if (state.startX == null || state.isLocked) return;
+          const t = e.changedTouches[0];
+          const dx = t.clientX - state.startX;
+          const dy = t.clientY - state.startY;
+          if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+            state.isLocked = true;
+            state.isVertical = Math.abs(dy) > Math.abs(dx);
+          }
         }}
         onTouchEnd={(e) => {
-          const { startX, startY, target } = swipeRef.current;
+          const { startX, target, isVertical } = swipeRef.current;
           if (startX == null) return;
           const t = e.changedTouches[0];
           const dx = t.clientX - startX;
-          const dy = t.clientY - startY;
           swipeRef.current = {};
 
           // Ignore swipes that started in a portaled modal (they bubble in React but aren't in .main DOM)
           if (target && !target.closest('.main')) return;
 
-          if (Math.abs(dx) < Math.abs(dy)) return; // more vertical — ignore
+          if (isVertical) return;                   // Locked to vertical scroll — ignore
           if (Math.abs(dx) < 50) return;            // too short — ignore
 
           const tabIdx = SWIPE_TABS.indexOf(view);
@@ -395,7 +490,7 @@ export default function App() {
             <h1>{TITLES[view]}</h1>
           </div>
           <div className="topbar-right">
-            <button className="cmdk-trigger" title="Command palette" onClick={() => setPaletteOpen(true)}>
+            <button className="cmdk-trigger" title="Command palette" onClick={openPalette}>
               <Icon.search />
               <span>Search</span>
               <kbd>⌘K</kbd>
@@ -423,10 +518,16 @@ export default function App() {
             </button>
           </div>
         </div>
+        <div
+          className={`ptr-indicator${ptrState === "pulling" ? " ptr-pulling" : ""}${ptrState === "active" ? " ptr-active" : ""}${ptrState === "refreshing" ? " ptr-refreshing ptr-active" : ""}${ptrState === "idle" && ptrHeight === 0 ? " ptr-snapping" : ""}`}
+          style={{ height: ptrState === "refreshing" ? 48 : ptrHeight }}
+        >
+          <div className="ptr-spinner" />
+        </div>
         <div className={`content slide-${slideDir}`} key={view}><ErrorBoundary>{render()}</ErrorBoundary></div>
       </div>
 
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
+      <CommandPalette open={paletteOpen} onClose={() => window.history.back()} commands={commands} />
 
       {/* ── Groww-style bottom nav (mobile only) ── */}
       <nav className="bottom-nav" aria-label="Quick navigation">
