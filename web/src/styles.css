@@ -2042,6 +2042,8 @@ code {
   color: var(--muted);
   border: 1px solid var(--border);
   text-transform: capitalize;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .chip-open {
