@@ -160,6 +160,74 @@ function Confluence({ stocks }) {
 /* ---- FII/DII activity ---- */
 const NSE_MONTHS = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
 
+// Renders the day's FII/DII snapshot onto an off-screen canvas and downloads
+// it as a PNG — a branded card easy to share on WhatsApp/Telegram, no
+// screenshot cropping required.
+async function downloadFiiDiiImage(snap) {
+  await document.fonts.ready; // avoid drawing with fallback fonts before the real ones load
+
+  const scale = 2, W = 720, H = 400;
+  const canvas = document.createElement("canvas");
+  canvas.width = W * scale;
+  canvas.height = H * scale;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(scale, scale);
+
+  ctx.fillStyle = "#0d0f13";
+  ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = "#1d2129";
+  ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
+
+  ctx.fillStyle = "#8b8bff";
+  ctx.font = "700 18px 'Space Grotesk', sans-serif";
+  ctx.fillText(">_ TradeNexus", 32, 46);
+
+  ctx.fillStyle = "#e8eaed";
+  ctx.font = "700 26px 'Space Grotesk', sans-serif";
+  ctx.fillText("FII / DII Activity", 32, 88);
+
+  ctx.fillStyle = "#7d8590";
+  ctx.font = "400 14px 'JetBrains Mono', monospace";
+  ctx.fillText(`NSE cash market, in ₹ crore — as of ${snap.date}`, 32, 112);
+
+  const colX = [32, 220, 400, 560];
+  const headY = 160;
+  ctx.font = "600 13px 'JetBrains Mono', monospace";
+  ["", "Buy", "Sell", "Net"].forEach((h, i) => ctx.fillText(h, colX[i], headY));
+
+  ctx.strokeStyle = "#1d2129";
+  ctx.beginPath();
+  ctx.moveTo(32, headY + 14);
+  ctx.lineTo(W - 32, headY + 14);
+  ctx.stroke();
+
+  [["DII", snap.dii], ["FII", snap.fii]].forEach(([label, f], i) => {
+    const y = headY + 56 + i * 54;
+    ctx.fillStyle = "#e8eaed";
+    ctx.font = "700 17px 'Space Grotesk', sans-serif";
+    ctx.fillText(label, colX[0], y);
+    ctx.font = "500 16px 'JetBrains Mono', monospace";
+    ctx.fillText(`₹${fmt(f.buy_value)} Cr`, colX[1], y);
+    ctx.fillText(`₹${fmt(f.sell_value)} Cr`, colX[2], y);
+    ctx.fillStyle = f.net_value >= 0 ? "#3ecf8e" : "#f0616d";
+    ctx.fillText(`${f.net_value >= 0 ? "+" : ""}₹${fmt(f.net_value)} Cr`, colX[3], y);
+  });
+
+  ctx.fillStyle = "#7d8590";
+  ctx.font = "400 12px 'JetBrains Mono', monospace";
+  ctx.fillText(`Generated ${new Date().toLocaleString("en-IN")}`, 32, H - 22);
+
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `fii-dii-${snap.date}.png`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, "image/png");
+}
+
 function isStaleNseDate(s) {
   const [d, mon, y] = String(s).split("-");
   if (!(mon in NSE_MONTHS)) return false;
@@ -199,11 +267,16 @@ function FiiDii({ snap, isAdmin }) {
             {isStaleNseDate(snap.date) ? " (last published trading day)" : ""}
           </div>
         </div>
-        {isAdmin && (
-          <button className="btn-sm" onClick={sendAlert} disabled={busy} title="Send this snapshot to the Telegram stock-signal topic now">
-            {busy ? "Sending…" : "Send alert now"}
+        <div className="row" style={{ gap: 8 }}>
+          <button className="btn-sm" onClick={() => downloadFiiDiiImage(snap)} title="Download this snapshot as a shareable image">
+            Download image
           </button>
-        )}
+          {isAdmin && (
+            <button className="btn-sm" onClick={sendAlert} disabled={busy} title="Send this snapshot to the Telegram stock-signal topic now">
+              {busy ? "Sending…" : "Send alert now"}
+            </button>
+          )}
+        </div>
       </div>
       <table>
         <thead>

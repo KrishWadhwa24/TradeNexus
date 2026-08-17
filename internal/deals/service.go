@@ -363,14 +363,18 @@ func (s *Service) StartPolling(ctx context.Context) {
 
 	c := cron.New(cron.WithLocation(market.IST), cron.WithChain(cronx.Recover(s.log)))
 	if _, err := c.AddFunc(s.alertCron, func() {
+		start := time.Now()
+		s.log.Info().Str("cron", s.alertCron).Msg("deals: alert cron tick")
 		pc, cancel := context.WithTimeout(context.Background(), alertJobTimeout)
 		defer cancel()
 		s.ProcessRecent(pc)
+		s.log.Info().Dur("took", time.Since(start)).Msg("deals: alert cron tick done")
 	}); err != nil {
 		s.log.Error().Err(err).Str("cron", s.alertCron).Msg("deals: alert cron invalid")
 	}
 	// Daily retention prune at 02:40 IST.
 	if _, err := c.AddFunc("40 2 * * *", func() {
+		s.log.Info().Msg("deals: prune cron tick")
 		pc, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		cutoff := time.Now().In(market.IST).AddDate(0, 0, -s.retention)
