@@ -14,7 +14,10 @@ type Repo struct{ pool *pgxpool.Pool }
 func NewRepo(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
 
 // InsertRows stores raw deal rows idempotently (duplicates from a re-fetched
-// day are ignored). Returns how many new rows were actually inserted.
+// day are ignored). Returns how many new rows were actually inserted. Each
+// genuinely new mutual-fund row also gets folded into that fund's permanent
+// position (see accumulateFundPosition) — this is the only place new deal
+// rows enter the system, so it's the only place that needs to know about it.
 func (r *Repo) InsertRows(ctx context.Context, rows []Row) (int, error) {
 	inserted := 0
 	for _, row := range rows {
@@ -29,6 +32,11 @@ func (r *Repo) InsertRows(ctx context.Context, rows []Row) (int, error) {
 		}
 		if tag.RowsAffected() > 0 {
 			inserted++
+			if isMutualFund(row.ClientName) {
+				if err := r.accumulateFundPosition(ctx, row); err != nil {
+					return inserted, err
+				}
+			}
 		}
 	}
 	return inserted, nil

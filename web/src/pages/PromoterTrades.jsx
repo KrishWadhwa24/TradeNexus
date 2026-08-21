@@ -146,7 +146,7 @@ export default function PromoterTrades({ isAdmin = false }) {
             const buy = isBuy(x.event_type);
             const qtyDelta = (x.qty_after || 0) - (x.qty_before || 0);
             return (
-              <div className={"promoter-card" + (buy ? " is-buy" : " is-sell")} key={x.id}>
+              <div className="promoter-card" key={x.id}>
                 <div className="promoter-card-top">
                   <div>
                     <span className="promoter-symbol">{x.symbol}</span>

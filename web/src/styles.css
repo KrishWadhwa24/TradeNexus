@@ -23,6 +23,19 @@
   --radius: 12px;
   --shadow: 0 1px 0 rgba(255, 255, 255, .02), 0 10px 30px rgba(0, 0, 0, .4);
   --grid: rgba(255, 255, 255, .022);
+
+  /* Mutual-fund holdings palette: a fixed 7-slot categorical set + one
+     neutral "Other" bucket. A 9th+ stock never gets a generated hue — it
+     folds into --mf-other instead, so colors stay stable and distinct from
+     the buy/sell semantic --green/--red used elsewhere. */
+  --mf-1: #3987e5;
+  --mf-2: #d95926;
+  --mf-3: #199e70;
+  --mf-4: #c98500;
+  --mf-5: #d55181;
+  --mf-6: #6a3fd1;
+  --mf-7: #4aa3a3;
+  --mf-other: #4a4f5c;
 }
 
 [data-theme="light"] {
@@ -42,6 +55,15 @@
   --red: #d92d43;
   --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 8px 24px rgba(16, 24, 40, .06);
   --grid: rgba(16, 24, 40, .03);
+
+  --mf-1: #2a78d6;
+  --mf-2: #d1550f;
+  --mf-3: #178a63;
+  --mf-4: #a86e00;
+  --mf-5: #c23d70;
+  --mf-6: #5a34b8;
+  --mf-7: #2f8484;
+  --mf-other: #c7ccd4;
 }
 
 * {
@@ -2258,28 +2280,21 @@ code {
 }
 
 .promoter-card {
-  background: var(--surface);
+  background: linear-gradient(165deg, var(--surface) 0%, var(--surface-2) 130%);
   border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 16px 16px 14px;
+  border-radius: 16px;
+  padding: 17px 17px 15px;
   box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
   gap: 10px;
-  transition: border-color .12s, transform .12s;
+  transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
 }
 
 .promoter-card:hover {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  transform: translateY(-1px);
-}
-
-.promoter-card.is-buy {
-  border-left: 3px solid var(--green);
-}
-
-.promoter-card.is-sell {
-  border-left: 3px solid var(--red);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  transform: translateY(-2px);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .28);
 }
 
 .promoter-card-top {
@@ -2622,8 +2637,8 @@ code {
 
 .deal-raw-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) 52px 90px 70px 85px;
-  min-width: 480px;
+  grid-template-columns: minmax(120px, 1fr) 52px 90px 88px 85px;
+  min-width: 500px;
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
@@ -2645,6 +2660,7 @@ code {
 .deal-raw-price {
   font-family: var(--font-mono);
   text-align: right;
+  white-space: nowrap;
 }
 
 .deal-raw-date {
@@ -2655,7 +2671,7 @@ code {
 }
 
 @media (max-width: 560px) {
-  .deal-hero { flex-wrap: wrap; }
+  .deal-hero { flex-wrap: wrap; justify-content: center; }
   .deal-hero-div { display: none; }
   .deal-hero-stat { flex-basis: 45%; }
 }
@@ -2843,6 +2859,152 @@ code {
 
 .fiidii-bar-dii.is-pos { fill: color-mix(in srgb, var(--green) 18%, transparent); stroke: var(--green); stroke-width: 1.5; }
 .fiidii-bar-dii.is-neg { fill: color-mix(in srgb, var(--red) 18%, transparent); stroke: var(--red); stroke-width: 1.5; }
+
+/* ---------- Mutual fund analyser (cards) ---------- */
+.mf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.mf-card {
+  background: linear-gradient(165deg, var(--surface) 0%, var(--surface-2) 130%);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px 18px 16px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+
+.mf-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  transform: translateY(-2px);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .28);
+}
+
+.mf-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mf-card-eyebrow {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .7px;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+
+.mf-card-name {
+  font-family: var(--font-display);
+  font-size: 16.5px;
+  font-weight: 700;
+  color: var(--text);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  line-height: 1.25;
+}
+
+.mf-card-name:hover { color: var(--accent-2); }
+
+.mf-card-ratio {
+  height: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--red) 32%, var(--surface-2));
+  overflow: hidden;
+}
+
+.mf-card-ratio-buy {
+  height: 100%;
+  background: var(--green);
+  border-radius: 999px;
+}
+
+.mf-card-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.mf-card-stats .k {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+
+.mf-card-stats .v {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.mf-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+
+/* ---------- Mutual fund analyser (charts) ---------- */
+.mf-charts {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin: 16px 0;
+}
+
+.mf-pie-wrap {
+  flex: 0 0 auto;
+}
+
+.mf-bar-chart {
+  flex: 1 1 380px;
+  min-width: 320px;
+}
+
+.mf-bar-rect { transition: opacity .12s ease; }
+.mf-bar-rect:hover { opacity: .75; }
+
+.mf-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 200px;
+}
+
+.mf-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.mf-legend-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.mf-legend-symbol { font-weight: 600; margin-right: auto; }
+.mf-legend-pct { color: var(--muted); min-width: 40px; text-align: right; }
 
 /* ---------- Error boundary ---------- */
 .err-boundary {

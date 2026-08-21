@@ -16,6 +16,7 @@ import Admin from "./pages/Admin.jsx";
 import IPO from "./pages/IPO.jsx";
 import PromoterTrades from "./pages/PromoterTrades.jsx";
 import Deals from "./pages/Deals.jsx";
+import MutualFunds from "./pages/MutualFunds.jsx";
 import Insights from "./pages/Insights.jsx";
 
 // Flat top-level entries and collapsible groups. A group's `items` are the
@@ -35,11 +36,12 @@ const NAV = [
     ],
   },
   {
-    group: "markets", label: "Markets", icon: "trending", mobileHidden: true, items: [
+    group: "markets", label: "Markets", icon: "trending", items: [
       { key: "ipo", label: "IPO Tracker", icon: "rocket" },
       { key: "promoter", label: "Promoter Trades", icon: "pulse" },
       { key: "bulk", label: "Bulk Deals", icon: "list" },
       { key: "block", label: "Block Deals", icon: "list" },
+      { key: "mutual-funds", label: "Mutual Funds", icon: "wallet" },
     ],
   },
 
@@ -62,6 +64,7 @@ const TITLES = {
   promoter: "Promoter Trades",
   bulk: "Bulk Deals",
   block: "Block Deals",
+  "mutual-funds": "Mutual Fund Analyser",
   audit: "Signal Audit",
   paper: "Paper Trading",
   profile: "Profile",
@@ -312,6 +315,7 @@ export default function App() {
       case "promoter": return <PromoterTrades isAdmin={isAdmin} />;
       case "bulk": return <Deals type="bulk" isAdmin={isAdmin} />;
       case "block": return <Deals type="block" isAdmin={isAdmin} />;
+      case "mutual-funds": return <MutualFunds />;
       case "audit": return <Audit isAdmin={isAdmin} />;
       case "paper": return <Paper {...p} />;
       case "profile": return <Profile {...p} onLogout={logout} />;

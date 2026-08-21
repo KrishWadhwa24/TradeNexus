@@ -205,7 +205,7 @@ func main() {
 		if dispatcher != nil {
 			fiidiiBC = notify.StockBroadcaster{D: dispatcher}
 		}
-		fiidiiSvc = fiidii.New(fiidii.NewClient(), fiidiiBC, calSvc.Cal(), fiidii.NewRepo(pg.Pool), log)
+		fiidiiSvc = fiidii.New(fiidii.NewClient(), fiidiiBC, calSvc.Cal(), cfg.MarketCloseBufferMin, fiidii.NewRepo(pg.Pool), log)
 		fiidiiSvc.StartPolling(ctx)
 	}
 

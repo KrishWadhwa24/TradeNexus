@@ -253,6 +253,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/admin/promoter-trades/{id}/send-alert", s.handlePromoterSendAlert)
 				r.Post("/admin/deals/refresh", s.handleRefreshDeals)
 				r.Post("/admin/deals/{type}/{symbol}/send-alert", s.handleDealsSendAlert)
+				r.Post("/admin/mutual-funds/backfill", s.handleBackfillMutualFunds)
 
 				// FII/DII admin: force-send the currently cached snapshot now.
 				r.Post("/admin/fii-dii/send-alert", s.handleFiiDiiSendAlert)
@@ -298,6 +299,11 @@ func (s *Server) Router() http.Handler {
 			r.Get("/block-deals", s.handleListDeals(deals.Block))
 			r.Get("/block-deals/audit", s.handleDealsAudit(deals.Block))
 			r.Get("/block-deals/{symbol}", s.handleDealDetail(deals.Block))
+
+			// Mutual fund analyser: permanent per-fund positions built from
+			// bulk/block deal client rows.
+			r.Get("/mutual-funds", s.handleListMutualFunds)
+			r.Get("/mutual-funds/{fund}", s.handleMutualFundDetail)
 
 			r.Get("/insights/performance", s.handleInsightsPerformance)
 			r.Get("/insights/breadth", s.handleInsightsBreadth)

@@ -26,32 +26,46 @@ type Broadcaster interface {
 	Broadcast(ctx context.Context, text string) (int, error)
 }
 
-// Calendar reports whether a given day is an NSE trading day. Implemented by
+// Calendar reports NSE trading-day/session-close facts. Implemented by
 // *calendar.Calendar (via calendar.Service.Cal()).
 type Calendar interface {
 	IsTradingDay(t time.Time) bool
+	// LastFinalizedTradingDay returns the most recent trading day whose
+	// session has fully closed, skipping weekends/holidays — see
+	// calendar.Calendar.LastFinalizedTradingDay.
+	LastFinalizedTradingDay(now time.Time, bufferMinutes int) time.Time
 }
+
+// defaultCloseBufferMin mirrors engine's fallback (internal/engine/service.go)
+// so a zero/unset value behaves sensibly rather than treating every moment as
+// past close.
+const defaultCloseBufferMin = 15
 
 // Service holds only the most recently fetched snapshot in memory — only the
 // per-date auto-alert ledger (Repo) survives a restart.
 type Service struct {
-	client *Client
-	bc     Broadcaster // optional; nil disables the Telegram alert
-	cal    Calendar
-	repo   *Repo
-	log    zerolog.Logger
+	client      *Client
+	bc          Broadcaster // optional; nil disables the Telegram alert
+	cal         Calendar
+	closeBuffer int // minutes after 15:30 IST before a day counts as finalized
+	repo        *Repo
+	log         zerolog.Logger
 
 	mu                sync.RWMutex
 	latest            Snapshot
-	readyDate         string // IST date (2006-01-02) we've confirmed THAT DAY's data for
+	readyDate         string // IST date (2006-01-02) we've confirmed the LAST FINALIZED trading day's data for
 	reconcileDoneDate string // IST date the daily reconcile+scan+dispatch pipeline finished for
 	alertedDate       string // IST date the auto Telegram alert has already been sent for, this process
 }
 
 // New builds the FII/DII service. bc may be nil (disables the Telegram alert
-// entirely; the API/table still works off whatever's fetched).
-func New(client *Client, bc Broadcaster, cal Calendar, repo *Repo, log zerolog.Logger) *Service {
-	return &Service{client: client, bc: bc, cal: cal, repo: repo, log: log}
+// entirely; the API/table still works off whatever's fetched). closeBufferMin
+// <= 0 falls back to defaultCloseBufferMin.
+func New(client *Client, bc Broadcaster, cal Calendar, closeBufferMin int, repo *Repo, log zerolog.Logger) *Service {
+	if closeBufferMin <= 0 {
+		closeBufferMin = defaultCloseBufferMin
+	}
+	return &Service{client: client, bc: bc, cal: cal, closeBuffer: closeBufferMin, repo: repo, log: log}
 }
 
 // Latest returns the most recently fetched snapshot, and false if nothing has
@@ -137,6 +151,27 @@ func (s *Service) bootstrap(ctx context.Context) {
 	if err := s.fetchAndStore(c); err != nil {
 		s.log.Warn().Err(err).Msg("fiidii: startup fetch failed")
 	}
+	s.checkLastTradingDayCoverage(c)
+}
+
+// checkLastTradingDayCoverage logs, right after every startup fetch, whether
+// we actually have data for the most recent finalized trading day — so a
+// genuine gap (NSE simply never published it, or published it too late to
+// have been caught by the isToday-only check this replaces) is visible
+// immediately in the logs instead of silently missing, as happened before.
+func (s *Service) checkLastTradingDayCoverage(ctx context.Context) {
+	expected := s.cal.LastFinalizedTradingDay(time.Now().In(market.IST), s.closeBuffer)
+	have, err := s.repo.HasFlow(ctx, expected)
+	if err != nil {
+		s.log.Error().Err(err).Msg("fiidii: last-trading-day coverage check failed")
+		return
+	}
+	if have {
+		s.log.Info().Str("date", dateKey(expected)).Msg("fiidii: last trading day's data confirmed present")
+		return
+	}
+	s.log.Warn().Str("date", dateKey(expected)).
+		Msg("fiidii: last trading day's data still missing after startup fetch — NSE hasn't published it yet, will keep retrying")
 }
 
 // nextDelay decides how long to sleep before the next check:
@@ -147,8 +182,9 @@ func (s *Service) bootstrap(ctx context.Context) {
 func (s *Service) nextDelay(now time.Time) time.Duration {
 	tomorrowClose := time.Date(now.Year(), now.Month(), now.Day()+1, marketCloseHour, 0, 0, 0, market.IST)
 
+	expected := s.cal.LastFinalizedTradingDay(now, s.closeBuffer)
 	s.mu.RLock()
-	ready := s.readyDate == dateKey(now)
+	ready := s.readyDate == dateKey(expected)
 	s.mu.RUnlock()
 	if ready || !s.cal.IsTradingDay(now) {
 		return tomorrowClose.Sub(now)
@@ -179,21 +215,30 @@ func (s *Service) fetchAndStore(ctx context.Context) error {
 		return err
 	}
 
-	if day, perr := parseNSEDate(snap.Date); perr == nil {
-		if err := s.repo.UpsertFlow(ctx, day, snap); err != nil {
-			s.log.Error().Err(err).Str("date", snap.Date).Msg("fiidii: store flow failed")
-		}
+	day, perr := parseNSEDate(snap.Date)
+	if perr != nil {
+		s.log.Error().Err(perr).Str("date", snap.Date).Msg("fiidii: bad snapshot date")
+		return nil
+	}
+	if err := s.repo.UpsertFlow(ctx, day, snap); err != nil {
+		s.log.Error().Err(err).Str("date", snap.Date).Msg("fiidii: store flow failed")
 	}
 
-	isToday := isTodayIST(snap.Date)
+	// isExpected asks "is this the last finalized trading day's data?" rather
+	// than the stricter (and, around midnight, wrong) "is this literally
+	// today?" — a snapshot for e.g. Friday can arrive well past midnight into
+	// Saturday and still be exactly the data we've been waiting for; the old
+	// isToday check silently refused to alert on it.
+	expected := s.cal.LastFinalizedTradingDay(time.Now().In(market.IST), s.closeBuffer)
+	isExpected := dateKey(day) == dateKey(expected)
 	s.mu.Lock()
 	s.latest = snap
-	if isToday {
-		s.readyDate = dateKey(time.Now().In(market.IST))
+	if isExpected {
+		s.readyDate = dateKey(expected)
 	}
 	s.mu.Unlock()
 
-	if isToday {
+	if isExpected {
 		s.maybeSendAlert()
 	}
 	return nil

@@ -32,6 +32,15 @@ func (r *Repo) MarkAlerted(ctx context.Context, day time.Time) error {
 	return err
 }
 
+// HasFlow reports whether a flow row is already stored for day.
+func (r *Repo) HasFlow(ctx context.Context, day time.Time) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM fiidii_flows WHERE trade_date = $1)`,
+		day).Scan(&exists)
+	return exists, err
+}
+
 // UpsertFlow stores (or refreshes, if NSE revises a published day) one day's
 // DII/FII buy/sell/net, so weekly/monthly trend can be computed later.
 func (r *Repo) UpsertFlow(ctx context.Context, day time.Time, snap Snapshot) error {
