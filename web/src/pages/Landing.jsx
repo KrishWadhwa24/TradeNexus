@@ -75,7 +75,7 @@ function signalFor(chg, rsi) {
   return "—";
 }
 
-export default function Landing({ onGetStarted }) {
+export default function Landing({ onGetStarted, theme, onToggleTheme }) {
   const { rows, live } = useLiveStocks();
   const [scrolled, setScrolled] = useState(false);
   const dashRef = useRef(null);
@@ -101,8 +101,14 @@ export default function Landing({ onGetStarted }) {
             <a onClick={() => scrollTo(dashRef)}>Live scanner</a>
             <a href="#features">Features</a>
             <a href="#how">How it works</a>
+            <a href="/ipo">IPO Tracker</a>
+            <a href="/promoter-trades">Promoter Buying</a>
+            <a href="/bulk-deals">Bulk Deals</a>
           </nav>
           <div className="lp-nav-cta">
+            <button className="icon-btn" title="Toggle theme" onClick={onToggleTheme}>
+              {theme === "dark" ? <Icon.sun /> : <Icon.moon />}
+            </button>
             <button className="lp-ghost" onClick={onGetStarted}>Log in</button>
             <button className="lp-primary" onClick={onGetStarted}>Get started</button>
           </div>
@@ -174,6 +180,27 @@ export default function Landing({ onGetStarted }) {
             </div>
           </div>
         )}
+      </section>
+
+      {/* FREE TOOLS — no login required, this is the whole point: a visitor
+          with no account and no URL needs an obvious, clicked-not-typed path
+          to these pages, right below the fold. */}
+      <section className="lp-sec">
+        <div className="lp-sec-head">
+          <span className="lp-kicker">// FREE · NO SIGNUP</span>
+          <h2>Browse these live, no account needed.</h2>
+          <p>Public data, updated in real time — click straight in.</p>
+        </div>
+        <div className="lp-feat-grid lp-free-grid">
+          {FREE_TOOLS.map((t) => (
+            <a className="lp-feat" href={t.href} key={t.href}>
+              <div className="lp-feat-ic">{t.icon}</div>
+              <h3>{t.title}</h3>
+              <p>{t.desc}</p>
+              <span className="lp-free-go">Open free →</span>
+            </a>
+          ))}
+        </div>
       </section>
 
       {/* LIVE DASHBOARD PREVIEW */}
@@ -270,6 +297,13 @@ export default function Landing({ onGetStarted }) {
     </div>
   );
 }
+
+const FREE_TOOLS = [
+  { href: "/ipo", icon: <Icon.rocket />, title: "IPO Tracker", desc: "Live GMP, subscription numbers and listing dates for every open & upcoming IPO." },
+  { href: "/promoter-trades", icon: <Icon.trending />, title: "Promoter Buying", desc: "Which promoters are buying their own stock, and by how much — updated live." },
+  { href: "/bulk-deals", icon: <Icon.list />, title: "Bulk Deals", desc: "Every bulk deal reported on the NSE, as it's filed." },
+  { href: "/block-deals", icon: <Icon.list />, title: "Block Deals", desc: "Every block deal reported on the NSE, as it's filed." },
+];
 
 const FEATURES = [
   { icon: <Icon.trending />, title: "Pine Chase Momentum", desc: "The full Chase-Momentum Pro strategy replayed on daily, weekly & monthly bars — trend stack, fresh breakout, volume spike and strong-candle confirmation." },

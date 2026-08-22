@@ -37,7 +37,7 @@ function isBuy(eventType) {
   return eventType.endsWith("_buy");
 }
 
-export default function PromoterTrades({ isAdmin = false }) {
+export default function PromoterTrades({ isAdmin = false, initialSymbol = null, publicView = false }) {
   const [days, setDays] = useState(30);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -46,7 +46,7 @@ export default function PromoterTrades({ isAdmin = false }) {
   const [busy, setBusy] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [filter, setFilter] = useState("all"); // all | buy | sell
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(initialSymbol || "");
 
   function load(d = days) {
     setLoading(true);
@@ -113,9 +113,11 @@ export default function PromoterTrades({ isAdmin = false }) {
           <select className="btn-sm" value={days} onChange={(e) => setDays(Number(e.target.value))}>
             {DAY_OPTIONS.map((d) => <option key={d} value={d}>{d} days</option>)}
           </select>
-          <button className="btn-sm btn-primary" disabled={scanning} onClick={scanNow}>
-            {scanning ? "Scanning…" : "Scan now"}
-          </button>
+          {!publicView && (
+            <button className="btn-sm btn-primary" disabled={scanning} onClick={scanNow}>
+              {scanning ? "Scanning…" : "Scan now"}
+            </button>
+          )}
           <button className="btn-sm" onClick={() => load()}>Reload</button>
         </div>
       </div>

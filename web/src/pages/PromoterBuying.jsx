@@ -385,7 +385,7 @@ function StockDetailModal({ symbol, onClose }) {
   );
 }
 
-export default function PromoterBuying() {
+export default function PromoterBuying({ initialSymbol = null }) {
   const [stocks, setStocks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -398,6 +398,13 @@ export default function PromoterBuying() {
     window.history.pushState({ view: "promoter-buying", modal: "details" }, "");
   }
   function closeModal() { window.history.back(); }
+
+  // Deep link support (e.g. /promoter-buying/RELIANCE): the detail modal
+  // fetches by symbol directly, so this doesn't need to wait for the list.
+  useEffect(() => {
+    if (initialSymbol) openModal(initialSymbol.toUpperCase());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const onPop = () => { if (selected) setSelected(null); };
