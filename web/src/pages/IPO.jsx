@@ -214,7 +214,7 @@ export default function IPO({ isAdmin = false }) {
             const hasGmp = x.gmp > 0 || x.gmp_percent > 0;
             return (
               <div
-                className={"ipo-card clickable" + (x.status === "open" ? " is-open" : "")}
+                className="ipo-card clickable"
                 key={x.id}
                 onClick={() => openModal(x)}
               >

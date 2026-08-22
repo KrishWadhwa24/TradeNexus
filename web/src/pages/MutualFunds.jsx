@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { api } from "../api.js";
 import { Icon } from "../icons.jsx";
 import { SkeletonGrid } from "../Skeleton.jsx";
@@ -12,8 +14,8 @@ function fmtNum(n) {
 // Compact rupee value: ₹1.23 Cr / ₹45.6 L / ₹1,234.
 function fmtVal(n) {
   const v = Math.abs(Number(n) || 0);
-  if (v >= 1e7) return "₹" + (v / 1e7).toFixed(2).replace(/\.?0+$/, "") + " Cr";
-  if (v >= 1e5) return "₹" + (v / 1e5).toFixed(2).replace(/\.?0+$/, "") + " L";
+  if (v >= 1e7) return "₹" + (v / 1e7).toLocaleString("en-IN", { maximumFractionDigits: 2 }) + " Cr";
+  if (v >= 1e5) return "₹" + (v / 1e5).toLocaleString("en-IN", { maximumFractionDigits: 2 }) + " L";
   return "₹" + Math.round(v).toLocaleString("en-IN");
 }
 
@@ -143,6 +145,196 @@ function FundLegend({ stocks }) {
   );
 }
 
+// Same as fmtVal but "Rs." instead of "₹" — jsPDF's default font can't
+// render the rupee glyph.
+function fmtValPdf(n) {
+  const v = Math.abs(Number(n) || 0);
+  if (v >= 1e7) return "Rs." + (v / 1e7).toLocaleString("en-IN", { maximumFractionDigits: 2 }) + " Cr";
+  if (v >= 1e5) return "Rs." + (v / 1e5).toLocaleString("en-IN", { maximumFractionDigits: 2 }) + " L";
+  return "Rs." + Math.round(v).toLocaleString("en-IN");
+}
+
+// Same 7-slot categorical palette as --mf-1..--mf-7/--mf-other in
+// styles.css, hardcoded as hex — canvas fillStyle can't resolve CSS custom
+// properties, so the on-screen and downloaded charts share values, not the
+// variables themselves.
+const MF_HEX = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#6a3fd1", "#4aa3a3"];
+const mfColorHex = (i, symbol) => (symbol === "Other" ? "#4a4f5c" : MF_HEX[i % MF_HEX.length]);
+
+// drawFundCharts paints a donut (share of buy_value) + a bar chart (buy_value
+// per stock) side by side into any 2D canvas context, at the given box —
+// shared by the PNG card (dark) and the PDF chart image (light), so both get
+// the same pie+bar the on-screen modal already shows.
+function drawFundCharts(ctx, stocks, { x, y, w, h, holeColor, mutedColor }) {
+  const totalBuy = stocks.reduce((a, s) => a + s.buy_value, 0) || 1;
+
+  const pieR = Math.min(h, w * 0.42) / 2;
+  const pieCx = x + pieR + 6;
+  const pieCy = y + h / 2;
+  let angle = -Math.PI / 2;
+  stocks.forEach((s, i) => {
+    const frac = s.buy_value / totalBuy;
+    const end = angle + frac * 2 * Math.PI;
+    ctx.beginPath();
+    ctx.moveTo(pieCx, pieCy);
+    ctx.arc(pieCx, pieCy, pieR, angle, end);
+    ctx.closePath();
+    ctx.fillStyle = mfColorHex(i, s.symbol);
+    ctx.fill();
+    angle = end;
+  });
+  ctx.beginPath();
+  ctx.arc(pieCx, pieCy, pieR * 0.55, 0, 2 * Math.PI);
+  ctx.fillStyle = holeColor;
+  ctx.fill();
+
+  const barX = pieCx + pieR + 34;
+  const barBottom = y + h - 55;
+  const barTop = y + 6;
+  const maxBuy = Math.max(1, ...stocks.map((s) => s.buy_value));
+  const n = stocks.length;
+  const gap = 8;
+  const bw = Math.max(6, (x + w - barX - gap * (n - 1)) / n);
+  stocks.forEach((s, i) => {
+    const bh = (s.buy_value / maxBuy) * (barBottom - barTop);
+    const bx = barX + i * (bw + gap);
+    ctx.fillStyle = mfColorHex(i, s.symbol);
+    ctx.fillRect(bx, barBottom - bh, bw, bh);
+    ctx.save();
+    ctx.translate(bx + bw / 2, barBottom + 10);
+    ctx.rotate(-Math.PI / 4);
+    ctx.textAlign = "right";
+    ctx.fillStyle = mutedColor;
+    ctx.font = "500 9px 'JetBrains Mono', monospace";
+    ctx.fillText(s.symbol, 0, 0);
+    ctx.restore();
+  });
+}
+
+// downloadFundImage renders a branded shareable card — the fund's headline
+// numbers, a pie+bar breakdown of its top holdings, and the full holdings
+// table — matching the same canvas-drawing approach already used for the
+// FII/DII snapshot (Insights.jsx). Meant for WhatsApp/Telegram sharing, not
+// print, hence PNG rather than PDF.
+async function downloadFundImage(fundName, detail) {
+  await document.fonts.ready;
+
+  const top = mfTopStocks(detail.stocks || []).filter((s) => s.buy_value > 0).slice(0, 8);
+  const chartH = top.length ? 250 : 0;
+  const scale = 2, W = 720, H = 170 + chartH + top.length * 34 + 60;
+  const canvas = document.createElement("canvas");
+  canvas.width = W * scale;
+  canvas.height = H * scale;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(scale, scale);
+
+  ctx.fillStyle = "#0d0f13";
+  ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = "#1d2129";
+  ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
+
+  ctx.fillStyle = "#8b8bff";
+  ctx.font = "700 18px 'Space Grotesk', sans-serif";
+  ctx.fillText(">_ TradeNexus", 32, 46);
+
+  ctx.fillStyle = "#e8eaed";
+  ctx.font = "700 26px 'Space Grotesk', sans-serif";
+  ctx.fillText(fundName, 32, 88);
+
+  ctx.fillStyle = "#7d8590";
+  ctx.font = "400 14px 'JetBrains Mono', monospace";
+  ctx.fillText(`Acquired ${fmtVal(detail.buy_value)}  ·  Sold ${fmtVal(detail.sell_value)}  ·  ${(detail.stocks || []).length} stocks held`, 32, 112);
+
+  let tableTop = 148;
+  if (top.length) {
+    drawFundCharts(ctx, top, { x: 32, y: 128, w: W - 64, h: chartH - 20, holeColor: "#0d0f13", mutedColor: "#7d8590" });
+    tableTop = 128 + chartH;
+  }
+
+  const colX = [32, 380, 560];
+  ctx.font = "600 13px 'JetBrains Mono', monospace";
+  ctx.fillStyle = "#7d8590";
+  ["Stock", "Acquired", "% of buys"].forEach((h, i) => ctx.fillText(h, colX[i], tableTop));
+
+  ctx.strokeStyle = "#1d2129";
+  ctx.beginPath();
+  ctx.moveTo(32, tableTop + 14);
+  ctx.lineTo(W - 32, tableTop + 14);
+  ctx.stroke();
+
+  const totalBuy = top.reduce((a, s) => a + s.buy_value, 0) || 1;
+  top.forEach((s, i) => {
+    const y = tableTop + 44 + i * 34;
+    ctx.fillStyle = "#e8eaed";
+    ctx.font = "700 14px 'Space Grotesk', sans-serif";
+    ctx.fillText(s.symbol, colX[0], y);
+    ctx.font = "500 13px 'JetBrains Mono', monospace";
+    ctx.fillStyle = "#3ecf8e";
+    ctx.fillText(fmtVal(s.buy_value), colX[1], y);
+    ctx.fillStyle = "#7d8590";
+    ctx.fillText(((s.buy_value / totalBuy) * 100).toFixed(1) + "%", colX[2], y);
+  });
+
+  ctx.fillStyle = "#7d8590";
+  ctx.font = "400 12px 'JetBrains Mono', monospace";
+  ctx.fillText(`Generated ${new Date().toLocaleString("en-IN")}`, 32, H - 20);
+
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${fundName.replace(/\s+/g, "-").toLowerCase()}.png`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, "image/png");
+}
+
+// downloadFundPdf mirrors Audit.jsx's PDF pattern (jsPDF + autoTable) — the
+// same pie+bar chart (rendered onto a light-background canvas and embedded
+// as an image, since jsPDF has no native charting) above a printable,
+// tabular version of the full holdings.
+function downloadFundPdf(fundName, detail) {
+  const doc = new jsPDF();
+  doc.setFontSize(14);
+  doc.text(`TradeNexus - ${fundName}`, 14, 15);
+  doc.setFontSize(10);
+  doc.text(
+    `Acquired ${fmtValPdf(detail.buy_value)}  |  Sold ${fmtValPdf(detail.sell_value)}  |  generated ${new Date().toLocaleString()}`,
+    14, 21
+  );
+
+  const top = mfTopStocks(detail.stocks || []).filter((s) => s.buy_value > 0).slice(0, 8);
+  let startY = 27;
+  if (top.length) {
+    const chartCanvas = document.createElement("canvas");
+    const cw = 500, ch = 220, cScale = 2;
+    chartCanvas.width = cw * cScale;
+    chartCanvas.height = ch * cScale;
+    const cctx = chartCanvas.getContext("2d");
+    cctx.scale(cScale, cScale);
+    drawFundCharts(cctx, top, { x: 0, y: 0, w: cw, h: ch, holeColor: "#ffffff", mutedColor: "#444444" });
+    doc.addImage(chartCanvas.toDataURL("image/png"), "PNG", 14, startY, 180, (180 * ch) / cw);
+    startY += (180 * ch) / cw + 8;
+  }
+
+  autoTable(doc, {
+    startY,
+    head: [["Symbol", "Security", "Net qty", "Net value", "Last deal"]],
+    body: (detail.stocks || []).map((s) => [
+      s.symbol,
+      s.security_name,
+      s.net_qty.toLocaleString("en-IN"),
+      fmtValPdf(s.net_value),
+      fmtDate(s.last_deal_date),
+    ]),
+    styles: { fontSize: 8 },
+    headStyles: { fillColor: [59, 66, 92] },
+  });
+
+  doc.save(`${fundName.replace(/\s+/g, "-").toLowerCase()}.pdf`);
+}
+
 // FundDetailModal loads and shows one fund's full stock-level breakdown.
 function FundDetailModal({ fundName, onClose }) {
   const [detail, setDetail] = useState(null);
@@ -185,6 +377,11 @@ function FundDetailModal({ fundName, onClose }) {
             <div className="spinner">Loading…</div>
           ) : (
             <>
+              <div className="row" style={{ gap: 8, marginBottom: 16 }}>
+                <button className="btn-sm" onClick={() => downloadFundImage(fundName, detail)}>Download image</button>
+                <button className="btn-sm" onClick={() => downloadFundPdf(fundName, detail)}>Download PDF</button>
+              </div>
+
               <div className="deal-hero">
                 <div className="deal-hero-stat">
                   <span className="deal-hero-label">Acquired</span>

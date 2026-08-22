@@ -35,8 +35,8 @@ export default function Insights({ isAdmin }) {
     setData(null);
     const path =
       tab === "confluence" ? "/v1/insights/confluence" :
-      tab === "breadth" ? "/v1/insights/breadth?days=30" :
-      "/v1/insights/performance";
+        tab === "breadth" ? "/v1/insights/breadth?days=30" :
+          "/v1/insights/performance";
     api.get(path).then(setData).catch((e) => setErr(e.message)).finally(() => setLoading(false));
 
     if (tab === "breadth") {
@@ -57,8 +57,8 @@ export default function Insights({ isAdmin }) {
 
       {loading ? (
         tab === "performance" ? <SkeletonPerfGrid count={4} /> :
-        tab === "confluence" ? <SkeletonGrid count={6} lines={2} /> :
-        <SkeletonGrid count={3} lines={3} />
+          tab === "confluence" ? <SkeletonGrid count={6} lines={2} /> :
+            <SkeletonGrid count={3} lines={3} />
       ) : err ? (
         <div className="err">{err}</div>
       ) : tab === "performance" ? (
@@ -131,10 +131,6 @@ function Confluence({ stocks }) {
   }
   return (
     <>
-      <p className="subtle" style={{ marginTop: 0 }}>
-        Stocks where multiple independent bullish signals lined up in the last 7 days — scanner BUYs, promoter
-        buying, and big bulk/block net buyers. More sources = higher conviction.
-      </p>
       <div className="promoter-grid">
         {stocks.map((x) => (
           <div className="promoter-card is-buy" key={x.symbol}>
@@ -395,7 +391,7 @@ function FiiDiiBarChart({ points, labelFor }) {
     <svg viewBox={`0 0 ${W} ${H}`} className="ins-chart fiidii-chart" preserveAspectRatio="xMidYMid meet">
       {[1, 0.5, 0, -0.5, -1].map((f) => (
         <line key={f} x1={padLeft} x2={W - padRight} y1={y(maxAbs * f)} y2={y(maxAbs * f)}
-              className={f === 0 ? "ins-grid fiidii-zero-line" : "ins-grid"} />
+          className={f === 0 ? "ins-grid fiidii-zero-line" : "ins-grid"} />
       ))}
       {points.map((p, i) => {
         const cx = padLeft + groupW * (i + 0.5);
@@ -406,11 +402,11 @@ function FiiDiiBarChart({ points, labelFor }) {
         return (
           <g key={i} className="fiidii-bar-group">
             <rect x={cx - barW - 2} y={fiiTop} width={barW} height={fiiH} rx="2.5"
-                  className={"fiidii-bar fiidii-bar-fii" + (p.fii.net_value >= 0 ? " is-pos" : " is-neg")}>
+              className={"fiidii-bar fiidii-bar-fii" + (p.fii.net_value >= 0 ? " is-pos" : " is-neg")}>
               <title>FII net: {p.fii.net_value >= 0 ? "+" : ""}₹{fmt(p.fii.net_value)} Cr ({labelFor(p.period_start)})</title>
             </rect>
             <rect x={cx + 2} y={diiTop} width={barW} height={diiH} rx="2.5"
-                  className={"fiidii-bar fiidii-bar-dii" + (p.dii.net_value >= 0 ? " is-pos" : " is-neg")}>
+              className={"fiidii-bar fiidii-bar-dii" + (p.dii.net_value >= 0 ? " is-pos" : " is-neg")}>
               <title>DII net: {p.dii.net_value >= 0 ? "+" : ""}₹{fmt(p.dii.net_value)} Cr ({labelFor(p.period_start)})</title>
             </rect>
             {(n <= 10 || i % Math.ceil(n / 8) === 0) && (

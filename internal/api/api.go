@@ -251,6 +251,7 @@ func (s *Server) Router() http.Handler {
 
 				// Promoter trades admin: force-send a specific trade's Telegram alert.
 				r.Post("/admin/promoter-trades/{id}/send-alert", s.handlePromoterSendAlert)
+				r.Post("/admin/promoter-buying/backfill", s.handleBackfillPromoterBuying)
 				r.Post("/admin/deals/refresh", s.handleRefreshDeals)
 				r.Post("/admin/deals/{type}/{symbol}/send-alert", s.handleDealsSendAlert)
 				r.Post("/admin/mutual-funds/backfill", s.handleBackfillMutualFunds)
@@ -292,6 +293,12 @@ func (s *Server) Router() http.Handler {
 			// every logged-in user (cooldown-guarded inside the service).
 			r.Get("/promoter-trades", s.handleListPromoterTrades)
 			r.Post("/promoter-trades/scan", s.handlePromoterScanNow)
+
+			// Promoter buying analyser: permanent per-person stock positions
+			// built from promoter/KMP disclosure rows.
+			r.Get("/promoter-buying", s.handleListPromoterBuying)
+			r.Get("/promoter-buying/{symbol}", s.handlePromoterBuyingDetail)
+			r.Get("/promoter-buying/{symbol}/history", s.handlePromoterPersonHistory)
 
 			r.Get("/bulk-deals", s.handleListDeals(deals.Bulk))
 			r.Get("/bulk-deals/audit", s.handleDealsAudit(deals.Bulk))

@@ -17,6 +17,7 @@ import IPO from "./pages/IPO.jsx";
 import PromoterTrades from "./pages/PromoterTrades.jsx";
 import Deals from "./pages/Deals.jsx";
 import MutualFunds from "./pages/MutualFunds.jsx";
+import PromoterBuying from "./pages/PromoterBuying.jsx";
 import Insights from "./pages/Insights.jsx";
 
 // Flat top-level entries and collapsible groups. A group's `items` are the
@@ -36,12 +37,22 @@ const NAV = [
     ],
   },
   {
-    group: "markets", label: "Markets", icon: "trending", items: [
+    // Raw feeds — each already has its own bottom-nav tab on mobile, so this
+    // group stays sidebar-only there rather than duplicating that access.
+    group: "markets", label: "Markets", icon: "trending", mobileHidden: true, items: [
       { key: "ipo", label: "IPO Tracker", icon: "rocket" },
       { key: "promoter", label: "Promoter Trades", icon: "pulse" },
       { key: "bulk", label: "Bulk Deals", icon: "list" },
       { key: "block", label: "Block Deals", icon: "list" },
-      { key: "mutual-funds", label: "Mutual Funds", icon: "wallet" },
+    ],
+  },
+  {
+    // Derived/aggregated views — kept out of Markets on purpose (raw feed vs.
+    // analysis are different mental models) and shown on mobile since
+    // neither has a bottom-nav tab of its own.
+    group: "analyser", label: "Analyser", icon: "pulse", items: [
+      { key: "mutual-funds", label: "Mutual-Funds", icon: "wallet" },
+      { key: "promoter-buying", label: "Promoter Analyser", icon: "trending" },
     ],
   },
 
@@ -62,6 +73,7 @@ const TITLES = {
   "patterns:rectangle": "Rectangle Box",
   ipo: "IPO Tracker",
   promoter: "Promoter Trades",
+  "promoter-buying": "Promoter Buying Analyser",
   bulk: "Bulk Deals",
   block: "Block Deals",
   "mutual-funds": "Mutual Fund Analyser",
@@ -313,6 +325,7 @@ export default function App() {
       case "patterns:rectangle": return <Scanner source="patterns" pattern="pattern_rectangle" {...p} />;
       case "ipo": return <IPO isAdmin={isAdmin} />;
       case "promoter": return <PromoterTrades isAdmin={isAdmin} />;
+      case "promoter-buying": return <PromoterBuying />;
       case "bulk": return <Deals type="bulk" isAdmin={isAdmin} />;
       case "block": return <Deals type="block" isAdmin={isAdmin} />;
       case "mutual-funds": return <MutualFunds />;
@@ -325,7 +338,7 @@ export default function App() {
   }
 
   const initial = (user.email || "?").slice(0, 1).toUpperCase();
-  function go(key) { 
+  function go(key) {
     if (key !== view) {
       const fromIdx = SWIPE_TABS.indexOf(view);
       const toIdx = SWIPE_TABS.indexOf(key);
@@ -334,13 +347,13 @@ export default function App() {
       } else {
         setSlideDir("fade");
       }
-      
+
       // Always use replaceState for top-level navigation so we don't build up
       // a massive back-button history of tab switches.
       window.history.replaceState({ view: key }, "");
       setView(key);
     }
-    setMenuOpen(false); 
+    setMenuOpen(false);
     setPaletteOpen(false);
   }
 
@@ -536,11 +549,11 @@ export default function App() {
       {/* ── Groww-style bottom nav (mobile only) ── */}
       <nav className="bottom-nav" aria-label="Quick navigation">
         {[
-          { key: "home",     label: "Dashboard",      icon: <Icon.home /> },
-          { key: "ipo",      label: "IPO",             icon: <Icon.rocket /> },
-          { key: "promoter", label: "Promoter",        icon: <Icon.pulse /> },
-          { key: "bulk",     label: "Bulk Deals",      icon: <Icon.list /> },
-          { key: "block",    label: "Block Deals",     icon: <Icon.list /> },
+          { key: "home", label: "Dashboard", icon: <Icon.home /> },
+          { key: "ipo", label: "IPO", icon: <Icon.rocket /> },
+          { key: "promoter", label: "Promoter", icon: <Icon.pulse /> },
+          { key: "bulk", label: "Bulk Deals", icon: <Icon.list /> },
+          { key: "block", label: "Block Deals", icon: <Icon.list /> },
         ].map((tab) => (
           <button
             key={tab.key}
