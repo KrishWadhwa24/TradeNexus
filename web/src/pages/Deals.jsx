@@ -279,7 +279,7 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
           ).map((x) => {
             const buy = x.top_net_qty >= 0;
             return (
-              <div className={"promoter-card" + (buy ? " is-buy" : " is-sell")} key={x.symbol}>
+              <div className="promoter-card" key={x.symbol}>
                 <div className="promoter-card-top">
                   <div>
                     <button className="ipo-name ipo-name-btn deals-symbol" onClick={() => openModal(x.symbol)}>{x.symbol}</button>

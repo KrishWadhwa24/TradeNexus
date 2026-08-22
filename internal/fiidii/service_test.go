@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
+	"tradenexus/internal/calendar"
+	"tradenexus/internal/market"
 	"tradenexus/internal/store"
 )
 
@@ -74,7 +76,7 @@ func TestMaybeSendAlert_SkipsAfterRestart(t *testing.T) {
 
 	// --- "process 1": data ready + reconcile done -> should send once.
 	bc1 := &fakeBroadcaster{}
-	s1 := New(nil, bc1, nil, repo, zerolog.Nop())
+	s1 := New(nil, bc1, nil, 0, repo, zerolog.Nop())
 	s1.latest = snap
 	s1.readyDate = dateISO
 	s1.reconcileDoneDate = dateISO
@@ -93,7 +95,7 @@ func TestMaybeSendAlert_SkipsAfterRestart(t *testing.T) {
 	// --- "process 2": brand new Service (simulates a restart), same date
 	// becomes ready again -> must NOT re-send.
 	bc2 := &fakeBroadcaster{}
-	s2 := New(nil, bc2, nil, repo, zerolog.Nop())
+	s2 := New(nil, bc2, nil, 0, repo, zerolog.Nop())
 	s2.latest = snap
 	s2.readyDate = dateISO
 	s2.reconcileDoneDate = dateISO
@@ -120,7 +122,7 @@ func TestMaybeSendAlert_RetriesAfterBroadcastFailure(t *testing.T) {
 	dateISO := "2020-01-06"
 
 	bc := &fakeBroadcaster{fail: true}
-	s := New(nil, bc, nil, repo, zerolog.Nop())
+	s := New(nil, bc, nil, 0, repo, zerolog.Nop())
 	s.latest = snap
 	s.readyDate = dateISO
 	s.reconcileDoneDate = dateISO
@@ -140,6 +142,35 @@ func TestMaybeSendAlert_RetriesAfterBroadcastFailure(t *testing.T) {
 	}
 	if done, _ := repo.AlreadyAlerted(ctx, day); !done {
 		t.Fatalf("ledger should be marked after the successful retry")
+	}
+}
+
+// TestNextDelay_RecognizesLateArrivingPreviousDay is the regression test for
+// the bug report: NSE published a trading day's FII/DII data after midnight,
+// so it landed on the calendar's "next day" — the old isToday-only check
+// silently refused to treat that as ready. now (00:30 on a non-trading
+// Saturday) should resolve to Friday as the last finalized trading day, and
+// once readyDate is set to THAT date (not literal "today"), nextDelay must
+// recognize the day is done rather than spinning on hourly retries forever.
+func TestNextDelay_RecognizesLateArrivingPreviousDay(t *testing.T) {
+	cal := calendar.New(nil)
+	s := &Service{cal: cal, closeBuffer: 15}
+
+	now := time.Date(2026, 8, 22, 0, 30, 0, 0, market.IST) // Saturday 00:30
+	expected := s.cal.LastFinalizedTradingDay(now, s.closeBuffer)
+	if dateKey(expected) != "2026-08-21" { // Friday
+		t.Fatalf("expected last finalized trading day 2026-08-21, got %s", dateKey(expected))
+	}
+
+	s.readyDate = "" // data hasn't arrived yet
+	if d := s.nextDelay(now); d <= 0 {
+		t.Fatalf("expected a positive wait while not ready, got %v", d)
+	}
+
+	s.readyDate = dateKey(expected) // data just landed, keyed to the trading day it's FOR
+	tomorrowClose := time.Date(now.Year(), now.Month(), now.Day()+1, marketCloseHour, 0, 0, 0, market.IST)
+	if d := s.nextDelay(now); d != tomorrowClose.Sub(now) {
+		t.Fatalf("expected sleep-until-tomorrow-close (%v) once ready, got %v", tomorrowClose.Sub(now), d)
 	}
 }
 

@@ -30,6 +30,21 @@ export default function Admin() {
 
   useEffect(() => { loadFeatured(); }, [loadFeatured]);
 
+  // Mutual fund positions: one-time (but safe to re-run) seed from whatever's
+  // currently in market_deals — see internal/deals/funds_repo.go.
+  const [mfBusy, setMfBusy] = useState(false);
+  const [mfMsg, setMfMsg] = useState("");
+  const [mfErr, setMfErr] = useState("");
+
+  async function backfillMutualFunds() {
+    setMfBusy(true); setMfMsg(""); setMfErr("");
+    try {
+      await api.post("/v1/admin/mutual-funds/backfill", {});
+      setMfMsg("Backfill done — check the Mutual Funds page for updated positions.");
+    } catch (e) { setMfErr(e.message); }
+    finally { setMfBusy(false); }
+  }
+
   async function searchFeatured(e) {
     const v = e.target.value;
     setFq(v);
@@ -184,6 +199,21 @@ export default function Admin() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+        <div className="section-title" style={{ margin: "0 0 6px" }}>Mutual fund positions</div>
+        <div className="subtle" style={{ marginBottom: 14 }}>
+          Seeds each fund's permanent per-stock position from whatever's currently in the bulk/block
+          deals feed. Runs automatically as new deals come in — this is only needed once after a fresh
+          deploy (or to fill in a fund that predates the feature). Safe to click more than once; it can
+          only fill in gaps, never overwrite existing accumulated history.
+        </div>
+        <button className="btn-sm btn-primary" onClick={backfillMutualFunds} disabled={mfBusy}>
+          {mfBusy ? "Backfilling…" : "Run mutual fund backfill"}
+        </button>
+        {mfMsg && <div className="msg" style={{ marginTop: 12 }}>{mfMsg}</div>}
+        {mfErr && <div className="err" style={{ marginTop: 12 }}>{mfErr}</div>}
       </div>
 
       <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
