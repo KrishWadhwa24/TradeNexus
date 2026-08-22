@@ -12,8 +12,8 @@ function fmtNum(n) {
 // Compact rupee value: ₹1.23 Cr / ₹45.6 L / ₹1,234.
 function fmtVal(n) {
   const v = Math.abs(Number(n) || 0);
-  if (v >= 1e7) return "₹" + (v / 1e7).toFixed(2).replace(/\.?0+$/, "") + " Cr";
-  if (v >= 1e5) return "₹" + (v / 1e5).toFixed(2).replace(/\.?0+$/, "") + " L";
+  if (v >= 1e7) return "₹" + (v / 1e7).toLocaleString("en-IN", { maximumFractionDigits: 2 }) + " Cr";
+  if (v >= 1e5) return "₹" + (v / 1e5).toLocaleString("en-IN", { maximumFractionDigits: 2 }) + " L";
   return "₹" + Math.round(v).toLocaleString("en-IN");
 }
 

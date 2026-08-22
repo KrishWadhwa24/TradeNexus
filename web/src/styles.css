@@ -1905,24 +1905,21 @@ code {
 }
 
 .ipo-card {
-  background: var(--surface);
+  background: linear-gradient(165deg, var(--surface) 0%, var(--surface-2) 130%);
   border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 16px 16px 14px;
+  border-radius: 16px;
+  padding: 17px 17px 15px;
   box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
   gap: 12px;
-  transition: border-color .12s, transform .12s;
+  transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
 }
 
 .ipo-card:hover {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  transform: translateY(-1px);
-}
-
-.ipo-card.is-open {
-  border-left: 3px solid var(--green);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  transform: translateY(-2px);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .28);
 }
 
 .ipo-name {
@@ -2670,6 +2667,112 @@ code {
   white-space: nowrap;
 }
 
+/* ---------- Promoter buying analyser (detail rows) ---------- */
+.pb-rows {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 100%;
+}
+
+/* Flex-wrap, not a fixed grid — a rigid column layout either forces
+   horizontal scroll on narrow screens or clips the person's name entirely
+   once scrolled. The name always gets its own full-width line (flex-basis
+   100%); the numbers/chip/date wrap onto however many lines they need. */
+.pb-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12.5px;
+}
+
+.pb-row:last-child { border-bottom: none; }
+
+.pb-row-person {
+  flex: 1 1 100%;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pb-row-move {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.pb-row-rel {
+  font-family: var(--font-mono);
+  color: var(--muted);
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.pb-row-btn {
+  width: 100%;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s ease;
+}
+
+.pb-row-btn:hover {
+  background: var(--surface-2);
+}
+
+.pb-hist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pb-hist-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 13px 14px;
+}
+
+.pb-hist-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.pb-hist-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.pb-hist-stats .k {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+
+.pb-hist-stats .v {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  word-break: break-word;
+}
+
+@media (max-width: 480px) {
+  .pb-hist-stats { grid-template-columns: 1fr 1fr; }
+}
+
 @media (max-width: 560px) {
   .deal-hero { flex-wrap: wrap; justify-content: center; }
   .deal-hero-div { display: none; }
@@ -3195,6 +3298,7 @@ code {
 .ipo-card.clickable:hover {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
   transform: translateY(-2px);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .28);
 }
 
 .ipo-card.clickable:active {

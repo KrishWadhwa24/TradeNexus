@@ -3,6 +3,7 @@ package promoter
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -70,7 +71,9 @@ func (r *Repo) PruneSeenOlderThan(ctx context.Context, cutoff time.Time) (int64,
 
 // InsertTrade inserts a tracked trade if it isn't already stored. Returns
 // whether a row was actually inserted (false ⇒ duplicate, caller should not
-// alert again).
+// alert again). A newly-inserted trade also gets folded into that person's
+// permanent position (see accumulatePosition) — this is the only place new
+// trades enter the system, so it's the only place that needs to know about it.
 func (r *Repo) InsertTrade(ctx context.Context, t Trade) (bool, error) {
 	tag, err := r.pool.Exec(ctx, `
 		INSERT INTO promoter_trades
@@ -85,7 +88,43 @@ func (r *Repo) InsertTrade(ctx context.Context, t Trade) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() > 0, nil
+	inserted := tag.RowsAffected() > 0
+	if inserted {
+		dup, err := r.isDuplicateFiling(ctx, t)
+		if err != nil {
+			return inserted, err
+		}
+		if !dup {
+			if err := r.accumulatePosition(ctx, t); err != nil {
+				return inserted, err
+			}
+		}
+	}
+	return inserted, nil
+}
+
+// isDuplicateFiling reports whether another already-accumulated trade
+// exists for the same (symbol, person, quantity, trade date, direction) as
+// t. NSE sometimes files the same real-world transaction twice (e.g. under
+// two disclosure paths) — same share count, same person, same day — which
+// would otherwise double-count that one transaction's shares/value into the
+// permanent position. t itself is already in promoter_trades by the time
+// this runs, so the match excludes t.ID.
+func (r *Repo) isDuplicateFiling(ctx context.Context, t Trade) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM promoter_trades
+			WHERE id <> $1
+			  AND symbol = $2
+			  AND upper(btrim(person_name)) = upper(btrim($3))
+			  AND quantity = $4
+			  AND event_type = $5
+			  AND COALESCE(trade_date_to, broadcast_at::date) = COALESCE($6::date, $7::date)
+		)`,
+		t.ID, t.Symbol, t.PersonName, t.Quantity, t.EventType, t.TradeTo, t.BroadcastAt,
+	).Scan(&exists)
+	return exists, err
 }
 
 // MarkAlerted records that a Telegram alert was sent for a trade.
@@ -125,6 +164,39 @@ func (r *Repo) ListRecent(ctx context.Context, days int) ([]Trade, error) {
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// ListForPerson returns one person's individual disclosures for one stock,
+// newest first — the per-transaction rate/qty/date history behind the
+// permanent aggregate in promoter_positions. Bound by whatever's still in
+// promoter_trades (PROMOTER_RETENTION_DAYS) — unlike the aggregate, this
+// view can't see further back than that. Duplicate filings of the same
+// real-world transaction (see isDuplicateFiling) are collapsed to one.
+func (r *Repo) ListForPerson(ctx context.Context, symbol, personKey string) ([]Trade, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT ON (quantity, event_type, COALESCE(trade_date_to, broadcast_at::date))
+			`+selectCols+`
+		FROM promoter_trades
+		WHERE symbol = $1 AND upper(btrim(person_name)) = $2
+		ORDER BY quantity, event_type, COALESCE(trade_date_to, broadcast_at::date), created_at ASC`,
+		symbol, personKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Trade
+	for rows.Next() {
+		t, err := scanTrade(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].BroadcastAt.After(out[j].BroadcastAt) })
+	return out, nil
 }
 
 // GetByID returns one trade (for the admin "send alert" action).

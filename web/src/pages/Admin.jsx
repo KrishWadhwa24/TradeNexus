@@ -45,6 +45,21 @@ export default function Admin() {
     finally { setMfBusy(false); }
   }
 
+  // Promoter buying positions: same one-time (safe to re-run) seed pattern —
+  // see internal/promoter/positions_repo.go.
+  const [pbBusy, setPbBusy] = useState(false);
+  const [pbMsg, setPbMsg] = useState("");
+  const [pbErr, setPbErr] = useState("");
+
+  async function backfillPromoterBuying() {
+    setPbBusy(true); setPbMsg(""); setPbErr("");
+    try {
+      await api.post("/v1/admin/promoter-buying/backfill", {});
+      setPbMsg("Backfill done — check the Promoter Buying page for updated positions.");
+    } catch (e) { setPbErr(e.message); }
+    finally { setPbBusy(false); }
+  }
+
   async function searchFeatured(e) {
     const v = e.target.value;
     setFq(v);
@@ -203,17 +218,20 @@ export default function Admin() {
 
       <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
         <div className="section-title" style={{ margin: "0 0 6px" }}>Mutual fund positions</div>
-        <div className="subtle" style={{ marginBottom: 14 }}>
-          Seeds each fund's permanent per-stock position from whatever's currently in the bulk/block
-          deals feed. Runs automatically as new deals come in — this is only needed once after a fresh
-          deploy (or to fill in a fund that predates the feature). Safe to click more than once; it can
-          only fill in gaps, never overwrite existing accumulated history.
-        </div>
         <button className="btn-sm btn-primary" onClick={backfillMutualFunds} disabled={mfBusy}>
           {mfBusy ? "Backfilling…" : "Run mutual fund backfill"}
         </button>
         {mfMsg && <div className="msg" style={{ marginTop: 12 }}>{mfMsg}</div>}
         {mfErr && <div className="err" style={{ marginTop: 12 }}>{mfErr}</div>}
+      </div>
+
+      <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+        <div className="section-title" style={{ margin: "0 0 6px" }}>Promoter buying positions</div>
+        <button className="btn-sm btn-primary" onClick={backfillPromoterBuying} disabled={pbBusy}>
+          {pbBusy ? "Backfilling…" : "Run promoter buying backfill"}
+        </button>
+        {pbMsg && <div className="msg" style={{ marginTop: 12 }}>{pbMsg}</div>}
+        {pbErr && <div className="err" style={{ marginTop: 12 }}>{pbErr}</div>}
       </div>
 
       <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
