@@ -101,7 +101,7 @@ function SubscriptionModal({ ipo, onClose }) {
   );
 }
 
-export default function IPO({ isAdmin = false }) {
+export default function IPO({ isAdmin = false, initialName = null }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -142,6 +142,15 @@ export default function IPO({ isAdmin = false }) {
   }
 
   useEffect(load, []);
+
+  // Deep link support (e.g. /ipo/Tempsens%20Instruments): open straight to
+  // the matching IPO's detail once the list has loaded.
+  useEffect(() => {
+    if (!initialName || !rows.length) return;
+    const match = rows.find((r) => r.name.toLowerCase() === initialName.toLowerCase());
+    if (match) openModal(match);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialName, rows]);
 
   async function refresh() {
     setMsg("Refreshing feed…");

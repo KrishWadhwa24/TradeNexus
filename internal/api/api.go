@@ -195,6 +195,23 @@ func (s *Server) Router() http.Handler {
 		// expose publicly (it must be, since the landing page is pre-auth).
 		r.Get("/public/featured-stocks", s.handleListFeaturedStocks)
 
+		// Public, no-login views (IPO/promoter-trades/bulk/block deals) — the
+		// shareable-link acquisition surface: none of these read user-specific
+		// data, so exposing the same handlers unauthenticated needs no separate
+		// "/public/" duplicate route or response shape. Everything mutating
+		// (refresh/backfill/send-alert/scan) stays inside the authed/admin-only
+		// groups below. The promoter-buying *analyser* (aggregated view) stays
+		// behind login, same as the mutual-fund analyser — only the raw
+		// promoter-trades feed is public, matching IPO/bulk/block deals.
+		r.Get("/ipos", s.handleListIPOs)
+		r.Get("/promoter-trades", s.handleListPromoterTrades)
+		r.Get("/bulk-deals", s.handleListDeals(deals.Bulk))
+		r.Get("/bulk-deals/audit", s.handleDealsAudit(deals.Bulk))
+		r.Get("/bulk-deals/{symbol}", s.handleDealDetail(deals.Bulk))
+		r.Get("/block-deals", s.handleListDeals(deals.Block))
+		r.Get("/block-deals/audit", s.handleDealsAudit(deals.Block))
+		r.Get("/block-deals/{symbol}", s.handleDealDetail(deals.Block))
+
 		// Everything below requires a valid JWT.
 		r.Group(func(r chi.Router) {
 			r.Use(s.authMiddleware)
@@ -286,29 +303,17 @@ func (s *Server) Router() http.Handler {
 			r.Get("/analytics/summary", s.handleAnalyticsSummary)
 			r.Get("/analytics/export.xlsx", s.handleAnalyticsExport)
 
-			// IPOs (open + upcoming, with GMP)
-			r.Get("/ipos", s.handleListIPOs)
-
-			// Promoter/Director/KMP insider-trading feed. "Scan now" is open to
-			// every logged-in user (cooldown-guarded inside the service).
-			r.Get("/promoter-trades", s.handleListPromoterTrades)
+			// "Scan now" is open to every logged-in user (cooldown-guarded
+			// inside the service). The read-only promoter-trades list is
+			// registered above, outside authMiddleware — see the "Public,
+			// no-login views" block.
 			r.Post("/promoter-trades/scan", s.handlePromoterScanNow)
 
-			// Promoter buying analyser: permanent per-person stock positions
-			// built from promoter/KMP disclosure rows.
+			// Promoter buying analyser (aggregated view) + mutual fund
+			// analyser: both stay behind login, unlike the raw feeds above.
 			r.Get("/promoter-buying", s.handleListPromoterBuying)
 			r.Get("/promoter-buying/{symbol}", s.handlePromoterBuyingDetail)
 			r.Get("/promoter-buying/{symbol}/history", s.handlePromoterPersonHistory)
-
-			r.Get("/bulk-deals", s.handleListDeals(deals.Bulk))
-			r.Get("/bulk-deals/audit", s.handleDealsAudit(deals.Bulk))
-			r.Get("/bulk-deals/{symbol}", s.handleDealDetail(deals.Bulk))
-			r.Get("/block-deals", s.handleListDeals(deals.Block))
-			r.Get("/block-deals/audit", s.handleDealsAudit(deals.Block))
-			r.Get("/block-deals/{symbol}", s.handleDealDetail(deals.Block))
-
-			// Mutual fund analyser: permanent per-fund positions built from
-			// bulk/block deal client rows.
 			r.Get("/mutual-funds", s.handleListMutualFunds)
 			r.Get("/mutual-funds/{fund}", s.handleMutualFundDetail)
 

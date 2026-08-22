@@ -139,7 +139,7 @@ function ClientList({ title, dot, rows, tone, sign }) {
   );
 }
 
-export default function Deals({ type = "bulk", isAdmin = false }) {
+export default function Deals({ type = "bulk", isAdmin = false, initialSymbol = null }) {
   const [tab, setTab] = useState("deals"); // deals | audit
   const [stocks, setStocks] = useState([]);
   const [audit, setAudit] = useState([]);
@@ -156,6 +156,13 @@ export default function Deals({ type = "bulk", isAdmin = false }) {
     setSelected(symbol);
     window.history.pushState({ view: type, modal: "details" }, "");
   }
+
+  // Deep link support (e.g. /bulk-deals/RELIANCE): the detail modal fetches
+  // by symbol directly, so this doesn't need to wait for the list.
+  useEffect(() => {
+    if (initialSymbol) openModal(initialSymbol.toUpperCase());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function closeModal() {
     window.history.back();

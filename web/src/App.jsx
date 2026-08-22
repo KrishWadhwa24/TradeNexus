@@ -19,6 +19,26 @@ import Deals from "./pages/Deals.jsx";
 import MutualFunds from "./pages/MutualFunds.jsx";
 import PromoterBuying from "./pages/PromoterBuying.jsx";
 import Insights from "./pages/Insights.jsx";
+import PublicShell from "./pages/PublicShell.jsx";
+
+// Maps a real URL path to one of the no-login views, for shareable/indexable
+// links (e.g. /promoter-trades/RELIANCE) — everything else in the app stays
+// purely state-driven (see the view/localStorage machinery below), only
+// these few paths are ever read from window.location.
+const PUBLIC_PATHS = [
+  { re: /^\/ipo\/?([^/]*)$/, view: "ipo" },
+  { re: /^\/promoter-trades\/?([^/]*)$/, view: "promoter-trades" },
+  { re: /^\/bulk-deals\/?([^/]*)$/, view: "bulk" },
+  { re: /^\/block-deals\/?([^/]*)$/, view: "block" },
+];
+
+function matchPublicPath(pathname) {
+  for (const { re, view } of PUBLIC_PATHS) {
+    const m = pathname.match(re);
+    if (m) return { view, symbol: m[1] ? decodeURIComponent(m[1]) : null };
+  }
+  return null;
+}
 
 // Flat top-level entries and collapsible groups. A group's `items` are the
 // actual navigable leaves; the group itself is just a collapsible header.
@@ -121,6 +141,11 @@ function canSwipeRight(el) {
 }
 
 export default function App() {
+  // Computed once at mount from the real URL — the one place this app reads
+  // window.location.pathname, since everywhere else navigation is pure state
+  // (see `view` below). Only matters for a visitor who isn't logged in yet;
+  // an already-authed user just gets their normal last-viewed page.
+  const [publicRoute] = useState(() => matchPublicPath(window.location.pathname));
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "dark");
   const [view, setView] = useState(localStorage.getItem("view") || "home");
   const [slideDir, setSlideDir] = useState("fade");
@@ -298,10 +323,26 @@ export default function App() {
   }
 
   if (!authed) {
+    if (publicRoute && !showLogin) {
+      return (
+        <PublicShell
+          view={publicRoute.view}
+          symbol={publicRoute.symbol}
+          theme={theme}
+          onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+          onGetStarted={() => {
+            window.history.pushState({ page: "login" }, "");
+            setShowLogin(true);
+          }}
+        />
+      );
+    }
     return showLogin ? (
       <Login onAuthed={onAuthed} onBack={() => window.history.back()} />
     ) : (
       <Landing
+        theme={theme}
+        onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
         onGetStarted={() => {
           window.history.pushState({ page: "login" }, "");
           setShowLogin(true);
