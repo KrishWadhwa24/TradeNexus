@@ -483,7 +483,7 @@ export default function MutualFunds() {
         </div>
       </div>
       <p className="subtle" style={{ marginTop: 0 }}>
-        Every AMC's permanent position built from NSE bulk/block deals — survives the deals feed's own retention window.
+        Every AMC's permanent position built from NSE bulk/block deals.
       </p>
 
       {loading ? (
