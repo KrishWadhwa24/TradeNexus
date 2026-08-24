@@ -1611,6 +1611,8 @@ code {
   font-size: 20px;
   font-weight: 700;
   letter-spacing: -.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .lp-brand .prompt { color: #3ecf8e; font-family: var(--font-mono); }
 .lp-brand em { font-style: normal; color: #8b8bff; }
@@ -1837,6 +1839,29 @@ code {
   .lp-nav-cta .lp-ghost {
     padding: 8px 12px;
     font-size: 12px;
+  }
+
+  /* The brand text must never wrap onto a second line (see .lp-brand's
+     white-space: nowrap) — reclaim room for it by tightening everything
+     else in the header row instead. */
+  .lp-nav-inner { padding: 14px 16px; gap: 10px; }
+  .lp-brand { font-size: 16px; }
+  .lp-nav-cta { gap: 6px; }
+  .lp-nav-cta .icon-btn { width: 32px; height: 32px; }
+}
+
+@media (max-width: 340px) {
+  /* Even the tightened 860px-breakpoint sizing above still overflows on the
+     narrowest real phones (e.g. iPhone SE's 320px) — "Get started" clips
+     silently since .lp hides overflow-x rather than scrolling. */
+  .lp-nav-inner { padding: 12px 10px; gap: 6px; }
+  .lp-brand { font-size: 14px; }
+  .lp-nav-cta { gap: 4px; }
+  .lp-nav-cta .icon-btn { width: 28px; height: 28px; }
+  .lp-nav-cta .lp-primary,
+  .lp-nav-cta .lp-ghost {
+    padding: 6px 8px;
+    font-size: 11px;
   }
 }
 

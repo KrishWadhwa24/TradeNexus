@@ -309,7 +309,12 @@ export default function App() {
       el.removeEventListener("touchmove", onTouchMove);
       el.removeEventListener("touchend", onTouchEnd);
     };
-  }, [ptrHeight]);
+    // `authed` is the real trigger this needs: this effect's first run
+    // happens while still logged out, when .main doesn't exist yet and
+    // mainRef.current is null — it bails out and, since ptrHeight never
+    // changes on its own, would otherwise never get a second chance to
+    // attach once .main actually mounts after login.
+  }, [ptrHeight, authed]);
 
   function onAuthed(u) {
     setUser(u);

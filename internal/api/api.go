@@ -100,6 +100,11 @@ type Server struct {
 
 // NewServer constructs the API server with its dependencies.
 func NewServer(d Deps) *Server {
+	// writeJSON is a free function (many small non-method helpers call it
+	// too, e.g. parseAdminDate), so it can't take s.log as a receiver.
+	// Package-level is the pragmatic way to give it a logger without
+	// threading one through every call site.
+	errLog = d.Log
 	return &Server{
 		log:            d.Log,
 		pg:             d.PG,
@@ -375,8 +380,22 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 	})
 }
 
-// writeJSON is a small helper for JSON responses.
+// errLog backs writeJSON's automatic 5xx logging — see NewServer. Every
+// handler error response used to be visible only in the HTTP response body,
+// never in the server's own logs, so a real failure only ever surfaced if a
+// user happened to notice and report the on-screen error message.
+var errLog zerolog.Logger
+
+// writeJSON is a small helper for JSON responses. Any 5xx response is also
+// logged server-side — the existing chi request logger (see api.go's
+// r.Use(middleware.Logger)-equivalent) already logs method+path+status for
+// every request, so this line is what you actually grep for: the real error
+// message, not just "status=500". Client 4xx responses are normal, expected
+// control flow and stay quiet.
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	if status >= 500 {
+		errLog.Error().Int("status", status).Interface("body", v).Msg("api: request failed")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)

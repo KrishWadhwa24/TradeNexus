@@ -349,6 +349,29 @@ func (s *Service) Trades(ctx context.Context, userID string) ([]Trade, error) {
 	return out, rows.Err()
 }
 
+// OpenInstrumentIDs returns the distinct instruments backing this user's
+// currently OPEN paper trades — used to add paper positions to the live-
+// price WebSocket subscription (see Server.liveInstruments) without paying
+// the per-trade Angel LTP REST-call cost that Trades incurs above.
+func (s *Service) OpenInstrumentIDs(ctx context.Context, userID string) ([]int64, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT DISTINCT instrument_id FROM paper_trades WHERE user_id = $1::uuid AND status = 'OPEN'`,
+		userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // Summary computes the P&L rollup for the profile + paper analytics views.
 func (s *Service) Summary(ctx context.Context, userID string) (PnLSummary, error) {
 	acct, err := s.GetAccount(ctx, userID)

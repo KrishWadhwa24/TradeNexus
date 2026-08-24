@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { api, fmt } from "../api.js";
+import { api, connectLivePrices, fmt } from "../api.js";
 
 function Stat({ label, value, cls }) {
   return (
@@ -29,6 +29,29 @@ export default function Paper({ userId }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Live P&L: patch price/unrealized_pnl into the matching OPEN trade as
+  // ticks arrive, same pattern as Home.jsx/Analytics.jsx. The backend's
+  // liveInstruments (internal/api/live_handlers.go) subscribes this user's
+  // open paper-trade instruments alongside their watchlist ones, so this
+  // works even for a symbol that isn't on any watchlist.
+  useEffect(() => {
+    if (!userId) return;
+    return connectLivePrices(userId, {
+      onMessage: (event) => {
+        try {
+          const tick = JSON.parse(event.data);
+          if (!tick.instrument_id || !tick.price) return;
+          setTrades((cur) => cur.map((t) => {
+            if (t.status !== "OPEN" || t.instrument_id !== tick.instrument_id) return t;
+            return { ...t, current_price: tick.price, unrealized_pnl: (tick.price - t.entry_price) * t.quantity };
+          }));
+        } catch {
+          // Ignore non-tick control messages (heartbeat/ready).
+        }
+      },
+    });
+  }, [userId]);
+
   async function close(id) {
     try {
       await api.post(`/v1/paper/trades/${id}/close`, {});
@@ -41,17 +64,28 @@ export default function Paper({ userId }) {
   if (err) return <div className="err">{err}</div>;
   if (!sum) return <div className="spinner">Loading…</div>;
 
-  const pnlCls = sum.total_pnl >= 0 ? "pos" : "neg";
+  // market_value/unrealized_pnl/total_pnl/equity move with live ticks, so
+  // they're derived from the (live-patched) trades array on every render
+  // instead of the one-shot /paper/summary fetch — same formula as
+  // Service.Summary (internal/paper/service.go). invested/cash_balance and
+  // the closed-trade fields don't move from price ticks, so those still
+  // come straight from `sum`.
+  const openTrades = trades.filter((t) => t.status === "OPEN");
+  const marketValue = openTrades.reduce((s, t) => s + t.current_price * t.quantity, 0);
+  const unrealizedPnl = openTrades.reduce((s, t) => s + t.unrealized_pnl, 0);
+  const totalPnl = sum.realized_pnl + unrealizedPnl;
+  const equity = sum.cash_balance + marketValue;
+  const pnlCls = totalPnl >= 0 ? "pos" : "neg";
 
   return (
     <div>
       <div className="grid cards" style={{ marginBottom: 22 }}>
         <Stat label="Invested (open)" value={fmt(sum.invested)} />
-        <Stat label="Market value" value={fmt(sum.market_value)} />
-        <Stat label="Unrealized P&L" value={fmt(sum.unrealized_pnl)} cls={sum.unrealized_pnl >= 0 ? "pos" : "neg"} />
-        <Stat label="Total P&L" value={fmt(sum.total_pnl)} cls={pnlCls} />
+        <Stat label="Market value" value={fmt(marketValue)} />
+        <Stat label="Unrealized P&L" value={fmt(unrealizedPnl)} cls={unrealizedPnl >= 0 ? "pos" : "neg"} />
+        <Stat label="Total P&L" value={fmt(totalPnl)} cls={pnlCls} />
         <Stat label="Cash" value={fmt(sum.cash_balance)} />
-        <Stat label="Equity" value={fmt(sum.equity)} />
+        <Stat label="Equity" value={fmt(equity)} />
       </div>
 
       <div className="toolbar">
