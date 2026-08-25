@@ -17,6 +17,7 @@ import (
 	"tradenexus/internal/calendar"
 	"tradenexus/internal/candles"
 	"tradenexus/internal/deals"
+	"tradenexus/internal/digest"
 	"tradenexus/internal/engine"
 	"tradenexus/internal/fiidii"
 	"tradenexus/internal/insights"
@@ -59,6 +60,7 @@ type Deps struct {
 	Deals          *deals.Service
 	Insights       *insights.Service
 	FiiDii         *fiidii.Service
+	Digest         *digest.Service
 	JWTSecret      string
 	GoogleClientID string
 }
@@ -85,6 +87,7 @@ type Server struct {
 	deals          *deals.Service
 	insights       *insights.Service
 	fiidii         *fiidii.Service
+	digest         *digest.Service
 	jwtSecret      string
 	googleClientID string
 
@@ -126,6 +129,7 @@ func NewServer(d Deps) *Server {
 		deals:          d.Deals,
 		insights:       d.Insights,
 		fiidii:         d.FiiDii,
+		digest:         d.Digest,
 		jwtSecret:      d.JWTSecret,
 		googleClientID: d.GoogleClientID,
 	}
@@ -277,6 +281,10 @@ func (s *Server) Router() http.Handler {
 				r.Post("/admin/deals/refresh", s.handleRefreshDeals)
 				r.Post("/admin/deals/{type}/{symbol}/send-alert", s.handleDealsSendAlert)
 				r.Post("/admin/mutual-funds/backfill", s.handleBackfillMutualFunds)
+
+				// Digest admin: trigger the weekly email digest right now
+				// (rather than waiting for its cron) — for testing/one-offs.
+				r.With(middleware.Timeout(5*time.Minute)).Post("/admin/digest/send-now", s.handleSendDigestNow)
 
 				// FII/DII admin: force-send the currently cached snapshot now.
 				r.Post("/admin/fii-dii/send-alert", s.handleFiiDiiSendAlert)

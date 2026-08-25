@@ -120,6 +120,17 @@ type Config struct {
 	// is kept — only the latest snapshot — and no interval/cron is configurable:
 	// it only ever polls after 4pm IST on a trading day, hourly until published.
 	FiiDiiEnabled bool `env:"FIIDII_ENABLED" envDefault:"true"`
+
+	// Weekly email digest (top mutual fund acquisitions + promoter buying,
+	// PDF attached). Disabled by default so adding SMTP creds to .env doesn't
+	// immediately start emailing every user — flip DIGEST_ENABLED on when ready.
+	DigestEnabled bool   `env:"DIGEST_ENABLED" envDefault:"false"`
+	DigestCron    string `env:"DIGEST_CRON" envDefault:"0 9 * * MON"` // 09:00 IST every Monday
+	SMTPHost      string `env:"SMTP_HOST" envDefault:""`
+	SMTPPort      string `env:"SMTP_PORT" envDefault:"587"`
+	SMTPUser      string `env:"SMTP_USER" envDefault:""`
+	SMTPPassword  string `env:"SMTP_PASSWORD" envDefault:""`
+	SMTPFrom      string `env:"SMTP_FROM" envDefault:""`
 }
 
 // IsLocal reports whether we're running in the local dev profile.

@@ -20,6 +20,7 @@ import (
 	"tradenexus/internal/candles"
 	"tradenexus/internal/config"
 	"tradenexus/internal/deals"
+	"tradenexus/internal/digest"
 	"tradenexus/internal/engine"
 	"tradenexus/internal/fiidii"
 	"tradenexus/internal/insights"
@@ -191,6 +192,16 @@ func main() {
 		dealsSvc.StartPolling(ctx)
 	}
 
+	// Weekly email digest (top mutual fund acquisitions + promoter buying).
+	// Needs both promoter and deals data, so only starts if both are enabled.
+	var digestSvc *digest.Service
+	if cfg.DigestEnabled && promoterSvc != nil && dealsSvc != nil {
+		digestSvc = digest.New(promoterSvc, dealsSvc, userRepo, digest.SMTPConfig{
+			Host: cfg.SMTPHost, Port: cfg.SMTPPort, User: cfg.SMTPUser, Password: cfg.SMTPPassword, From: cfg.SMTPFrom,
+		}, log)
+		digestSvc.StartCron(ctx, cfg.DigestCron)
+	}
+
 	// Insights: read-only cross-signal analytics (scanner performance,
 	// confluence board, market breadth) + a daily signal-outcome recorder.
 	insightsSvc := insights.New(pg.Pool, cfg.BulkDealMinNetValue, log)
@@ -247,6 +258,7 @@ func main() {
 			Deals:          dealsSvc,
 			Insights:       insightsSvc,
 			FiiDii:         fiidiiSvc,
+			Digest:         digestSvc,
 			JWTSecret:      cfg.JWTSecret,
 			GoogleClientID: cfg.GoogleClientID,
 		}).Router(),

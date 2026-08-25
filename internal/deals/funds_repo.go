@@ -120,6 +120,33 @@ func (r *Repo) FundPositionStocks(ctx context.Context, fundName string) ([]FundS
 	return out, rows.Err()
 }
 
+// RecentFundAcquisitions returns the `limit` most recently-acquired
+// (fund, symbol) positions across ALL funds — for the weekly digest. Unlike
+// ListFundPositions (grouped by fund, loses the symbol) or
+// FundPositionStocks (scoped to one fund), this is the one "top-N,
+// cross-fund, by recency" shape.
+func (r *Repo) RecentFundAcquisitions(ctx context.Context, limit int) ([]FundAcquisition, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT fund_name, symbol, security_name, buy_value, last_deal_date
+		FROM mutual_fund_positions
+		WHERE buy_qty > 0
+		ORDER BY last_deal_date DESC
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FundAcquisition
+	for rows.Next() {
+		var a FundAcquisition
+		if err := rows.Scan(&a.FundName, &a.Symbol, &a.SecurityName, &a.BuyValue, &a.LastDealDate); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // BackfillFundPositions seeds mutual_fund_positions from whatever's
 // currently in market_deals, for (fund, symbol) pairs that don't already
 // have a position row. ON CONFLICT DO NOTHING (not DO UPDATE) deliberately

@@ -60,6 +60,17 @@ type FundDetail struct {
 	Stocks    []FundStock `json:"stocks"` // net_value desc
 }
 
+// FundAcquisition is one (fund, symbol) position — the row shape for "most
+// recently acquired across all funds" (see RecentFundAcquisitions), as
+// opposed to FundStock which is scoped to a single fund.
+type FundAcquisition struct {
+	FundName     string    `json:"fund_name"`
+	Symbol       string    `json:"symbol"`
+	SecurityName string    `json:"security_name"`
+	BuyValue     float64   `json:"buy_value"`
+	LastDealDate time.Time `json:"last_deal_date"`
+}
+
 // ListFunds returns mutual-fund summary cards, largest gross value first.
 func (s *Service) ListFunds(ctx context.Context) ([]FundSummary, error) {
 	return s.repo.ListFundPositions(ctx)
@@ -79,6 +90,12 @@ func (s *Service) GetFund(ctx context.Context, fundName string) (FundDetail, err
 		d.SellValue += st.SellValue
 	}
 	return d, nil
+}
+
+// RecentFundAcquisitions returns the `limit` most recently-acquired
+// (fund, symbol) positions across all funds — used by the weekly digest.
+func (s *Service) RecentFundAcquisitions(ctx context.Context, limit int) ([]FundAcquisition, error) {
+	return s.repo.RecentFundAcquisitions(ctx, limit)
 }
 
 // BackfillFundPositions seeds mutual_fund_positions from whatever raw deal
