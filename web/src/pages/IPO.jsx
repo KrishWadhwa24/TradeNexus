@@ -3,6 +3,8 @@ import { createPortal } from "react-dom";
 import { api } from "../api.js";
 import { Icon } from "../icons.jsx";
 import { SkeletonGrid } from "../Skeleton.jsx";
+import ShareButton from "../components/ShareButton.jsx";
+import { shareIpoCard } from "../shareCard.js";
 
 function gmpLevel(pct) {
   if (pct >= 20) return "high";
@@ -227,6 +229,10 @@ export default function IPO({ isAdmin = false, initialName = null }) {
                 key={x.id}
                 onClick={() => openModal(x)}
               >
+                <div className="ipo-share-corner" onClick={(e) => e.stopPropagation()}>
+                  <ShareButton share={() => shareIpoCard(x)} title="Share this IPO's card" />
+                </div>
+
                 <div className="ipo-card-top">
                   <div className="ipo-id">
                     <span className="ipo-name">{x.name}</span>
@@ -275,7 +281,7 @@ export default function IPO({ isAdmin = false, initialName = null }) {
 
                 <div className="ipo-foot" onClick={(e) => e.stopPropagation()}>
                   <button className="btn-sm" onClick={() => openModal(x)}>Details</button>
-                  
+
                   {x.signal_tier && (
                     <span className={"conv conv-" + gmpLevel(x.gmp_percent)} style={{ marginLeft: "auto" }}>
                       {TIER_LABEL[x.signal_tier] || x.signal_tier}

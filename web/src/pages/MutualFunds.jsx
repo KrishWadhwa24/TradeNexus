@@ -5,6 +5,8 @@ import autoTable from "jspdf-autotable";
 import { api } from "../api.js";
 import { Icon } from "../icons.jsx";
 import { SkeletonGrid } from "../Skeleton.jsx";
+import ShareButton from "../components/ShareButton.jsx";
+import { shareCard } from "../shareCard.js";
 
 function fmtNum(n) {
   if (n === null || n === undefined) return "—";
@@ -211,12 +213,12 @@ function drawFundCharts(ctx, stocks, { x, y, w, h, holeColor, mutedColor }) {
   });
 }
 
-// downloadFundImage renders a branded shareable card — the fund's headline
+// buildFundCardBlob renders a branded shareable card — the fund's headline
 // numbers, a pie+bar breakdown of its top holdings, and the full holdings
 // table — matching the same canvas-drawing approach already used for the
 // FII/DII snapshot (Insights.jsx). Meant for WhatsApp/Telegram sharing, not
 // print, hence PNG rather than PDF.
-async function downloadFundImage(fundName, detail) {
+async function buildFundCardBlob(fundName, detail) {
   await document.fonts.ready;
 
   const top = mfTopStocks(detail.stocks || []).filter((s) => s.buy_value > 0).slice(0, 8);
@@ -279,15 +281,21 @@ async function downloadFundImage(fundName, detail) {
   ctx.font = "400 12px 'JetBrains Mono', monospace";
   ctx.fillText(`Generated ${new Date().toLocaleString("en-IN")}`, 32, H - 20);
 
-  canvas.toBlob((blob) => {
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${fundName.replace(/\s+/g, "-").toLowerCase()}.png`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, "image/png");
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+}
+
+// shareFundCard shares the card via the OS share sheet where supported,
+// falling back to a plain download (see shareCard.js). No caption text is
+// attached here — unlike the IPO/stock cards, this and Promoter Buying are
+// meant to be shared as just the image, nothing added.
+async function shareFundCard(fundName, detail) {
+  const blob = await buildFundCardBlob(fundName, detail);
+  return shareCard({
+    blob,
+    filename: `${fundName.replace(/\s+/g, "-").toLowerCase()}.png`,
+    caption: "",
+    title: fundName,
+  });
 }
 
 // downloadFundPdf mirrors Audit.jsx's PDF pattern (jsPDF + autoTable) — the
@@ -378,7 +386,7 @@ function FundDetailModal({ fundName, onClose }) {
           ) : (
             <>
               <div className="row" style={{ gap: 8, marginBottom: 16 }}>
-                <button className="btn-sm" onClick={() => downloadFundImage(fundName, detail)}>Download image</button>
+                <ShareButton className="btn-sm" compact={false} share={() => shareFundCard(fundName, detail)} title="Share this fund's card" />
                 <button className="btn-sm" onClick={() => downloadFundPdf(fundName, detail)}>Download PDF</button>
               </div>
 

@@ -1966,6 +1966,7 @@ code {
 }
 
 .ipo-card {
+  position: relative;
   background: linear-gradient(165deg, var(--surface) 0%, var(--surface-2) 130%);
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -1975,6 +1976,20 @@ code {
   flex-direction: column;
   gap: 12px;
   transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+
+.ipo-share-corner {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+}
+
+/* Reserve room for the absolutely-positioned share button so a long IPO
+   name never runs underneath it (confirmed overlapping on narrow/mobile
+   widths without this). */
+.ipo-card-top {
+  padding-right: 76px;
 }
 
 .ipo-card:hover {
@@ -3501,5 +3516,51 @@ code {
   font-family: var(--font-display);
   font-size: 18px;
   font-weight: 700;
+}
+
+/* ---------- Share button + fallback menu ---------- */
+.share-btn-wrap svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Fixed + centered rather than anchored to the button — this button lives
+   inside narrow table cells all over the app, so an anchored dropdown
+   reliably clips off-screen on mobile (right:0 relative to a cell near the
+   left edge runs the menu off the left of the viewport). Fixed positioning
+   sidesteps that regardless of where the button sits. */
+.share-fallback-menu {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 200;
+  width: min(280px, calc(100vw - 32px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.share-fallback-note {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-bottom: 2px;
+  line-height: 1.4;
+}
+
+.share-fallback-menu a {
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.share-fallback-menu a:hover {
+  background: var(--surface-2);
 }
 

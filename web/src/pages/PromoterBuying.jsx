@@ -5,6 +5,8 @@ import autoTable from "jspdf-autotable";
 import { api } from "../api.js";
 import { Icon } from "../icons.jsx";
 import { SkeletonGrid } from "../Skeleton.jsx";
+import ShareButton from "../components/ShareButton.jsx";
+import { shareCard } from "../shareCard.js";
 
 function fmtNum(n) {
   if (n === null || n === undefined) return "—";
@@ -124,11 +126,11 @@ function drawStockCharts(ctx, byValue, byIncrease, { x, y, w, h, holeColor, mute
   });
 }
 
-// downloadStockImage renders a branded shareable card — the stock's tracked
-// promoters ranked by point-increase, a pie+bar breakdown, and the full
-// table — same canvas-drawing approach as the FII/DII snapshot
+// buildPromoterCardBlob renders a branded shareable card — the stock's
+// tracked promoters ranked by point-increase, a pie+bar breakdown, and the
+// full table — same canvas-drawing approach as the FII/DII snapshot
 // (Insights.jsx) and the mutual fund cards.
-async function downloadStockImage(symbol, detail) {
+async function buildPromoterCardBlob(symbol, detail) {
   await document.fonts.ready;
 
   const people = (detail.people || []).slice(0, 8);
@@ -192,15 +194,21 @@ async function downloadStockImage(symbol, detail) {
   ctx.font = "400 12px 'JetBrains Mono', monospace";
   ctx.fillText(`Generated ${new Date().toLocaleString("en-IN")}`, 32, H - 20);
 
-  canvas.toBlob((blob) => {
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${symbol.toLowerCase()}-promoter-buying.png`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, "image/png");
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+}
+
+// shareStockCard shares the card via the OS share sheet where supported,
+// falling back to a plain download (see shareCard.js). No caption text is
+// attached — unlike the IPO/stock cards, this and Mutual Funds are meant
+// to be shared as just the image, nothing added.
+async function sharePromoterCard(symbol, detail) {
+  const blob = await buildPromoterCardBlob(symbol, detail);
+  return shareCard({
+    blob,
+    filename: `${symbol.toLowerCase()}-promoter-buying.png`,
+    caption: "",
+    title: `${symbol} — Promoter Buying`,
+  });
 }
 
 // downloadStockPdf mirrors Audit.jsx's PDF pattern (jsPDF + autoTable) — the
@@ -351,7 +359,7 @@ function StockDetailModal({ symbol, onClose }) {
           ) : (
             <>
               <div className="row" style={{ gap: 8, marginBottom: 16 }}>
-                <button className="btn-sm" onClick={() => downloadStockImage(symbol, detail)}>Download image</button>
+                <ShareButton className="btn-sm" compact={false} share={() => sharePromoterCard(symbol, detail)} title="Share this stock's card" />
                 <button className="btn-sm" onClick={() => downloadStockPdf(symbol, detail)}>Download PDF</button>
               </div>
 
