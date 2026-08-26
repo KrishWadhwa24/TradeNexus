@@ -101,13 +101,15 @@ async function req(method, path, body) {
   }
   if (!res.ok) {
     // Surface the most specific detail we have: server {error}, raw body text,
-    // or the HTTP status — never a bare "request failed" that hides the cause.
+    // or the HTTP status text — never a bare "request failed" that hides the
+    // cause, but also never a raw "HTTP 400:" prefix in front of it — that's
+    // noise to a user, not a useful detail.
     const detail =
       (data && data.error) ||
       (typeof data === "string" && data.trim()) ||
       res.statusText ||
-      "request failed";
-    throw new Error(`HTTP ${res.status}: ${detail}`);
+      `request failed (${res.status})`;
+    throw new Error(detail);
   }
   return data;
 }

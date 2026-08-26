@@ -211,12 +211,14 @@ func main() {
 
 	// 8) Scheduler (daily scan + cleanup + startup reconciliation + fill).
 	sched := scheduler.New(engineSvc, paperSvc, intradayCache, fiidiiSvc, scheduler.Config{
-		Enabled:            cfg.SchedulerEnabled,
-		DailyScanCron:      cfg.DailyScanCron,
-		CleanupCron:        cfg.CleanupCron,
-		FillScheduledCron:  cfg.FillScheduledCron,
-		IntradayInterval:   cfg.IntradayCacheInterval,
-		RunReconcileOnBoot: cfg.ReconcileOnStartup,
+		Enabled:                cfg.SchedulerEnabled,
+		DailyScanCron:          cfg.DailyScanCron,
+		CleanupCron:            cfg.CleanupCron,
+		FillScheduledCron:      cfg.FillScheduledCron,
+		SquareOffIntradayCron:  cfg.SquareOffIntradayCron,
+		PaperFillRetryInterval: cfg.PaperFillRetryInterval,
+		IntradayInterval:       cfg.IntradayCacheInterval,
+		RunReconcileOnBoot:     cfg.ReconcileOnStartup,
 	}, log)
 	if err := sched.Start(ctx); err != nil {
 		log.Fatal().Err(err).Msg("start scheduler")
@@ -278,6 +280,5 @@ func main() {
 	}
 	log.Info().Msg("bye")
 }
-
 
 //end

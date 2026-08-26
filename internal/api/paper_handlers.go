@@ -53,14 +53,76 @@ func (s *Server) handleBuy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, trade)
 }
 
-// POST /v1/paper/trades/{tradeId}/close
+// POST /v1/users/{uid}/paper/trades/open
+// {"instrument_id":1461,"quantity":10,"side":"BUY","product_type":"DELIVERY"}
+// The generalized "search any stock and trade it" entry point — sits
+// alongside (not replacing) handleBuy's signal-gated flow above, which
+// Scanner.jsx keeps using unchanged.
+func (s *Server) handleOpenPosition(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		InstrumentID int64  `json:"instrument_id"`
+		Quantity     int    `json:"quantity"`
+		Side         string `json:"side"`
+		ProductType  string `json:"product_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.InstrumentID == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "instrument_id and quantity required"})
+		return
+	}
+	trade, err := s.paper.OpenPosition(r.Context(), chi.URLParam(r, "uid"), body.InstrumentID, body.Quantity, body.Side, body.ProductType, nil, "web")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, trade)
+}
+
+// POST /v1/paper/trades/{tradeId}/convert — upgrade an OPEN intraday long
+// to delivery by paying the remaining margin.
+func (s *Server) handleConvertToDelivery(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "tradeId"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid trade id"})
+		return
+	}
+	trade, err := s.paper.ConvertToDelivery(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, trade)
+}
+
+// POST /v1/paper/trades/{tradeId}/cancel — cancel a not-yet-filled SCHEDULED
+// buy, or a pending close on an OPEN position.
+func (s *Server) handleCancelScheduled(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "tradeId"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid trade id"})
+		return
+	}
+	trade, err := s.paper.CancelPending(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, trade)
+}
+
+// POST /v1/paper/trades/{tradeId}/close  {"quantity":5}
+// quantity is optional — omitted, zero, or >= the held quantity closes the
+// entire position; a smaller quantity sells down part of it.
 func (s *Server) handleCloseTrade(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "tradeId"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid trade id"})
 		return
 	}
-	trade, err := s.paper.Close(r.Context(), id)
+	var body struct {
+		Quantity int `json:"quantity"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	trade, err := s.paper.ClosePartial(r.Context(), id, body.Quantity)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
