@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,7 +18,7 @@ import (
 
 // maxHistAttempts bounds retries when Angel rejects a historical request with a
 // transient rate-limit error (its server-side cap is stricter than our bucket).
-const maxHistAttempts = 3
+const maxHistAttempts = 5
 
 // Interval constants (only ONE_DAY is used — higher TFs are derived locally).
 const IntervalOneDay = "ONE_DAY"
@@ -53,21 +54,38 @@ func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken stri
 		if err != nil {
 			return nil, err
 		}
+		// Angel throttling: HTTP 429, or a 403 whose body is a rate-limit
+		// message (not an expired-auth 403) → back off and retry. This must be
+		// checked BEFORE the auth-refresh branch below, since a 403 body of
+		// "Access denied because of exceeding access rate" is not an auth
+		// failure and re-logging in for it is pointless.
+		if httpRateLimited(status, raw) {
+			retry, rlErr := backoffOrFail(ctx, status, raw, attempt)
+			lastErr = rlErr
+			if retry {
+				continue
+			}
+			return nil, lastErr
+		}
 		if status == http.StatusUnauthorized || status == http.StatusForbidden {
 			if err := c.refreshOrLogin(ctx); err == nil {
 				raw, status, err = c.doHistoricalRequest(ctx, reqBody)
 				if err != nil {
 					return nil, err
 				}
+				// The retried response can itself be rate-limited (e.g. the
+				// original 401/403 masked a throttled window) — re-check
+				// before falling through to the generic status check below,
+				// otherwise it hard-fails instead of backing off.
+				if httpRateLimited(status, raw) {
+					retry, rlErr := backoffOrFail(ctx, status, raw, attempt)
+					lastErr = rlErr
+					if retry {
+						continue
+					}
+					return nil, lastErr
+				}
 			}
-		}
-		// Angel throttling: HTTP 429 → back off and retry.
-		if status == http.StatusTooManyRequests {
-			lastErr = fmt.Errorf("angel historical HTTP 429 (rate limited): %s", bodyPreview(raw))
-			if attempt < maxHistAttempts && sleepBackoff(ctx, attempt) {
-				continue
-			}
-			return nil, lastErr
 		}
 		if status < http.StatusOK || status >= http.StatusMultipleChoices {
 			return nil, fmt.Errorf("angel historical HTTP %d: %s", status, bodyPreview(raw))
@@ -105,14 +123,47 @@ func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken stri
 func isRateLimited(msg, code string) bool {
 	m := strings.ToLower(msg)
 	return code == "AB1004" ||
+		strings.Contains(m, "ab1004") ||
 		strings.Contains(m, "access rate") ||
 		strings.Contains(m, "rate limit") ||
 		strings.Contains(m, "too many")
 }
 
-// sleepBackoff waits attempt*1s (respecting ctx). Returns false if cancelled.
+// httpRateLimited reports whether a raw HTTP response (before JSON decoding)
+// looks like Angel throttling. No parsed error code is available at this
+// point, so detection relies on isRateLimited's message/substring matching.
+func httpRateLimited(status int, raw []byte) bool {
+	return status == http.StatusTooManyRequests ||
+		(status == http.StatusForbidden && isRateLimited(string(raw), ""))
+}
+
+// backoffOrFail records a rate-limit error and either backs off and signals
+// the caller to retry, or returns the terminal error.
+func backoffOrFail(ctx context.Context, status int, raw []byte, attempt int) (retry bool, err error) {
+	err = fmt.Errorf("angel historical HTTP %d (rate limited): %s", status, bodyPreview(raw))
+	if attempt < maxHistAttempts && sleepBackoff(ctx, attempt) {
+		return true, err
+	}
+	return false, err
+}
+
+// sleepBackoffCap bounds the exponential ramp so a single stuck instrument
+// can't pin a pool worker (see reconcileWorkers/refreshWorkers) for too long.
+const sleepBackoffCap = 30 * time.Second
+
+// sleepBackoff waits with an exponential ramp (5s, 10s, 20s, capped at
+// sleepBackoffCap) plus up to 50% jitter, respecting ctx. Returns false if
+// cancelled. Jitter matters more now that GetDailyCandles is called from
+// bounded worker pools: without it, several workers rate-limited in the same
+// instant would retry in lockstep and resynchronize the same burst that got
+// them limited.
 func sleepBackoff(ctx context.Context, attempt int) bool {
-	t := time.NewTimer(time.Duration(attempt) * time.Second)
+	wait := 5 * time.Second << (attempt - 1)
+	if wait > sleepBackoffCap {
+		wait = sleepBackoffCap
+	}
+	wait += time.Duration(rand.Int63n(int64(wait)/2 + 1))
+	t := time.NewTimer(wait)
 	defer t.Stop()
 	select {
 	case <-ctx.Done():
@@ -140,11 +191,30 @@ func (c *Client) doHistoricalRequest(ctx context.Context, reqBody []byte) ([]byt
 	return raw, resp.StatusCode, nil
 }
 
+// refreshOrLogin repairs an invalid session on a 401/403. Serialized via
+// loginMu so a burst of workers hitting the same expired session don't each
+// fire their own refresh/login request — the first one in does the work, and
+// anyone who arrives after checks whether another goroutine already fixed the
+// session (tokenTime advanced) before trying itself.
 func (c *Client) refreshOrLogin(ctx context.Context) error {
+	c.mu.RLock()
+	before := c.tokenTime
+	c.mu.RUnlock()
+
+	c.loginMu.Lock()
+	defer c.loginMu.Unlock()
+
+	c.mu.RLock()
+	advanced := c.tokenTime.After(before)
+	c.mu.RUnlock()
+	if advanced {
+		return nil // someone else already refreshed/logged in while we waited
+	}
+
 	if err := c.RefreshTokens(ctx); err == nil {
 		return nil
 	}
-	return c.Login(ctx)
+	return c.doLogin(ctx)
 }
 
 func bodyPreview(raw []byte) string {

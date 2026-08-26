@@ -1,10 +1,31 @@
 import React, { useEffect, useState } from "react";
 import { api, connectLivePrices, download, fmt, fmtInt, pct } from "../api.js";
+import ChartModal from "../components/ChartModal.jsx";
+
 
 export default function Analytics({ userId }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeChart, setActiveChart] = useState(null); // { id, symbol }
+  const [sortKey, setSortKey] = useState(null);
+  const [sortDir, setSortDir] = useState("asc"); // "asc" | "desc"
+
+  function toggleSort(key) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
+
+  function sortArrow(key) {
+    if (sortKey !== key) return <span className="sort-indicator sort-indicator-idle"> ⇅</span>;
+    return <span className="sort-indicator sort-indicator-active">{sortDir === "asc" ? " ▲" : " ▼"}</span>;
+  }
+
 
   useEffect(() => {
     if (!userId) return;
@@ -59,6 +80,14 @@ export default function Analytics({ userId }) {
       <div className="toolbar">
         <div className="section-title" style={{ margin: 0 }}>Watchlist parameters (live price + indicators)</div>
         <div className="row">
+          <input
+            className="btn-sm"
+            type="text"
+            placeholder="Search symbol"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ minWidth: 150 }}
+          />
           <button className="btn-sm" onClick={exportCsv} disabled={!rows.length}>Export CSV</button>
           <button className="btn-sm" onClick={() => download("/v1/analytics/export.xlsx", "tradenexus_signals.xlsx").catch((e) => setErr(e.message))}>
             Export signals (.xlsx)
@@ -73,15 +102,37 @@ export default function Analytics({ userId }) {
           <table>
             <thead>
               <tr>
-                <th>Symbol</th><th>Price</th><th>Chg%</th><th>RSI(14)</th>
-                <th>EMA10</th><th>EMA20</th><th>EMA50</th><th>SMA40</th>
-                <th>ATR(14)</th><th>Volume</th><th>Vol SMA20</th>
+                {[
+                  ["symbol", "Symbol"], ["price", "Price"], ["pct_change", "Chg%"], ["rsi14", "RSI(14)"],
+                  ["ema10", "EMA10"], ["ema20", "EMA20"], ["ema50", "EMA50"], ["sma40", "SMA40"],
+                  ["atr14", "ATR(14)"], ["volume", "Volume"], ["vol_sma20", "Vol SMA20"],
+                ].map(([key, label]) => (
+                  <th key={key} onClick={() => toggleSort(key)} style={{ cursor: "pointer", userSelect: "none" }} title="Click to sort">
+                    {label}{sortArrow(key)}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {rows
+                .filter((r) => r.symbol.toLowerCase().includes(searchQuery.toLowerCase()))
+                .sort((a, b) => {
+                  if (!sortKey) return 0;
+                  const av = a[sortKey], bv = b[sortKey];
+                  if (av == null && bv == null) return 0;
+                  if (av == null) return sortDir === "asc" ? -1 : 1;
+                  if (bv == null) return sortDir === "asc" ? 1 : -1;
+                  const cmp = typeof av === "string" ? av.localeCompare(bv) : av - bv;
+                  return sortDir === "asc" ? cmp : -cmp;
+                })
+                .map((r) => (
                 <tr key={r.instrument_id}>
-                  <td>{r.symbol}</td>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {r.symbol}
+                      <button className="btn-sm btn-ghost" style={{ padding: '2px 6px', fontSize: '11px' }} onClick={() => setActiveChart({ id: r.instrument_id, symbol: r.symbol })}>Chart</button>
+                    </div>
+                  </td>
                   <td>{fmt(r.price)}</td>
                   <td className={r.pct_change >= 0 ? "pos" : "neg"}>{pct(r.pct_change)}</td>
                   <td>{fmt(r.rsi14)}</td>
@@ -97,6 +148,14 @@ export default function Analytics({ userId }) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {activeChart && (
+        <ChartModal
+          instrumentId={activeChart.id}
+          symbol={activeChart.symbol}
+          onClose={() => setActiveChart(null)}
+        />
       )}
     </div>
   );

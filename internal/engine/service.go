@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -124,25 +126,26 @@ func (s *Service) persist(ctx context.Context, instID int64, rep scanner.Report,
 
 	// Daily Pine (closed candle only — the last daily bar is already closed).
 	if len(daily) > 0 && (rep.DailyPine.Buy || rep.DailyPine.Sell) {
-		if err := add(pineSignal(instID, market.TF1D, lastTime(daily), rep.DailyPine)); err != nil {
+		if err := add(pineSignal(instID, market.TF1D, lastTime(daily), lastClose(daily), rep.DailyPine)); err != nil {
 			return n, err
 		}
 	}
 	// Weekly Pine (forming bar allowed).
 	if len(weekly) > 0 && (rep.WeeklyPine.Buy || rep.WeeklyPine.Sell) {
-		if err := add(pineSignal(instID, market.TF1W, lastTime(weekly), rep.WeeklyPine)); err != nil {
+		if err := add(pineSignal(instID, market.TF1W, lastTime(weekly), lastClose(weekly), rep.WeeklyPine)); err != nil {
 			return n, err
 		}
 	}
 	// Monthly Pine (forming bar allowed).
 	if len(monthly) > 0 && (rep.MonthlyPine.Buy || rep.MonthlyPine.Sell) {
-		if err := add(pineSignal(instID, market.TF1M, lastTime(monthly), rep.MonthlyPine)); err != nil {
+		if err := add(pineSignal(instID, market.TF1M, lastTime(monthly), lastClose(monthly), rep.MonthlyPine)); err != nil {
 			return n, err
 		}
 	}
 	// Weekly scanners: fire when >= 1 of 4 (confidence = N/4).
 	if len(weekly) > 0 && rep.Weekly.Confidence >= 1 {
 		conf := rep.Weekly.Confidence
+		price := lastClose(weekly)
 		if err := add(signals.Signal{
 			InstrumentID: instID,
 			Source:       "weekly",
@@ -153,24 +156,25 @@ func (s *Service) persist(ctx context.Context, instID int64, rep scanner.Report,
 			Confidence:   &conf,
 			RSI:          rep.Weekly.RSI,
 			Volume:       rep.Weekly.Volume,
+			Price:        &price,
 			Reasons:      rep.Weekly.Details,
 		}); err != nil {
 			return n, err
 		}
 	}
-	if err := s.persistPatternSignals(add, instID, market.TF1D, lastTimeOrZero(daily), rep.Patterns.Daily); err != nil {
+	if err := s.persistPatternSignals(add, instID, market.TF1D, lastTimeOrZero(daily), lastCloseOrZero(daily), rep.Patterns.Daily); err != nil {
 		return n, err
 	}
-	if err := s.persistPatternSignals(add, instID, market.TF1W, lastTimeOrZero(weekly), rep.Patterns.Weekly); err != nil {
+	if err := s.persistPatternSignals(add, instID, market.TF1W, lastTimeOrZero(weekly), lastCloseOrZero(weekly), rep.Patterns.Weekly); err != nil {
 		return n, err
 	}
-	if err := s.persistPatternSignals(add, instID, market.TF1M, lastTimeOrZero(monthly), rep.Patterns.Monthly); err != nil {
+	if err := s.persistPatternSignals(add, instID, market.TF1M, lastTimeOrZero(monthly), lastCloseOrZero(monthly), rep.Patterns.Monthly); err != nil {
 		return n, err
 	}
 	return n, nil
 }
 
-func (s *Service) persistPatternSignals(add func(signals.Signal) error, instID int64, tf string, date time.Time, res scanner.PatternTimeframeResult) error {
+func (s *Service) persistPatternSignals(add func(signals.Signal) error, instID int64, tf string, date time.Time, price float64, res scanner.PatternTimeframeResult) error {
 	if date.IsZero() {
 		return nil
 	}
@@ -195,6 +199,7 @@ func (s *Service) persistPatternSignals(add func(signals.Signal) error, instID i
 			Direction:    "BUY",
 			CandleDate:   date,
 			Confidence:   &conv, // pattern conviction (0-100), shown in alerts
+			Price:        &price,
 			Reasons:      p.sig.Reasons,
 		}); err != nil {
 			return err
@@ -203,7 +208,7 @@ func (s *Service) persistPatternSignals(add func(signals.Signal) error, instID i
 	return nil
 }
 
-func pineSignal(instID int64, tf string, date time.Time, sig scanner.PineSignal) signals.Signal {
+func pineSignal(instID int64, tf string, date time.Time, price float64, sig scanner.PineSignal) signals.Signal {
 	dir := "BUY"
 	if sig.Sell {
 		dir = "SELL"
@@ -215,6 +220,7 @@ func pineSignal(instID int64, tf string, date time.Time, sig scanner.PineSignal)
 		Timeframe:    tf,
 		Direction:    dir,
 		CandleDate:   date,
+		Price:        &price,
 		Reasons:      sig.Reasons,
 		Metrics:      sig.Metrics,
 	}
@@ -237,6 +243,15 @@ func lastTimeOrZero(c []market.Candle) time.Time {
 		return time.Time{}
 	}
 	return lastTime(c)
+}
+
+func lastClose(c []market.Candle) float64 { return c[len(c)-1].Close }
+
+func lastCloseOrZero(c []market.Candle) float64 {
+	if len(c) == 0 {
+		return 0
+	}
+	return lastClose(c)
 }
 
 // appendToday splices today's forming candle onto the confirmed daily history.
@@ -316,8 +331,15 @@ type ReconcileResult struct {
 
 // Reconcile detects and backfills missing daily candles (distinguishing gaps
 // from weekends/holidays), rebuilds aggregates, and re-scans. Runs on startup,
-// after downtime, and each trading day.
+// after downtime, and each trading day. Participates in the same
+// reconcile-before-redis-populate gate as ReconcileAll (see intraday.Cache),
+// so a single admin-triggered reconcile can't race intraday Redis population
+// either — not just the bulk path.
 func (s *Service) Reconcile(ctx context.Context, instrumentID int64) (ReconcileResult, error) {
+	if s.intraday != nil {
+		s.intraday.BeginReconcile()
+		defer s.intraday.EndReconcile()
+	}
 	inst, err := s.inst.GetByID(ctx, instrumentID)
 	if err != nil {
 		return ReconcileResult{}, err
@@ -389,36 +411,101 @@ func (s *Service) ScanAll(ctx context.Context) ([]ScanResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.log.Info().Int("tracked", len(ids)).Msg("scan-all: starting scan")
 	var out []ScanResult
-	for _, id := range ids {
+	for i, id := range ids {
 		r, err := s.ScanStored(ctx, id)
 		if err != nil {
 			s.log.Error().Err(err).Int64("instrument", id).Msg("scan-all: instrument failed")
 			continue
 		}
 		out = append(out, r)
+		if (i+1)%10 == 0 {
+			s.log.Info().Int("scanned", i+1).Int("tracked", len(ids)).Msg("scan-all: progress")
+		}
 	}
+	s.log.Info().Int("scanned", len(out)).Int("tracked", len(ids)).Msg("scan-all: finished")
 	return out, nil
 }
 
+// reconcileWorkers bounds how many instruments are reconciled concurrently.
+// Angel calls within each still share the same rate limiter (and the same
+// login-cooldown circuit breaker), so this overlaps request/DB latency across
+// instruments rather than raising the true dispatch rate to Angel.
+const reconcileWorkers = 5
+
 // ReconcileAll reconciles + scans every tracked instrument. This is the daily
-// job and the startup-recovery routine.
+// job and the startup-recovery routine. While it runs, intraday Redis
+// population (manual scans, the scheduled ticker) waits — reconciliation
+// always goes first so the two never compete for the same Angel session.
+//
+// Instruments that fail (e.g. Angel rate-limiting a specific request) are
+// retried once in a second pass after the full sweep completes, by which
+// point any transient rate-limit has usually cleared.
 func (s *Service) ReconcileAll(ctx context.Context) ([]ReconcileResult, error) {
+	if s.intraday != nil {
+		s.intraday.BeginReconcile()
+		defer s.intraday.EndReconcile()
+	}
 	ids, err := s.candles.ListInstrumentIDsWithData(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var out []ReconcileResult
-	for _, id := range ids {
-		r, err := s.Reconcile(ctx, id)
-		if err != nil {
-			s.log.Error().Err(err).Int64("instrument", id).Msg("reconcile-all: instrument failed")
-			continue
-		}
-		out = append(out, r)
+	s.log.Info().Int("total", len(ids)).Msg("reconcile-all: starting")
 
+	out, failed := s.reconcileBatch(ctx, ids)
+
+	if len(failed) > 0 {
+		s.log.Info().Int("count", len(failed)).Msg("reconcile-all: retrying failed instruments")
+		retried, stillFailed := s.reconcileBatch(ctx, failed)
+		out = append(out, retried...)
+		for _, id := range stillFailed {
+			s.log.Error().Int64("instrument", id).Msg("reconcile-all: instrument failed after retry")
+		}
 	}
+
+	s.log.Info().Int("total", len(ids)).Int("succeeded", len(out)).Msg("reconcile-all: finished")
 	return out, nil
+}
+
+// reconcileBatch reconciles the given instrument IDs across reconcileWorkers
+// goroutines, logging progress heartbeats. It returns the successful results
+// plus the IDs that failed, for the caller to retry or report.
+func (s *Service) reconcileBatch(ctx context.Context, ids []int64) (out []ReconcileResult, failed []int64) {
+	total := len(ids)
+	const heartbeatEvery = 10
+	var (
+		mu   sync.Mutex
+		done int32
+	)
+	idCh := make(chan int64)
+	var wg sync.WaitGroup
+	for w := 0; w < reconcileWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for id := range idCh {
+				r, err := s.Reconcile(ctx, id)
+				mu.Lock()
+				if err != nil {
+					s.log.Error().Err(err).Int64("instrument", id).Msg("reconcile-all: instrument failed")
+					failed = append(failed, id)
+				} else {
+					out = append(out, r)
+				}
+				mu.Unlock()
+				if d := atomic.AddInt32(&done, 1); int(d)%heartbeatEvery == 0 || int(d) == total {
+					s.log.Info().Int32("done", d).Int("total", total).Msg("reconcile-all: progress")
+				}
+			}
+		}()
+	}
+	for _, id := range ids {
+		idCh <- id
+	}
+	close(idCh)
+	wg.Wait()
+	return out, failed
 }
 
 // DeleteCandlesForDate removes every daily candle on the given date and rebuilds
@@ -460,8 +547,14 @@ type RefetchDateResult struct {
 // tracked instrument, upserts the finalized bar, and rebuilds aggregates. The
 // date must be finalized (its session has closed) and a trading day. Heavy —
 // one rate-limited Angel call per instrument — so callers should run it in the
-// background.
+// background. Participates in the same reconcile-before-redis-populate gate as
+// ReconcileAll/Reconcile, since it's a third bulk Angel consumer that would
+// otherwise be free to race intraday Redis population.
 func (s *Service) RefetchDate(ctx context.Context, date time.Time) (RefetchDateResult, error) {
+	if s.intraday != nil {
+		s.intraday.BeginReconcile()
+		defer s.intraday.EndReconcile()
+	}
 	day := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, market.IST)
 	res := RefetchDateResult{Date: day.Format("2006-01-02")}
 

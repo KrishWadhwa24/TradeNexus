@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api, connectLivePrices, fmt, pct } from "../api.js";
-import { HeroChart, EmptyArt } from "../icons.jsx";
+import { HeroChart } from "../icons.jsx";
 
 export default function Home({ userId }) {
   const [rows, setRows] = useState([]);
@@ -64,20 +64,34 @@ export default function Home({ userId }) {
       ) : err ? (
         <div className="err">{err}</div>
       ) : !rows.length ? (
-        <div className="empty"><EmptyArt /><div>No watchlist data yet. Add stocks to your watchlist and sync them.</div></div>
+        <div className="empty">
+          <svg viewBox="0 0 24 24" style={{ width: 64, height: 64, opacity: 0.4, marginBottom: 12 }} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 17l6-6 4 4 8-8" /><path d="M15 6h6v6" />
+          </svg>
+          <div>No watchlist data yet. Add stocks to your watchlist and sync them.</div>
+        </div>
       ) : (
         <div className="panel">
           <table>
             <thead>
-              <tr><th>#</th><th>Symbol</th><th>Last</th><th>Prev close</th><th>Change</th></tr>
+              <tr>
+                <th className="hide-on-mobile">#</th>
+                <th>Symbol</th>
+                <th>
+                  <span className="hide-on-mobile">Last</span>
+                  <span className="show-on-mobile">Price</span>
+                </th>
+                <th className="hide-on-mobile">Prev close</th>
+                <th>Change</th>
+              </tr>
             </thead>
             <tbody>
               {rows.map((m, i) => (
                 <tr key={m.instrument_id}>
-                  <td className="muted">{i + 1}</td>
+                  <td className="muted hide-on-mobile">{i + 1}</td>
                   <td><b>{m.symbol}</b></td>
                   <td>{fmt(m.last_close)}</td>
-                  <td className="muted">{fmt(m.prev_close)}</td>
+                  <td className="muted hide-on-mobile">{fmt(m.prev_close)}</td>
                   <td className={m.pct_change >= 0 ? "pos" : "neg"}>{pct(m.pct_change)}</td>
                 </tr>
               ))}

@@ -36,8 +36,14 @@ type Config struct {
 	AngelTOTPSecret string `env:"ANGEL_TOTP_SECRET" envDefault:""`
 
 	// Angel rate limiting
-	AngelHistRate            float64       `env:"ANGEL_HIST_RATE" envDefault:"2"`
-	AngelHistBurst           int           `env:"ANGEL_HIST_BURST" envDefault:"2"`
+	AngelHistRate float64 `env:"ANGEL_HIST_RATE" envDefault:"2"`
+	// Burst is deliberately 1: with >1 the bucket can release two requests to
+	// Angel at the same instant, and Angel's real server-side cap is stricter
+	// than our configured rate — bursts of 2+ are what triggers its rate-limit
+	// errors. Keeping burst at 1 still lets concurrent workers overlap request
+	// latency (see intraday.Cache.Refresh) without ever dispatching two calls
+	// at once.
+	AngelHistBurst           int           `env:"ANGEL_HIST_BURST" envDefault:"1"`
 	AngelScripMasterTimeout  time.Duration `env:"ANGEL_SCRIPMASTER_TIMEOUT" envDefault:"5m"`
 	AngelScripMasterAttempts int           `env:"ANGEL_SCRIPMASTER_ATTEMPTS" envDefault:"3"`
 	AngelScripMasterURL      string        `env:"ANGEL_SCRIPMASTER_URL" envDefault:""`
@@ -51,6 +57,10 @@ type Config struct {
 
 	// Auth
 	JWTSecret string `env:"JWT_SECRET" envDefault:"dev-change-me-please"`
+	// GoogleClientID is the OAuth client ID for "Sign in with Google" — public
+	// value (safe to also expose to the frontend), used to check the "aud"
+	// claim on a Google ID token so we only accept tokens issued for this app.
+	GoogleClientID string `env:"GOOGLE_CLIENT_ID" envDefault:""`
 
 	// Admin bootstrap: if both are set, an admin account is upserted on boot.
 	AdminEmail    string `env:"ADMIN_EMAIL" envDefault:""`
@@ -61,7 +71,7 @@ type Config struct {
 	DailyScanCron      string `env:"DAILY_SCAN_CRON" envDefault:"0 16 * * 1-5"`
 	CleanupCron        string `env:"CLEANUP_CRON" envDefault:"0 1 * * *"`
 	FillScheduledCron  string `env:"FILL_SCHEDULED_CRON" envDefault:"16 9 * * 1-5"`
-	RetentionDays      int    `env:"RETENTION_DAYS" envDefault:"30"`
+	RetentionDays      int    `env:"RETENTION_DAYS" envDefault:"100"`
 	ReconcileOnStartup bool   `env:"RECONCILE_ON_STARTUP" envDefault:"true"`
 
 	// Intraday cache (today's forming candle in Redis, market hours only)
@@ -70,10 +80,16 @@ type Config struct {
 
 	// IPO tracker (open + upcoming IPOs + GMP signals from the InvestorGain feed)
 	IPOEnabled      bool          `env:"IPO_ENABLED" envDefault:"true"`
-	IPOPollInterval time.Duration `env:"IPO_POLL_INTERVAL" envDefault:"3h"`
+	IPOPollInterval time.Duration `env:"IPO_POLL_INTERVAL" envDefault:"40m"`
 	// IST cron for the authoritative close-day GMP signal check (mainboard only).
 	// Default 14:30 (2:30 PM IST).
 	IPOSignalCron string `env:"IPO_SIGNAL_CRON" envDefault:"30 14 * * *"`
+
+	// Promoter/Director/KMP insider-trading tracker (NSE PIT disclosure feed)
+	PromoterEnabled         bool          `env:"PROMOTER_ENABLED" envDefault:"true"`
+	PromoterPollInterval    time.Duration `env:"PROMOTER_POLL_INTERVAL" envDefault:"90m"`
+	PromoterAlertWindowDays int           `env:"PROMOTER_ALERT_WINDOW_DAYS" envDefault:"15"`
+	PromoterRetentionDays   int           `env:"PROMOTER_RETENTION_DAYS" envDefault:"60"`
 
 	// Notifications (Module 7)
 	NotifyEnabled    bool   `env:"NOTIFY_ENABLED" envDefault:"true"`
@@ -84,6 +100,26 @@ type Config struct {
 	// stock+timeframe+day) even if a user hasn't configured their own bot.
 	TelegramDefaultBotToken string `env:"TELEGRAM_DEFAULT_BOT_TOKEN" envDefault:""`
 	TelegramDefaultChatID   string `env:"TELEGRAM_DEFAULT_CHAT_ID" envDefault:""`
+
+	// If the default chat is a forum supergroup, these route each signal
+	// category to its own topic instead of the General topic. 0 = General.
+	TelegramStockSignalsThreadID int `env:"TELEGRAM_STOCK_SIGNALS_THREAD_ID" envDefault:"0"`
+	TelegramIPOAlertsThreadID    int `env:"TELEGRAM_IPO_ALERTS_THREAD_ID" envDefault:"0"`
+	TelegramPromoterThreadID     int `env:"TELEGRAM_PROMOTER_THREAD_ID" envDefault:"0"`
+	TelegramBulkDealsThreadID    int `env:"TELEGRAM_BULK_DEALS_THREAD_ID" envDefault:"0"`
+	TelegramBlockDealsThreadID   int `env:"TELEGRAM_BLOCK_DEALS_THREAD_ID" envDefault:"0"`
+
+	// Bulk & block deals tracker (NSE historical bulk-block CSV feed).
+	DealsEnabled         bool    `env:"DEALS_ENABLED" envDefault:"true"`
+	DealsRetentionDays   int     `env:"DEALS_RETENTION_DAYS" envDefault:"30"`
+	DealsAlertWindowDays int     `env:"DEALS_ALERT_WINDOW_DAYS" envDefault:"7"`        // alert stocks dealt within N days
+	DealsAlertCron       string  `env:"DEALS_ALERT_CRON" envDefault:"0 19 * * *"`      // 19:00 IST daily
+	BulkDealMinNetValue  float64 `env:"BULK_DEAL_MIN_NET_VALUE" envDefault:"50000000"` // ₹5cr net-value filter
+
+	// FII/DII daily cash-market activity (NSE fiidiiTradeReact feed). No history
+	// is kept — only the latest snapshot — and no interval/cron is configurable:
+	// it only ever polls after 4pm IST on a trading day, hourly until published.
+	FiiDiiEnabled bool `env:"FIIDII_ENABLED" envDefault:"true"`
 }
 
 // IsLocal reports whether we're running in the local dev profile.

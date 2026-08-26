@@ -11,94 +11,118 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/rs/zerolog"
-
 	"tradenexus/internal/analytics"
 	"tradenexus/internal/angel"
 	"tradenexus/internal/auth"
 	"tradenexus/internal/calendar"
 	"tradenexus/internal/candles"
+	"tradenexus/internal/deals"
 	"tradenexus/internal/engine"
+	"tradenexus/internal/fiidii"
+	"tradenexus/internal/insights"
 	"tradenexus/internal/instruments"
 	"tradenexus/internal/ipo"
 	"tradenexus/internal/live"
 	"tradenexus/internal/notify"
 	"tradenexus/internal/paper"
+	"tradenexus/internal/promoter"
 	"tradenexus/internal/ratelimit"
 	"tradenexus/internal/signals"
 	"tradenexus/internal/store"
 	"tradenexus/internal/users"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+	"github.com/rs/zerolog"
 )
 
 // Deps bundles everything the HTTP handlers need.
 type Deps struct {
-	Log         zerolog.Logger
-	PG          *store.Postgres
-	RDB         *store.Redis
-	Limiter     *ratelimit.Limiter
-	Angel       *angel.Client
-	Instruments *instruments.Repo
-	Candles     *candles.Repo
-	Engine      *engine.Service
-	Signals     *signals.Repo
-	Calendar    *calendar.Service
-	Users       *users.Repo
-	Notifier    *notify.Dispatcher
-	Analytics   *analytics.Service
-	Paper       *paper.Service
-	Live        *live.Hub
-	IPO         *ipo.Service
-	JWTSecret   string
+	Log            zerolog.Logger
+	PG             *store.Postgres
+	RDB            *store.Redis
+	Limiter        *ratelimit.Limiter
+	Angel          *angel.Client
+	Instruments    *instruments.Repo
+	Candles        *candles.Repo
+	Engine         *engine.Service
+	Signals        *signals.Repo
+	Calendar       *calendar.Service
+	Users          *users.Repo
+	Notifier       *notify.Dispatcher
+	Analytics      *analytics.Service
+	Paper          *paper.Service
+	Live           *live.Hub
+	IPO            *ipo.Service
+	Promoter       *promoter.Service
+	Deals          *deals.Service
+	Insights       *insights.Service
+	FiiDii         *fiidii.Service
+	JWTSecret      string
+	GoogleClientID string
 }
 
 // Server holds shared dependencies for handlers.
 type Server struct {
-	log       zerolog.Logger
-	pg        *store.Postgres
-	rdb       *store.Redis
-	limiter   *ratelimit.Limiter
-	angel     *angel.Client
-	inst      *instruments.Repo
-	candles   *candles.Repo
-	engine    *engine.Service
-	signals   *signals.Repo
-	cal       *calendar.Service
-	users     *users.Repo
-	notifier  *notify.Dispatcher
-	analytics *analytics.Service
-	paper     *paper.Service
-	live      *live.Hub
-	ipo       *ipo.Service
-	jwtSecret string
+	log            zerolog.Logger
+	pg             *store.Postgres
+	rdb            *store.Redis
+	limiter        *ratelimit.Limiter
+	angel          *angel.Client
+	inst           *instruments.Repo
+	candles        *candles.Repo
+	engine         *engine.Service
+	signals        *signals.Repo
+	cal            *calendar.Service
+	users          *users.Repo
+	notifier       *notify.Dispatcher
+	analytics      *analytics.Service
+	paper          *paper.Service
+	live           *live.Hub
+	ipo            *ipo.Service
+	promoter       *promoter.Service
+	deals          *deals.Service
+	insights       *insights.Service
+	fiidii         *fiidii.Service
+	jwtSecret      string
+	googleClientID string
 
 	// scanRunning guards manual scan-all so repeated clicks don't stack.
 	scanRunning atomic.Bool
 	// refetchRunning guards the admin per-date refetch (also heavy on Angel).
 	refetchRunning atomic.Bool
+	// reconcileRunning guards the bulk admin reconcile-all endpoint so two
+	// overlapping runs (e.g. an admin click racing the daily cron) don't both
+	// hammer Angel at once.
+	reconcileRunning atomic.Bool
 }
 
 // NewServer constructs the API server with its dependencies.
 func NewServer(d Deps) *Server {
 	return &Server{
-		log:       d.Log,
-		pg:        d.PG,
-		rdb:       d.RDB,
-		limiter:   d.Limiter,
-		angel:     d.Angel,
-		inst:      d.Instruments,
-		candles:   d.Candles,
-		engine:    d.Engine,
-		signals:   d.Signals,
-		cal:       d.Calendar,
-		users:     d.Users,
-		notifier:  d.Notifier,
-		analytics: d.Analytics,
-		paper:     d.Paper,
-		live:      d.Live,
-		ipo:       d.IPO,
-		jwtSecret: d.JWTSecret,
+		log:            d.Log,
+		pg:             d.PG,
+		rdb:            d.RDB,
+		limiter:        d.Limiter,
+		angel:          d.Angel,
+		inst:           d.Instruments,
+		candles:        d.Candles,
+		engine:         d.Engine,
+		signals:        d.Signals,
+		cal:            d.Calendar,
+		users:          d.Users,
+		notifier:       d.Notifier,
+		analytics:      d.Analytics,
+		paper:          d.Paper,
+		live:           d.Live,
+		ipo:            d.IPO,
+		promoter:       d.Promoter,
+		deals:          d.Deals,
+		insights:       d.Insights,
+		fiidii:         d.FiiDii,
+		jwtSecret:      d.JWTSecret,
+		googleClientID: d.GoogleClientID,
 	}
 }
 
@@ -144,6 +168,13 @@ func (s *Server) adminOnly(next http.Handler) http.Handler {
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"https://trade-nexus-smoky.vercel.app", "http://localhost:5173"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	}))
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(s.requestLogger)
@@ -157,8 +188,12 @@ func (s *Server) Router() http.Handler {
 		// Public auth endpoints.
 		r.Post("/auth/register", s.handleRegister)
 		r.Post("/auth/login", s.handleLogin)
+		r.Post("/auth/google", s.handleGoogleLogin)
 		r.Get("/users/{uid}/live-prices", s.handleLivePrices)
 		r.Get("/public/live-prices", s.handlePublicLivePrices) // landing: snapshot + live ticks (WS)
+		// Admin-curated list shown on the landing page — read is harmless to
+		// expose publicly (it must be, since the landing page is pre-auth).
+		r.Get("/public/featured-stocks", s.handleListFeaturedStocks)
 
 		// Everything below requires a valid JWT.
 		r.Group(func(r chi.Router) {
@@ -172,7 +207,6 @@ func (s *Server) Router() http.Handler {
 			// Angel client (Module 2)
 			r.Post("/angel/login", s.handleAngelLogin)
 			r.Get("/angel/status", s.handleAngelStatus)
-			r.Post("/angel/scripmaster/sync", s.handleScripMasterSync)
 			r.Post("/angel/historical", s.handleAngelHistorical)
 
 			// Instruments (Module 2)
@@ -206,10 +240,28 @@ func (s *Server) Router() http.Handler {
 				r.With(middleware.Timeout(65*time.Minute)).Post("/admin/candles/refetch", s.handleRefetchCandlesByDate)
 				r.Post("/admin/dispatch/force", s.handleForceDispatch)
 
+				// Stock universe: re-download the Angel scrip master and upsert
+				// NSE/BSE cash equities (picks up newly listed IPOs, etc.).
+				r.Post("/angel/scripmaster/sync", s.handleScripMasterSync)
+
 				// IPO admin: refresh the feed now, or push a manual "Apply".
 				r.Post("/admin/ipos/refresh", s.handleRefreshIPOs)
 				r.Post("/admin/ipos/{id}/apply", s.handleIPOAdminApply)
 				r.Post("/admin/ipos/{id}/clear-signal", s.handleIPOClearSignal)
+
+				// Promoter trades admin: force-send a specific trade's Telegram alert.
+				r.Post("/admin/promoter-trades/{id}/send-alert", s.handlePromoterSendAlert)
+				r.Post("/admin/promoter-buying/backfill", s.handleBackfillPromoterBuying)
+				r.Post("/admin/deals/refresh", s.handleRefreshDeals)
+				r.Post("/admin/deals/{type}/{symbol}/send-alert", s.handleDealsSendAlert)
+				r.Post("/admin/mutual-funds/backfill", s.handleBackfillMutualFunds)
+
+				// FII/DII admin: force-send the currently cached snapshot now.
+				r.Post("/admin/fii-dii/send-alert", s.handleFiiDiiSendAlert)
+
+				// Featured stocks: the admin-curated list shown on the landing page.
+				r.Post("/admin/featured-stocks", s.handleAddFeaturedStock)
+				r.Delete("/admin/featured-stocks/{id}", s.handleRemoveFeaturedStock)
 			})
 
 			// Users, watchlists, prefs, telegram (Module 7)
@@ -236,6 +288,35 @@ func (s *Server) Router() http.Handler {
 
 			// IPOs (open + upcoming, with GMP)
 			r.Get("/ipos", s.handleListIPOs)
+
+			// Promoter/Director/KMP insider-trading feed. "Scan now" is open to
+			// every logged-in user (cooldown-guarded inside the service).
+			r.Get("/promoter-trades", s.handleListPromoterTrades)
+			r.Post("/promoter-trades/scan", s.handlePromoterScanNow)
+
+			// Promoter buying analyser: permanent per-person stock positions
+			// built from promoter/KMP disclosure rows.
+			r.Get("/promoter-buying", s.handleListPromoterBuying)
+			r.Get("/promoter-buying/{symbol}", s.handlePromoterBuyingDetail)
+			r.Get("/promoter-buying/{symbol}/history", s.handlePromoterPersonHistory)
+
+			r.Get("/bulk-deals", s.handleListDeals(deals.Bulk))
+			r.Get("/bulk-deals/audit", s.handleDealsAudit(deals.Bulk))
+			r.Get("/bulk-deals/{symbol}", s.handleDealDetail(deals.Bulk))
+			r.Get("/block-deals", s.handleListDeals(deals.Block))
+			r.Get("/block-deals/audit", s.handleDealsAudit(deals.Block))
+			r.Get("/block-deals/{symbol}", s.handleDealDetail(deals.Block))
+
+			// Mutual fund analyser: permanent per-fund positions built from
+			// bulk/block deal client rows.
+			r.Get("/mutual-funds", s.handleListMutualFunds)
+			r.Get("/mutual-funds/{fund}", s.handleMutualFundDetail)
+
+			r.Get("/insights/performance", s.handleInsightsPerformance)
+			r.Get("/insights/breadth", s.handleInsightsBreadth)
+			r.Get("/insights/confluence", s.handleInsightsConfluence)
+			r.Get("/insights/fii-dii", s.handleFiiDiiLatest)
+			r.Get("/insights/fii-dii/history", s.handleFiiDiiHistory)
 
 			// Market data (Module 9): trending + params + dashboard
 			r.Get("/market/trending", s.handleTrending)

@@ -248,6 +248,18 @@ func (s *Service) Close(ctx context.Context, tradeID int64) (Trade, error) {
 	return s.getTrade(ctx, tradeID)
 }
 
+// FillScheduledIfMarketOpen fills SCHEDULED trades only if the market is open
+// right now. Run once on server startup: if the server (or the market) was
+// closed when a trade was scheduled and is already open by the time the
+// process comes up, this converts it immediately instead of leaving it
+// stranded until the next FillScheduledCron tick.
+func (s *Service) FillScheduledIfMarketOpen(ctx context.Context) (int, error) {
+	if !s.cal.Cal().IsMarketOpen(time.Now().In(market.IST)) {
+		return 0, nil
+	}
+	return s.FillScheduled(ctx)
+}
+
 // FillScheduled executes SCHEDULED trades — run at market open by the scheduler.
 func (s *Service) FillScheduled(ctx context.Context) (int, error) {
 	rows, err := s.pool.Query(ctx,
@@ -270,30 +282,37 @@ func (s *Service) FillScheduled(ctx context.Context) (int, error) {
 	for _, id := range ids {
 		t, err := s.getTrade(ctx, id)
 		if err != nil {
+			s.log.Error().Err(err).Int64("trade_id", id).Msg("fill scheduled: load trade failed")
 			continue
 		}
 		inst, err := s.inst.GetByID(ctx, t.InstrumentID)
 		if err != nil {
+			s.log.Error().Err(err).Int64("trade_id", id).Msg("fill scheduled: load instrument failed")
 			continue
 		}
 		px, err := s.price(ctx, inst)
 		if err != nil {
+			s.log.Error().Err(err).Int64("trade_id", id).Str("symbol", inst.TradingSymbol).Msg("fill scheduled: price lookup failed")
 			continue
 		}
 		cost := px * float64(t.Quantity)
 		tx, err := s.pool.Begin(ctx)
 		if err != nil {
+			s.log.Error().Err(err).Int64("trade_id", id).Msg("fill scheduled: begin tx failed")
 			continue
 		}
 		_, e1 := tx.Exec(ctx, `UPDATE paper_trades SET status='OPEN', entry_price=$2, entry_time=now() WHERE id=$1`, id, px)
 		_, e2 := tx.Exec(ctx, `UPDATE paper_accounts SET cash_balance=cash_balance-$2, updated_at=now() WHERE user_id=$1::uuid`, t.userID, cost)
 		if e1 != nil || e2 != nil {
 			_ = tx.Rollback(ctx)
+			s.log.Error().Err(errors.Join(e1, e2)).Int64("trade_id", id).Msg("fill scheduled: update failed")
 			continue
 		}
-		if err := tx.Commit(ctx); err == nil {
-			filled++
+		if err := tx.Commit(ctx); err != nil {
+			s.log.Error().Err(err).Int64("trade_id", id).Msg("fill scheduled: commit failed")
+			continue
 		}
+		filled++
 	}
 	return filled, nil
 }

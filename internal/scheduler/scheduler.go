@@ -9,7 +9,9 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
+	"tradenexus/internal/cronx"
 	"tradenexus/internal/engine"
+	"tradenexus/internal/fiidii"
 	"tradenexus/internal/intraday"
 	"tradenexus/internal/market"
 	"tradenexus/internal/paper"
@@ -31,19 +33,30 @@ type Scheduler struct {
 	svc      *engine.Service
 	paper    *paper.Service
 	intraday *intraday.Cache // optional
+	fiidii   *fiidii.Service // optional
 	cfg      Config
 	log      zerolog.Logger
 }
 
-// New builds a scheduler (IST-based cron). intradayCache may be nil.
-func New(svc *engine.Service, paperSvc *paper.Service, intradayCache *intraday.Cache, cfg Config, log zerolog.Logger) *Scheduler {
+// New builds a scheduler (IST-based cron). intradayCache and fiidiiSvc may be nil.
+func New(svc *engine.Service, paperSvc *paper.Service, intradayCache *intraday.Cache, fiidiiSvc *fiidii.Service, cfg Config, log zerolog.Logger) *Scheduler {
 	return &Scheduler{
-		cron:     cron.New(cron.WithLocation(market.IST)),
+		cron:     cron.New(cron.WithLocation(market.IST), cron.WithChain(cronx.Recover(log))),
 		svc:      svc,
 		paper:    paperSvc,
 		intraday: intradayCache,
+		fiidii:   fiidiiSvc,
 		cfg:      cfg,
 		log:      log,
+	}
+}
+
+// notifyReconcileDone tells the FII/DII service the daily reconcile+scan+
+// dispatch pipeline finished for today, so it can send its own alert now if
+// today's FII/DII data is already in hand.
+func (s *Scheduler) notifyReconcileDone() {
+	if s.fiidii != nil {
+		s.fiidii.MarkReconcileDone(time.Now())
 	}
 }
 
@@ -64,6 +77,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 			return
 		}
 		s.log.Info().Int("instruments", len(res)).Msg("scheduler: daily scan done")
+		s.notifyReconcileDone()
 	}); err != nil {
 		return err
 	}
@@ -109,23 +123,37 @@ func (s *Scheduler) Start(ctx context.Context) error {
 			t := time.NewTicker(s.cfg.IntradayInterval)
 			defer t.Stop()
 			for range t.C {
-				if !s.intraday.MarketOpen(time.Now().In(market.IST)) {
-					continue
-				}
-				c, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-				if _, err := s.intraday.Refresh(c); err != nil {
-					s.log.Error().Err(err).Msg("scheduler: intraday refresh failed")
-				}
-				cancel()
+				s.safeCall(func() {
+					if !s.intraday.MarketOpen(time.Now().In(market.IST)) {
+						return
+					}
+					c, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+					if _, err := s.intraday.Refresh(c); err != nil {
+						s.log.Error().Err(err).Msg("scheduler: intraday refresh failed")
+					}
+					cancel()
+				})
 			}
 		}()
 		s.log.Info().Dur("interval", s.cfg.IntradayInterval).Msg("intraday cache refresher started")
 	}
 
-	// Startup work runs SEQUENTIALLY: reconcile/backfill first, then (only if the
-	// market is open) warm the intraday cache. Running them one after the other
-	// avoids two concurrent bulk Angel workflows tripping the rate limiter.
-	go func() {
+	// Startup work runs SEQUENTIALLY: fill any SCHEDULED paper trades if the
+	// market is already open (covers a server restart or downtime that spans
+	// market open, so trades don't sit stranded until the next cron tick),
+	// then reconcile/backfill, then (only if the market is open) warm the
+	// intraday cache. Running them one after the other avoids concurrent bulk
+	// Angel workflows tripping the rate limiter.
+	go s.safeCall(func() {
+		if s.paper != nil {
+			bootCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			if n, err := s.paper.FillScheduledIfMarketOpen(bootCtx); err != nil {
+				s.log.Error().Err(err).Msg("scheduler: startup fill scheduled trades failed")
+			} else if n > 0 {
+				s.log.Info().Int("filled", n).Msg("scheduler: startup filled scheduled trades (market already open)")
+			}
+			cancel()
+		}
 		if s.cfg.RunReconcileOnBoot {
 			bootCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			s.log.Info().Msg("scheduler: startup reconciliation starting")
@@ -133,6 +161,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 				s.log.Error().Err(err).Msg("scheduler: startup reconciliation failed")
 			} else {
 				s.log.Info().Int("instruments", len(res)).Msg("scheduler: startup reconciliation done")
+				s.notifyReconcileDone()
 			}
 			cancel()
 		}
@@ -143,8 +172,19 @@ func (s *Scheduler) Start(ctx context.Context) error {
 			}
 			cancel()
 		}
-	}()
+	})
 	return nil
+}
+
+// safeCall recovers a panic in fn so one bad startup/tick step logs and the
+// scheduler keeps running instead of taking down the whole process.
+func (s *Scheduler) safeCall(fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error().Interface("panic", r).Msg("scheduler: recovered panic")
+		}
+	}()
+	fn()
 }
 
 // Stop halts the cron scheduler, waiting for running jobs to finish.

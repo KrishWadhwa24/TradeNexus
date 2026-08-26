@@ -1,0 +1,1 @@
+ALTER TABLE signal_outcomes DROP COLUMN IF EXISTS ret_30d;

@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
 
+	"tradenexus/internal/cronx"
 	"tradenexus/internal/market"
 )
 
@@ -28,6 +30,12 @@ type Service struct {
 	interval   time.Duration
 	signalCron string // IST cron for the close-day GMP check (e.g. "30 14 * * *")
 	log        zerolog.Logger
+
+	// signalMu serializes RunClosingDaySignals. It's now triggered from the
+	// cron AND opportunistically at startup/every poll tick (catchUpClosing-
+	// DaySignals), so without this, two overlapping calls could both read an
+	// IPO's not-yet-updated signal state and both broadcast.
+	signalMu sync.Mutex
 }
 
 // New builds the IPO service. bc may be nil. signalCron is the IST cron for the
@@ -50,13 +58,33 @@ func (s *Service) ListActive(ctx context.Context) ([]IPO, error) {
 // RefreshNow triggers an immediate poll.
 func (s *Service) RefreshNow(ctx context.Context) error { return s.Poll(ctx) }
 
-// Poll fetches the feed, upserts open/upcoming IPOs, prunes everything else
-// (closed/listed/gone), then evaluates last-day signals.
+// Poll fetches the feed, merges in the latest subscription snapshot, upserts
+// open/upcoming IPOs, prunes everything else (closed/listed/gone), then
+// evaluates last-day signals.
 func (s *Service) Poll(ctx context.Context) error {
 	now := time.Now().In(market.IST)
 	items, err := s.client.Fetch(ctx, now)
 	if err != nil {
 		return err
+	}
+
+	// Subscription data is supplementary — an outage on this call shouldn't
+	// fail the whole poll, just leave subscription fields at their prior
+	// (or zero) value for this cycle.
+	subs, err := s.client.FetchSubscriptions(ctx, now)
+	if err != nil {
+		s.log.Warn().Err(err).Msg("ipo: fetch subscriptions failed, skipping merge this cycle")
+	}
+	for i := range items {
+		if sub, ok := subs[items[i].ID]; ok {
+			items[i].QIB = sub.QIB
+			items[i].SHNI = sub.SHNI
+			items[i].BHNI = sub.BHNI
+			items[i].NII = sub.NII
+			items[i].RII = sub.RII
+			items[i].TotalSubscription = sub.Total
+			items[i].AnchorPositive = sub.AnchorPositive
+		}
 	}
 
 	keep := make([]int64, 0, len(items))
@@ -78,15 +106,34 @@ func (s *Service) Poll(ctx context.Context) error {
 	return nil
 }
 
-// RunClosingDaySignals is the authoritative auto-signal check, run on a schedule
-// (2:30 PM IST by default). For every MAINBOARD IPO that is open and closes
-// today, it evaluates the GMP tier and sends the Telegram signal if the
-// threshold is met. It deliberately ignores any prior admin "clear" — the
-// close-day GMP check always fires. SME IPOs are skipped entirely (admin-only).
+// closingSignalCutoffHour is the last IST hour (24h) at which the close-day GMP
+// check is still allowed to fire. IPO bidding effectively ends well before this,
+// so an alert this late has no value even if the server only just started.
+const closingSignalCutoffHour = 17 // 5:00 PM IST
+
+// qibAlertThreshold is the minimum QIB subscription (times subscribed)
+// required, in addition to the GMP tier, before the close-day signal fires.
+// GMP alone is sentiment; QIB crossing this confirms institutional demand.
+const qibAlertThreshold = 5.0
+
+// RunClosingDaySignals is the authoritative auto-signal check. It is run on a
+// schedule (2:30 PM IST by default) AND opportunistically at startup/poll time
+// (see StartPolling) so a signal still goes out even if the process wasn't
+// running at 2:30 PM — as long as it's checked before 5:00 PM IST. For every
+// MAINBOARD IPO that is open and closes today, it requires BOTH the GMP tier
+// to qualify (≥10%) AND QIB subscription > qibAlertThreshold before sending
+// the Telegram signal. It deliberately ignores any prior admin "clear" — the
+// close-day check always fires. SME IPOs are skipped entirely (admin-only).
+// An IPO already signaled today (at any tier) is skipped, so running this
+// more than once a day — or a GMP/QIB swing crossing thresholds multiple
+// times in one day — never sends more than one Telegram message.
 func (s *Service) RunClosingDaySignals(ctx context.Context) {
 	if s.bc == nil {
 		return
 	}
+	s.signalMu.Lock()
+	defer s.signalMu.Unlock()
+
 	today := dateOnly(time.Now().In(market.IST))
 	active, err := s.repo.ListActive(ctx)
 	if err != nil {
@@ -103,6 +150,17 @@ func (s *Service) RunClosingDaySignals(ctx context.Context) {
 		tier := tierFor(x.GMPPercent)
 		if tier == "" {
 			continue // below 10% → no signal
+		}
+		if x.QIB <= qibAlertThreshold {
+			continue // GMP tier alone isn't enough — QIB subscription must also confirm demand
+		}
+		// Once signaled today (any tier), never signal again today. This now
+		// runs on every poll tick (not just the 2:30 PM cron), so gating on
+		// "same tier" alone would let a GMP swing across tier boundaries fire
+		// a fresh Telegram message each time it crosses — one signal per IPO
+		// per day is the promise.
+		if x.SignaledAt != nil && sameDate(*x.SignaledAt, today) {
+			continue // already signaled today — avoid a repeat Telegram send
 		}
 		text := formatIPOMessage(x, signalLabel(tier), true)
 		if _, err := s.bc.Broadcast(ctx, text); err != nil {
@@ -146,6 +204,22 @@ func (s *Service) ClearSignal(ctx context.Context, id int64) error {
 	return s.repo.ClearSignal(ctx, id)
 }
 
+// catchUpClosingDaySignals runs the close-day GMP check immediately, but only
+// if it's still before the 5:00 PM IST cutoff. This covers the case where the
+// process wasn't running at the scheduled 2:30 PM cron (e.g. server was down
+// or only just started) — as long as someone brings it up before 5:00 PM on
+// the IPO's last day, the alert still goes out. RunClosingDaySignals is
+// idempotent (skips IPOs already signaled today), so this is safe to run
+// alongside the cron without double-sending.
+func (s *Service) catchUpClosingDaySignals() {
+	if time.Now().In(market.IST).Hour() >= closingSignalCutoffHour {
+		return
+	}
+	sc, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	s.RunClosingDaySignals(sc)
+}
+
 // StartPolling runs an immediate poll, then re-polls every interval until ctx is
 // cancelled. Each poll uses its own timeout so it can't hang the loop.
 func (s *Service) StartPolling(ctx context.Context) {
@@ -157,7 +231,11 @@ func (s *Service) StartPolling(ctx context.Context) {
 		}
 	}
 	go func() {
-		poll() // startup
+		startup := func() {
+			poll()                       // startup
+			s.catchUpClosingDaySignals() // catch up on today's close-day signal if we missed the cron
+		}
+		cronx.Safe(s.log, startup)
 		t := time.NewTicker(s.interval)
 		defer t.Stop()
 		for {
@@ -165,13 +243,16 @@ func (s *Service) StartPolling(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				poll()
+				cronx.Safe(s.log, func() {
+					poll()
+					s.catchUpClosingDaySignals()
+				})
 			}
 		}
 	}()
 
 	// Authoritative close-day GMP check on an IST cron (default 2:30 PM).
-	c := cron.New(cron.WithLocation(market.IST))
+	c := cron.New(cron.WithLocation(market.IST), cron.WithChain(cronx.Recover(s.log)))
 	if _, err := c.AddFunc(s.signalCron, func() {
 		sc, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
@@ -238,6 +319,13 @@ func formatIPOMessage(x IPO, signalText string, closingToday bool) string {
 	}
 	if x.Subscription != "" && x.Subscription != "-" {
 		fmt.Fprintf(&b, "📈 Subscription: %s\n", x.Subscription)
+	}
+	if x.QIB > 0 {
+		fmt.Fprintf(&b, "🏦 QIB: %sx", trimNum(x.QIB))
+		if x.TotalSubscription > 0 {
+			fmt.Fprintf(&b, "  ·  Total: %sx", trimNum(x.TotalSubscription))
+		}
+		b.WriteString("\n")
 	}
 	if x.Price != "" {
 		fmt.Fprintf(&b, "💰 Price: ₹%s", x.Price)
