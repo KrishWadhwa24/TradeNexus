@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TradeNexus</title>
     <meta name="description" content="NSE/BSE stock scanners, IPO GMP tracking, promoter buying analysis, and bulk/block deal alerts." />
+
+    <!-- PWA install — vite-plugin-pwa injects the manifest link + service
+         worker registration itself; these are the bits it doesn't cover:
+         iOS home-screen install ignores manifest.json icons/theme-color,
+         it only reads these explicit tags. -->
+    <meta name="theme-color" content="#0b0d11" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="TradeNexus" />
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
