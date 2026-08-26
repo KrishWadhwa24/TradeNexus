@@ -11,6 +11,7 @@ import Watchlist from "./pages/Watchlist.jsx";
 import Scanner from "./pages/Scanner.jsx";
 import Audit from "./pages/Audit.jsx";
 import Paper from "./pages/Paper.jsx";
+import Trade from "./pages/Trade.jsx";
 import Profile from "./pages/Profile.jsx";
 import Admin from "./pages/Admin.jsx";
 import IPO from "./pages/IPO.jsx";
@@ -77,7 +78,14 @@ const NAV = [
   },
 
   { key: "audit", label: "Audit", icon: "list" },
-  { key: "paper", label: "Paper Trading", icon: "wallet" },
+  {
+    // Two sub-views now: search-any-stock-and-trade, and the positions/
+    // history table — a flat entry can only ever render one component.
+    group: "paper", label: "Paper Trading", icon: "wallet", items: [
+      { key: "trade", label: "Trade", icon: "search" },
+      { key: "paper", label: "Positions", icon: "wallet" },
+    ],
+  },
   { key: "admin", label: "Admin", icon: "shield", admin: true },
 ];
 
@@ -98,7 +106,8 @@ const TITLES = {
   block: "Block Deals",
   "mutual-funds": "Mutual Fund Analyser",
   audit: "Signal Audit",
-  paper: "Paper Trading",
+  trade: "Paper Trading — Trade",
+  paper: "Paper Trading — Positions",
   profile: "Profile",
   admin: "Admin — Candle Tools",
 };
@@ -376,6 +385,7 @@ export default function App() {
       case "block": return <Deals type="block" isAdmin={isAdmin} />;
       case "mutual-funds": return <MutualFunds />;
       case "audit": return <Audit isAdmin={isAdmin} />;
+      case "trade": return <Trade {...p} />;
       case "paper": return <Paper {...p} />;
       case "profile": return <Profile {...p} onLogout={logout} />;
       case "admin": return isAdmin ? <Admin /> : <Home {...p} />;

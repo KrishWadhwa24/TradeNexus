@@ -339,9 +339,12 @@ func (s *Server) Router() http.Handler {
 			r.Put("/users/{uid}/paper/capital", s.handleSetCapital)
 			r.Get("/users/{uid}/paper/account", s.handleGetAccount)
 			r.Post("/users/{uid}/paper/trades", s.handleBuy)
+			r.Post("/users/{uid}/paper/trades/open", s.handleOpenPosition)
 			r.Get("/users/{uid}/paper/trades", s.handleListTrades)
 			r.Get("/users/{uid}/paper/summary", s.handlePaperSummary)
 			r.Post("/paper/trades/{tradeId}/close", s.handleCloseTrade)
+			r.Post("/paper/trades/{tradeId}/convert", s.handleConvertToDelivery)
+			r.Post("/paper/trades/{tradeId}/cancel", s.handleCancelScheduled)
 		}) // end protected group
 	})
 

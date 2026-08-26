@@ -2391,6 +2391,16 @@ code {
   color: var(--muted);
 }
 
+/* Position-card subtitle (qty @ price) — reuses promoter-card's layout but
+   this line is primary trading info, not a footnote, so it needs real
+   contrast/size unlike promoter-company's muted 12px company-name text. */
+.position-sub {
+  font-size: 14px;
+  font-family: var(--font-mono);
+  color: var(--text);
+  opacity: .8;
+}
+
 .promoter-badges {
   display: flex;
   flex-wrap: wrap;

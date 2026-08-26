@@ -140,7 +140,7 @@ func (s *Service) Poll(ctx context.Context) error {
 		unseenSet[id] = true
 	}
 
-	tracked, alerted := 0, 0
+	tracked, duplicates, alerted := 0, 0, 0
 	for _, f := range filings {
 		if !unseenSet[f.AppID] {
 			continue
@@ -158,13 +158,22 @@ func (s *Service) Poll(ctx context.Context) error {
 				continue
 			}
 			trade := buildTrade(f, detail, d, eventType)
-			inserted, err := s.repo.InsertTrade(ctx, trade)
+			inserted, duplicate, err := s.repo.InsertTrade(ctx, trade)
 			if err != nil {
 				s.log.Error().Err(err).Str("id", trade.ID).Msg("promoter: insert failed")
 				continue
 			}
 			if !inserted {
 				continue // already tracked — never alert twice for the same disclosure
+			}
+			if duplicate {
+				// NSE re-filed an already-tracked real-world transaction
+				// under a new app_id — same person/symbol/quantity/
+				// direction/date as something we've already alerted on.
+				// Stored (so "View filing" for this app_id still resolves)
+				// but never alerted or counted as new activity.
+				duplicates++
+				continue
 			}
 			tracked++
 			if s.bc != nil && s.withinAlertWindow(trade, now) {
@@ -186,7 +195,7 @@ func (s *Service) Poll(ctx context.Context) error {
 	if _, err := s.repo.PruneSeenOlderThan(ctx, now.Add(-seenFilingsRetention)); err != nil {
 		s.log.Error().Err(err).Msg("promoter: prune seen failed")
 	}
-	s.log.Info().Int("filings", len(filings)).Int("new_trades", tracked).Int("alerted", alerted).Msg("promoter: poll done")
+	s.log.Info().Int("filings", len(filings)).Int("new_trades", tracked).Int("duplicates", duplicates).Int("alerted", alerted).Msg("promoter: poll done")
 	return nil
 }
 
