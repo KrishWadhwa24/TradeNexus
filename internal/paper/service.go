@@ -62,8 +62,14 @@ type Trade struct {
 	ExitTime       *time.Time `json:"exit_time,omitempty"`
 	Status         string     `json:"status"`
 	PnL            float64    `json:"pnl"`
-	CurrentPrice   float64    `json:"current_price,omitempty"`
-	Unrealized     float64    `json:"unrealized_pnl,omitempty"`
+	// CurrentPrice/Unrealized are pointers, not plain float64 — omitempty on
+	// a plain float64 drops the field when it's exactly 0, which is a
+	// completely legitimate value here (a position bought seconds ago,
+	// price hasn't moved yet) and not the same thing as "not computed" (not
+	// OPEN, or the price lookup failed). A pointer lets omitempty tell
+	// those two cases apart: nil is genuinely omitted, 0.0 is sent as 0.
+	CurrentPrice *float64 `json:"current_price,omitempty"`
+	Unrealized   *float64 `json:"unrealized_pnl,omitempty"`
 	// PendingCloseQty is set on an OPEN DELIVERY position when the user
 	// closed it while the market was shut — it schedules the close instead
 	// of executing at a stale price, mirroring how a DELIVERY buy schedules
@@ -451,8 +457,9 @@ func (s *Service) Trades(ctx context.Context, userID string) ([]Trade, error) {
 		if t.Status == "OPEN" {
 			if inst, err := s.inst.GetByID(ctx, t.InstrumentID); err == nil {
 				if px, err := s.price(ctx, inst); err == nil {
-					t.CurrentPrice = px
-					t.Unrealized = unrealizedPnL(t.Side, t.EntryPrice, px, t.Quantity)
+					u := unrealizedPnL(t.Side, t.EntryPrice, px, t.Quantity)
+					t.CurrentPrice = &px
+					t.Unrealized = &u
 				}
 			}
 		}
@@ -509,8 +516,12 @@ func (s *Service) Summary(ctx context.Context, userID string) (PnLSummary, error
 			// EntryPrice*qty / CurrentPrice*qty.
 			invested := marginFraction(t.ProductType) * t.EntryPrice * float64(t.Quantity)
 			sum.Invested += invested
-			sum.MarketValue += invested + t.Unrealized
-			sum.Unrealized += t.Unrealized
+			var unrealized float64
+			if t.Unrealized != nil {
+				unrealized = *t.Unrealized
+			}
+			sum.MarketValue += invested + unrealized
+			sum.Unrealized += unrealized
 		case "CLOSED":
 			sum.RealizedTotal += t.PnL
 			if t.PnL >= 0 {

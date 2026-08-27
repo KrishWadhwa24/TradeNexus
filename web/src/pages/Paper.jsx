@@ -37,7 +37,7 @@ function PositionCard({ t, onSell, onConvert }) {
 
   const canConvert = t.product_type === "INTRADAY" && t.side === "BUY";
   const invested = marginFraction(t.product_type) * t.entry_price * t.quantity;
-  const pnlCls = t.unrealized_pnl >= 0 ? "text-green" : "text-red";
+  const pnlCls = (t.unrealized_pnl || 0) >= 0 ? "text-green" : "text-red";
   const exitLabel = t.side === "SELL" ? "Cover" : "Sell";
 
   return (
@@ -194,9 +194,12 @@ export default function Paper({ userId }) {
   // Market value/equity generalize to margin positions the same way the
   // backend's Summary does: for each open row, "what would come back to
   // cash if closed now" = marginFraction*entryPrice*qty + unrealized_pnl.
+  // unrealized_pnl can be legitimately absent (backend couldn't price that
+  // one instrument) — default to 0 rather than letting one bad position's
+  // `undefined` turn the whole portfolio's totals into NaN.
   const openTrades = trades.filter((t) => t.status === "OPEN");
-  const marketValue = openTrades.reduce((s, t) => s + marginFraction(t.product_type) * t.entry_price * t.quantity + t.unrealized_pnl, 0);
-  const unrealizedPnlTotal = openTrades.reduce((s, t) => s + t.unrealized_pnl, 0);
+  const marketValue = openTrades.reduce((s, t) => s + marginFraction(t.product_type) * t.entry_price * t.quantity + (t.unrealized_pnl || 0), 0);
+  const unrealizedPnlTotal = openTrades.reduce((s, t) => s + (t.unrealized_pnl || 0), 0);
   const totalPnl = sum.realized_pnl + unrealizedPnlTotal;
   const equity = sum.cash_balance + marketValue;
   const pnlCls = totalPnl >= 0 ? "pos" : "neg";
