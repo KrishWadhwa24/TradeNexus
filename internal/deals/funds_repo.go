@@ -10,6 +10,7 @@ import "context"
 //   - the identical trade disclosed as both a bulk deal and a block deal
 //   - the identical trade disclosed twice within the same feed with a
 //     formatting variant of the client name (e.g. a trailing period)
+//
 // Both rows are still kept in market_deals (each is a genuine disclosure,
 // worth showing on its own feed/search), but only one should ever be folded
 // into mutual_fund_positions, or that one real trade gets double-counted.
@@ -116,6 +117,32 @@ func (r *Repo) FundPositionStocks(ctx context.Context, fundName string) ([]FundS
 		st.NetQty = st.BuyQty - st.SellQty
 		st.NetValue = st.BuyValue - st.SellValue
 		out = append(out, st)
+	}
+	return out, rows.Err()
+}
+
+// FundPositionsForSymbol returns every fund that has traded one stock,
+// largest net value first — the Stock 360 view's mirror of FundPositionStocks.
+func (r *Repo) FundPositionsForSymbol(ctx context.Context, symbol string) ([]FundHolder, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT fund_name, buy_qty, sell_qty, buy_value, sell_value, deal_count, last_deal_date
+		FROM mutual_fund_positions
+		WHERE symbol = $1
+		ORDER BY (buy_value - sell_value) DESC`, symbol)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FundHolder
+	for rows.Next() {
+		var f FundHolder
+		if err := rows.Scan(&f.FundName, &f.BuyQty, &f.SellQty,
+			&f.BuyValue, &f.SellValue, &f.DealCount, &f.LastDealDate); err != nil {
+			return nil, err
+		}
+		f.NetQty = f.BuyQty - f.SellQty
+		f.NetValue = f.BuyValue - f.SellValue
+		out = append(out, f)
 	}
 	return out, rows.Err()
 }
