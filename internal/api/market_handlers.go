@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"tradenexus/internal/analytics"
+	"tradenexus/internal/candles"
 	"tradenexus/internal/market"
 )
 
@@ -33,6 +34,22 @@ func (s *Server) handleInstrumentParams(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
+	}
+	if !p.HasData {
+		// Never synced (e.g. a recent listing nobody has looked up before) —
+		// the daily reconcile pipeline only refreshes instruments that
+		// already have history, so without this a brand-new stock shows a
+		// permanently blank price until someone runs a manual sync. Only
+		// done here, not inside instrumentParams itself, since this is a
+		// single on-demand lookup — the dashboard's per-watchlist-item loop
+		// (also built on instrumentParams) already treats no-data as
+		// skip-and-move-on, and fetching live for every missing item there
+		// on every poll would be a much bigger, unwanted fan-out of Angel calls.
+		if _, syncErr := s.syncCandles(r.Context(), id, candles.RequiredDailyBars); syncErr == nil {
+			if p2, err := s.instrumentParams(r, id); err == nil {
+				p = p2
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, p)
 }
