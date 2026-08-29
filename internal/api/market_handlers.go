@@ -30,28 +30,36 @@ func (s *Server) handleInstrumentParams(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid instrument id"})
 		return
 	}
-	p, err := s.instrumentParams(r, id)
+	p, err := s.instrumentParamsWithSync(r, id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+// instrumentParamsWithSync is instrumentParams with a one-time auto-sync
+// fallback for an instrument that's never been backfilled: the daily
+// reconcile pipeline only refreshes instruments that already have history,
+// so without this a brand-new/never-looked-up stock shows a permanently
+// blank price until someone runs a manual sync. Reused by every single-
+// instrument on-demand lookup (the direct params endpoint, Stock 360) —
+// NOT by the dashboard's per-watchlist-item loop, which already treats
+// no-data as skip-and-move-on; syncing live for every missing item there on
+// every poll would be a much bigger, unwanted fan-out of Angel calls.
+func (s *Server) instrumentParamsWithSync(r *http.Request, id int64) (analytics.Params, error) {
+	p, err := s.instrumentParams(r, id)
+	if err != nil {
+		return p, err
+	}
 	if !p.HasData {
-		// Never synced (e.g. a recent listing nobody has looked up before) —
-		// the daily reconcile pipeline only refreshes instruments that
-		// already have history, so without this a brand-new stock shows a
-		// permanently blank price until someone runs a manual sync. Only
-		// done here, not inside instrumentParams itself, since this is a
-		// single on-demand lookup — the dashboard's per-watchlist-item loop
-		// (also built on instrumentParams) already treats no-data as
-		// skip-and-move-on, and fetching live for every missing item there
-		// on every poll would be a much bigger, unwanted fan-out of Angel calls.
 		if _, syncErr := s.syncCandles(r.Context(), id, candles.RequiredDailyBars); syncErr == nil {
 			if p2, err := s.instrumentParams(r, id); err == nil {
 				p = p2
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, p)
+	return p, nil
 }
 
 // GET /v1/users/{uid}/dashboard — params (with live price) for every stock in

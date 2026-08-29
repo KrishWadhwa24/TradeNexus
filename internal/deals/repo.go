@@ -91,7 +91,6 @@ func (r *Repo) RowsForSymbol(ctx context.Context, t Type, symbol string, days in
 	return r.rowsFor(ctx, t, symbol, cutoffDays(days))
 }
 
-
 // AlreadyAlerted reports whether a (type, date, symbol) has been alerted.
 func (r *Repo) AlreadyAlerted(ctx context.Context, t Type, day time.Time, symbol string) (bool, error) {
 	var exists bool

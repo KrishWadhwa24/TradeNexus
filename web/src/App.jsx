@@ -10,6 +10,7 @@ import Analytics from "./pages/Analytics.jsx";
 import Watchlist from "./pages/Watchlist.jsx";
 import Scanner from "./pages/Scanner.jsx";
 import ScannerHub from "./pages/ScannerHub.jsx";
+import Stock360 from "./pages/Stock360.jsx";
 import AnalyserHub from "./pages/AnalyserHub.jsx";
 import MarketsHub from "./pages/MarketsHub.jsx";
 import Audit from "./pages/Audit.jsx";
@@ -51,6 +52,9 @@ const NAV = [
   { key: "home", label: "Home", icon: "home" },
   { key: "watchlist", label: "Watchlist", icon: "star" },
   { key: "analytics", label: "Analytics", icon: "chart" },
+  // New, additive section (not folded into an existing one) — research any
+  // stock and see everything the platform tracks about it in one place.
+  { key: "stock360", label: "Stock 360", icon: "search" },
   { key: "insights", label: "Insights", icon: "pulse" },
   // Flat entry — lands on ScannerHub, a picker page, instead of expanding a
   // 5-item sidebar submenu. The 5 scanner keys below are still valid `view`
@@ -83,6 +87,7 @@ const TITLES = {
   home: "Trending",
   watchlist: "Watchlist",
   analytics: "Analytics Dashboard",
+  stock360: "Stock 360",
   insights: "Insights",
   scanners: "Scanners",
   "scanner:pine": "Pine Scanner",
@@ -375,6 +380,7 @@ export default function App() {
       case "home": return <Home {...p} />;
       case "watchlist": return <Watchlist {...p} />;
       case "analytics": return <Analytics {...p} />;
+      case "stock360": return <Stock360 {...p} />;
       case "insights": return <Insights isAdmin={isAdmin} />;
       case "scanners": return <ScannerHub onSelect={enterHub} />;
       case "scanner:pine": return <Scanner source="pine" {...p} />;

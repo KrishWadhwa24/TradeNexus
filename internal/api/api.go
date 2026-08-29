@@ -338,6 +338,7 @@ func (s *Server) Router() http.Handler {
 			// Market data (Module 9): trending + params + dashboard
 			r.Get("/market/trending", s.handleTrending)
 			r.Get("/instruments/{id}/params", s.handleInstrumentParams)
+			r.Get("/stocks/{id}/360", s.handleStock360)
 			r.Get("/instruments/{id}/coverage", s.handleCoverage)
 			r.Get("/users/{uid}/dashboard", s.handleDashboard)
 			r.Get("/users/{uid}/coverage", s.handleUserCoverage)
