@@ -576,3 +576,5 @@ paper trading (market-aware), and the full web UI.
 
 
 add algo-trading and real money account connect so that user can do real algo trading
+
+add big investor in 360 degree stock as well

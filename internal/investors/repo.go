@@ -84,6 +84,34 @@ func (r *Repo) UpsertHolding(ctx context.Context, investorKey string, h Holding)
 	return err
 }
 
+// RemoveStaleHoldings deletes any tracked investor's position in symbol
+// whose stored report_date is older than reportDate and who isn't in
+// stillHeldKeys (normalized investor keys) — i.e. investors this newer
+// filing didn't name, meaning they've sold out or dropped below NSE's
+// disclosure threshold since the last filing we saw for this stock.
+//
+// The report_date < reportDate guard is what makes this safe to call from a
+// catch-up window that doesn't process filings in chronological order: an
+// older filing being (re)processed can only ever compare against — and
+// possibly delete — rows even older than itself, never a row a genuinely
+// newer filing already produced. stillHeldKeys must be non-nil (even if
+// empty) — a nil slice binds as SQL NULL, which makes "<> ALL(NULL)"
+// evaluate to NULL (excluding every row) instead of the intended "delete
+// everyone" when nobody matched this filing.
+func (r *Repo) RemoveStaleHoldings(ctx context.Context, symbol string, reportDate time.Time, stillHeldKeys []string) (int64, error) {
+	if stillHeldKeys == nil {
+		stillHeldKeys = []string{}
+	}
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM investor_positions
+		WHERE symbol = $1 AND report_date < $2 AND investor_key <> ALL($3)`,
+		symbol, reportDate, stillHeldKeys)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // ListInvestors returns one summary row per tracked investor that currently
 // has at least one disclosed holding, largest stock count first. Each row
 // includes the investor's single largest stake (top_symbol/top_pct), picked

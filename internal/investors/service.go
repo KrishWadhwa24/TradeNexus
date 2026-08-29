@@ -100,11 +100,14 @@ func (s *Service) pollWindow(ctx context.Context, window time.Duration) error {
 			reportDate = detail.ReportDate
 		}
 
+		stillHeld := make([]string, 0, len(detail.Shareholders))
 		for _, sh := range detail.Shareholders {
 			inv := match(sh.Name)
 			if inv == nil {
 				continue
 			}
+			key := normalize(inv.Name)
+			stillHeld = append(stillHeld, key)
 			h := Holding{
 				InvestorName:  inv.Name,
 				Symbol:        symbol,
@@ -114,11 +117,20 @@ func (s *Service) pollWindow(ctx context.Context, window time.Duration) error {
 				ReportDate:    reportDate,
 				FirstSeenDate: reportDate,
 			}
-			if err := s.repo.UpsertHolding(ctx, normalize(inv.Name), h); err != nil {
+			if err := s.repo.UpsertHolding(ctx, key, h); err != nil {
 				s.log.Error().Err(err).Str("investor", inv.Name).Str("symbol", symbol).Msg("investors: upsert failed")
 				continue
 			}
 			matched++
+		}
+
+		// Anyone we previously tracked in this stock, but who isn't named in
+		// this newer filing, has sold out or dropped below NSE's disclosure
+		// threshold since — see RemoveStaleHoldings.
+		if removed, err := s.repo.RemoveStaleHoldings(ctx, symbol, reportDate, stillHeld); err != nil {
+			s.log.Error().Err(err).Str("symbol", symbol).Msg("investors: remove stale holdings failed")
+		} else if removed > 0 {
+			s.log.Info().Str("symbol", symbol).Int64("removed", removed).Msg("investors: stale holdings removed")
 		}
 
 		if err := s.repo.MarkSeen(ctx, f.RecordID); err != nil {
