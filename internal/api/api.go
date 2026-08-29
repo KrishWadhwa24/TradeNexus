@@ -21,6 +21,7 @@ import (
 	"tradenexus/internal/fiidii"
 	"tradenexus/internal/insights"
 	"tradenexus/internal/instruments"
+	"tradenexus/internal/investors"
 	"tradenexus/internal/ipo"
 	"tradenexus/internal/live"
 	"tradenexus/internal/notify"
@@ -57,6 +58,7 @@ type Deps struct {
 	IPO            *ipo.Service
 	Promoter       *promoter.Service
 	Deals          *deals.Service
+	Investors      *investors.Service
 	Insights       *insights.Service
 	FiiDii         *fiidii.Service
 	JWTSecret      string
@@ -83,6 +85,7 @@ type Server struct {
 	ipo            *ipo.Service
 	promoter       *promoter.Service
 	deals          *deals.Service
+	investors      *investors.Service
 	insights       *insights.Service
 	fiidii         *fiidii.Service
 	jwtSecret      string
@@ -124,6 +127,7 @@ func NewServer(d Deps) *Server {
 		ipo:            d.IPO,
 		promoter:       d.Promoter,
 		deals:          d.Deals,
+		investors:      d.Investors,
 		insights:       d.Insights,
 		fiidii:         d.FiiDii,
 		jwtSecret:      d.JWTSecret,
@@ -277,6 +281,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/admin/deals/refresh", s.handleRefreshDeals)
 				r.Post("/admin/deals/{type}/{symbol}/send-alert", s.handleDealsSendAlert)
 				r.Post("/admin/mutual-funds/backfill", s.handleBackfillMutualFunds)
+				r.Post("/admin/big-investors/refresh", s.handleRefreshInvestors)
 
 				// FII/DII admin: force-send the currently cached snapshot now.
 				r.Post("/admin/fii-dii/send-alert", s.handleFiiDiiSendAlert)
@@ -321,6 +326,8 @@ func (s *Server) Router() http.Handler {
 			r.Get("/promoter-buying/{symbol}/history", s.handlePromoterPersonHistory)
 			r.Get("/mutual-funds", s.handleListMutualFunds)
 			r.Get("/mutual-funds/{fund}", s.handleMutualFundDetail)
+			r.Get("/big-investors", s.handleListInvestors)
+			r.Get("/big-investors/{name}", s.handleInvestorDetail)
 
 			r.Get("/insights/performance", s.handleInsightsPerformance)
 			r.Get("/insights/breadth", s.handleInsightsBreadth)

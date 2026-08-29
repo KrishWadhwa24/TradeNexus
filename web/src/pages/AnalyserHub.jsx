@@ -16,6 +16,13 @@ const ANALYSERS = [
     color: "#3987e5",
     desc: "Promoter and insider stake changes, ranked by combined point-increase.",
   },
+  {
+    key: "big-investors",
+    label: "Big Investor Portfolios",
+    icon: "search",
+    color: "#d95926",
+    desc: "Where India's best-known investors currently hold a disclosed stake, from NSE's quarterly filings.",
+  },
 ];
 
 // AnalyserHub is the "choose an analyser" landing page — same picker

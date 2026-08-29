@@ -22,6 +22,7 @@ import PromoterTrades from "./pages/PromoterTrades.jsx";
 import Deals from "./pages/Deals.jsx";
 import MutualFunds from "./pages/MutualFunds.jsx";
 import PromoterBuying from "./pages/PromoterBuying.jsx";
+import BigInvestors from "./pages/BigInvestors.jsx";
 import Insights from "./pages/Insights.jsx";
 import PublicShell from "./pages/PublicShell.jsx";
 
@@ -97,6 +98,7 @@ const TITLES = {
   bulk: "Bulk Deals",
   block: "Block Deals",
   "mutual-funds": "Mutual Fund Analyser",
+  "big-investors": "Big Investor Portfolios",
   audit: "Signal Audit",
   trade: "Paper Trading — Trade",
   paper: "Paper Trading — Positions",
@@ -115,7 +117,7 @@ const GROUP_OF_KEY = NAV.filter((n) => n.items).reduce((acc, g) => {
 // show as active" while browsing one of the views it leads to.
 const HUB_CHILDREN = {
   scanners: (v) => v.startsWith("scanner:") || v.startsWith("patterns:"),
-  analyser: (v) => v === "mutual-funds" || v === "promoter-buying",
+  analyser: (v) => v === "mutual-funds" || v === "promoter-buying" || v === "big-investors",
   markets: (v) => v === "ipo" || v === "promoter" || v === "bulk" || v === "block",
 };
 
@@ -388,6 +390,7 @@ export default function App() {
       case "bulk": return <Deals type="bulk" isAdmin={isAdmin} />;
       case "block": return <Deals type="block" isAdmin={isAdmin} />;
       case "mutual-funds": return <MutualFunds />;
+      case "big-investors": return <BigInvestors />;
       case "audit": return <Audit isAdmin={isAdmin} />;
       case "trade": return <Trade {...p} />;
       case "paper": return <Paper {...p} />;
