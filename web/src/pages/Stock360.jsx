@@ -191,6 +191,22 @@ export default function Stock360({ userId }) {
             </table>
           </Section>
 
+          <Section title="Big Investor Holdings" empty={!data.big_investors?.length} emptyText="No tracked big investor currently holds a disclosed stake in this stock.">
+            <table>
+              <thead><tr><th>Investor</th><th>Holding %</th><th>Shares</th><th>As of</th></tr></thead>
+              <tbody>
+                {(data.big_investors || []).map((h) => (
+                  <tr key={h.investor_name}>
+                    <td>{h.investor_name}</td>
+                    <td>{h.pct_holding.toFixed(2)}%</td>
+                    <td>{fmtInt(h.shares)}</td>
+                    <td>{fmtDate(h.report_date)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Section>
+
           <Section title="Bulk Deals (last 30 days)" empty={!data.bulk_deals?.rows?.length} emptyText="No bulk deals in the last 30 days.">
             <DealRows detail={data.bulk_deals} />
           </Section>

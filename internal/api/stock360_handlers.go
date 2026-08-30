@@ -9,6 +9,7 @@ import (
 
 	"tradenexus/internal/analytics"
 	"tradenexus/internal/deals"
+	"tradenexus/internal/investors"
 	"tradenexus/internal/promoter"
 	"tradenexus/internal/signals"
 )
@@ -31,6 +32,7 @@ type Stock360 struct {
 	Price        analytics.Params          `json:"price"`
 	Promoters    []promoter.PersonPosition `json:"promoters"`
 	Funds        []deals.FundHolder        `json:"funds"`
+	BigInvestors []investors.Holding       `json:"big_investors"`
 	BulkDeals    deals.StockDetail         `json:"bulk_deals"`
 	BlockDeals   deals.StockDetail         `json:"block_deals"`
 	Signals      []signals.Signal          `json:"signals"`
@@ -68,6 +70,9 @@ func (s *Server) handleStock360(w http.ResponseWriter, r *http.Request) {
 		if bd, err := s.deals.GetStock(ctx, deals.Block, symbol); err == nil {
 			out.BlockDeals = bd
 		}
+	}
+	if s.investors != nil {
+		out.BigInvestors, _ = s.investors.GetStockHoldings(ctx, symbol)
 	}
 	if s.signals != nil {
 		if sigs, err := s.signals.List(ctx, signals.Filter{InstrumentID: &id, Limit: 20}); err == nil {
