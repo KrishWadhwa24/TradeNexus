@@ -21,6 +21,7 @@ import (
 	"tradenexus/internal/fiidii"
 	"tradenexus/internal/insights"
 	"tradenexus/internal/instruments"
+	"tradenexus/internal/investors"
 	"tradenexus/internal/ipo"
 	"tradenexus/internal/live"
 	"tradenexus/internal/notify"
@@ -57,6 +58,7 @@ type Deps struct {
 	IPO            *ipo.Service
 	Promoter       *promoter.Service
 	Deals          *deals.Service
+	Investors      *investors.Service
 	Insights       *insights.Service
 	FiiDii         *fiidii.Service
 	JWTSecret      string
@@ -83,6 +85,7 @@ type Server struct {
 	ipo            *ipo.Service
 	promoter       *promoter.Service
 	deals          *deals.Service
+	investors      *investors.Service
 	insights       *insights.Service
 	fiidii         *fiidii.Service
 	jwtSecret      string
@@ -100,6 +103,11 @@ type Server struct {
 
 // NewServer constructs the API server with its dependencies.
 func NewServer(d Deps) *Server {
+	// writeJSON is a free function (many small non-method helpers call it
+	// too, e.g. parseAdminDate), so it can't take s.log as a receiver.
+	// Package-level is the pragmatic way to give it a logger without
+	// threading one through every call site.
+	errLog = d.Log
 	return &Server{
 		log:            d.Log,
 		pg:             d.PG,
@@ -119,6 +127,7 @@ func NewServer(d Deps) *Server {
 		ipo:            d.IPO,
 		promoter:       d.Promoter,
 		deals:          d.Deals,
+		investors:      d.Investors,
 		insights:       d.Insights,
 		fiidii:         d.FiiDii,
 		jwtSecret:      d.JWTSecret,
@@ -195,6 +204,23 @@ func (s *Server) Router() http.Handler {
 		// expose publicly (it must be, since the landing page is pre-auth).
 		r.Get("/public/featured-stocks", s.handleListFeaturedStocks)
 
+		// Public, no-login views (IPO/promoter-trades/bulk/block deals) — the
+		// shareable-link acquisition surface: none of these read user-specific
+		// data, so exposing the same handlers unauthenticated needs no separate
+		// "/public/" duplicate route or response shape. Everything mutating
+		// (refresh/backfill/send-alert/scan) stays inside the authed/admin-only
+		// groups below. The promoter-buying *analyser* (aggregated view) stays
+		// behind login, same as the mutual-fund analyser — only the raw
+		// promoter-trades feed is public, matching IPO/bulk/block deals.
+		r.Get("/ipos", s.handleListIPOs)
+		r.Get("/promoter-trades", s.handleListPromoterTrades)
+		r.Get("/bulk-deals", s.handleListDeals(deals.Bulk))
+		r.Get("/bulk-deals/audit", s.handleDealsAudit(deals.Bulk))
+		r.Get("/bulk-deals/{symbol}", s.handleDealDetail(deals.Bulk))
+		r.Get("/block-deals", s.handleListDeals(deals.Block))
+		r.Get("/block-deals/audit", s.handleDealsAudit(deals.Block))
+		r.Get("/block-deals/{symbol}", s.handleDealDetail(deals.Block))
+
 		// Everything below requires a valid JWT.
 		r.Group(func(r chi.Router) {
 			r.Use(s.authMiddleware)
@@ -255,6 +281,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/admin/deals/refresh", s.handleRefreshDeals)
 				r.Post("/admin/deals/{type}/{symbol}/send-alert", s.handleDealsSendAlert)
 				r.Post("/admin/mutual-funds/backfill", s.handleBackfillMutualFunds)
+				r.Post("/admin/big-investors/refresh", s.handleRefreshInvestors)
 
 				// FII/DII admin: force-send the currently cached snapshot now.
 				r.Post("/admin/fii-dii/send-alert", s.handleFiiDiiSendAlert)
@@ -286,31 +313,21 @@ func (s *Server) Router() http.Handler {
 			r.Get("/analytics/summary", s.handleAnalyticsSummary)
 			r.Get("/analytics/export.xlsx", s.handleAnalyticsExport)
 
-			// IPOs (open + upcoming, with GMP)
-			r.Get("/ipos", s.handleListIPOs)
-
-			// Promoter/Director/KMP insider-trading feed. "Scan now" is open to
-			// every logged-in user (cooldown-guarded inside the service).
-			r.Get("/promoter-trades", s.handleListPromoterTrades)
+			// "Scan now" is open to every logged-in user (cooldown-guarded
+			// inside the service). The read-only promoter-trades list is
+			// registered above, outside authMiddleware — see the "Public,
+			// no-login views" block.
 			r.Post("/promoter-trades/scan", s.handlePromoterScanNow)
 
-			// Promoter buying analyser: permanent per-person stock positions
-			// built from promoter/KMP disclosure rows.
+			// Promoter buying analyser (aggregated view) + mutual fund
+			// analyser: both stay behind login, unlike the raw feeds above.
 			r.Get("/promoter-buying", s.handleListPromoterBuying)
 			r.Get("/promoter-buying/{symbol}", s.handlePromoterBuyingDetail)
 			r.Get("/promoter-buying/{symbol}/history", s.handlePromoterPersonHistory)
-
-			r.Get("/bulk-deals", s.handleListDeals(deals.Bulk))
-			r.Get("/bulk-deals/audit", s.handleDealsAudit(deals.Bulk))
-			r.Get("/bulk-deals/{symbol}", s.handleDealDetail(deals.Bulk))
-			r.Get("/block-deals", s.handleListDeals(deals.Block))
-			r.Get("/block-deals/audit", s.handleDealsAudit(deals.Block))
-			r.Get("/block-deals/{symbol}", s.handleDealDetail(deals.Block))
-
-			// Mutual fund analyser: permanent per-fund positions built from
-			// bulk/block deal client rows.
 			r.Get("/mutual-funds", s.handleListMutualFunds)
 			r.Get("/mutual-funds/{fund}", s.handleMutualFundDetail)
+			r.Get("/big-investors", s.handleListInvestors)
+			r.Get("/big-investors/{name}", s.handleInvestorDetail)
 
 			r.Get("/insights/performance", s.handleInsightsPerformance)
 			r.Get("/insights/breadth", s.handleInsightsBreadth)
@@ -321,6 +338,7 @@ func (s *Server) Router() http.Handler {
 			// Market data (Module 9): trending + params + dashboard
 			r.Get("/market/trending", s.handleTrending)
 			r.Get("/instruments/{id}/params", s.handleInstrumentParams)
+			r.Get("/stocks/{id}/360", s.handleStock360)
 			r.Get("/instruments/{id}/coverage", s.handleCoverage)
 			r.Get("/users/{uid}/dashboard", s.handleDashboard)
 			r.Get("/users/{uid}/coverage", s.handleUserCoverage)
@@ -329,9 +347,12 @@ func (s *Server) Router() http.Handler {
 			r.Put("/users/{uid}/paper/capital", s.handleSetCapital)
 			r.Get("/users/{uid}/paper/account", s.handleGetAccount)
 			r.Post("/users/{uid}/paper/trades", s.handleBuy)
+			r.Post("/users/{uid}/paper/trades/open", s.handleOpenPosition)
 			r.Get("/users/{uid}/paper/trades", s.handleListTrades)
 			r.Get("/users/{uid}/paper/summary", s.handlePaperSummary)
 			r.Post("/paper/trades/{tradeId}/close", s.handleCloseTrade)
+			r.Post("/paper/trades/{tradeId}/convert", s.handleConvertToDelivery)
+			r.Post("/paper/trades/{tradeId}/cancel", s.handleCancelScheduled)
 		}) // end protected group
 	})
 
@@ -370,8 +391,22 @@ func (s *Server) requestLogger(next http.Handler) http.Handler {
 	})
 }
 
-// writeJSON is a small helper for JSON responses.
+// errLog backs writeJSON's automatic 5xx logging — see NewServer. Every
+// handler error response used to be visible only in the HTTP response body,
+// never in the server's own logs, so a real failure only ever surfaced if a
+// user happened to notice and report the on-screen error message.
+var errLog zerolog.Logger
+
+// writeJSON is a small helper for JSON responses. Any 5xx response is also
+// logged server-side — the existing chi request logger (see api.go's
+// r.Use(middleware.Logger)-equivalent) already logs method+path+status for
+// every request, so this line is what you actually grep for: the real error
+// message, not just "status=500". Client 4xx responses are normal, expected
+// control flow and stay quiet.
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	if status >= 500 {
+		errLog.Error().Int("status", status).Interface("body", v).Msg("api: request failed")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)

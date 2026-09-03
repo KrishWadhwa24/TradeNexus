@@ -19,12 +19,14 @@ import (
 
 // Config controls the schedule.
 type Config struct {
-	Enabled            bool
-	DailyScanCron      string        // e.g. "0 16 * * 1-5" (16:00 IST, Mon-Fri)
-	CleanupCron        string        // e.g. "0 1 * * *"    (01:00 IST daily)
-	FillScheduledCron  string        // e.g. "16 9 * * 1-5" (09:16 IST, at market open)
-	IntradayInterval   time.Duration // refresh cadence for the intraday cache
-	RunReconcileOnBoot bool
+	Enabled                bool
+	DailyScanCron          string        // e.g. "0 16 * * 1-5" (16:00 IST, Mon-Fri)
+	CleanupCron            string        // e.g. "0 1 * * *"    (01:00 IST daily)
+	FillScheduledCron      string        // e.g. "16 9 * * 1-5" (09:16 IST, at market open)
+	SquareOffIntradayCron  string        // e.g. "20 15 * * 1-5" (15:20 IST, intraday cutoff)
+	PaperFillRetryInterval time.Duration // backstop retry cadence for scheduled paper fills
+	IntradayInterval       time.Duration // refresh cadence for the intraday cache
+	RunReconcileOnBoot     bool
 }
 
 // Scheduler wraps a cron instance bound to the engine + paper services.
@@ -109,6 +111,71 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
+		// Same tick fills DELIVERY closes scheduled while the market was
+		// shut — same "market just opened" timing as scheduled buys above.
+		if _, err := s.cron.AddFunc(s.cfg.FillScheduledCron, func() {
+			jobCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			n, err := s.paper.FillScheduledCloses(jobCtx)
+			if err != nil {
+				s.log.Error().Err(err).Msg("scheduler: fill scheduled closes failed")
+				return
+			}
+			s.log.Info().Int("filled", n).Msg("scheduler: scheduled paper closes filled")
+		}); err != nil {
+			return err
+		}
+	}
+
+	// Auto-square-off OPEN intraday paper positions at the daily cutoff.
+	if s.paper != nil && s.cfg.SquareOffIntradayCron != "" {
+		if _, err := s.cron.AddFunc(s.cfg.SquareOffIntradayCron, func() {
+			jobCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			n, err := s.paper.SquareOffIntraday(jobCtx)
+			if err != nil {
+				s.log.Error().Err(err).Msg("scheduler: square off intraday failed")
+				return
+			}
+			s.log.Info().Int("closed", n).Msg("scheduler: intraday positions squared off")
+		}); err != nil {
+			return err
+		}
+	}
+
+	// Backstop retry for scheduled paper fills: FillScheduledCron above is
+	// the normal, low-latency path (fires once, right at market open), but
+	// a single tick can fail wholesale (a DB hiccup) or fill some rows and
+	// silently skip others (a transient price-lookup error) — and nothing
+	// else would retry it until tomorrow's cron. This ticker re-runs the
+	// same two (idempotent — they only ever touch rows still pending) fill
+	// functions every PaperFillRetryInterval throughout market hours, so a
+	// stuck order gets picked up again within minutes instead of a full day.
+	if s.paper != nil && s.cfg.PaperFillRetryInterval > 0 {
+		go func() {
+			t := time.NewTicker(s.cfg.PaperFillRetryInterval)
+			defer t.Stop()
+			for range t.C {
+				s.safeCall(func() {
+					if !s.paper.MarketOpen(time.Now().In(market.IST)) {
+						return
+					}
+					jobCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+					defer cancel()
+					if n, err := s.paper.FillScheduled(jobCtx); err != nil {
+						s.log.Error().Err(err).Msg("scheduler: retry fill scheduled trades failed")
+					} else if n > 0 {
+						s.log.Info().Int("filled", n).Msg("scheduler: retry filled scheduled trades")
+					}
+					if n, err := s.paper.FillScheduledCloses(jobCtx); err != nil {
+						s.log.Error().Err(err).Msg("scheduler: retry fill scheduled closes failed")
+					} else if n > 0 {
+						s.log.Info().Int("filled", n).Msg("scheduler: retry filled scheduled closes")
+					}
+				})
+			}
+		}()
+		s.log.Info().Dur("interval", s.cfg.PaperFillRetryInterval).Msg("paper fill retry backstop started")
 	}
 
 	s.cron.Start()
@@ -153,6 +220,27 @@ func (s *Scheduler) Start(ctx context.Context) error {
 				s.log.Info().Int("filled", n).Msg("scheduler: startup filled scheduled trades (market already open)")
 			}
 			cancel()
+
+			closesCtx, cancelCloses := context.WithTimeout(context.Background(), 10*time.Minute)
+			if n, err := s.paper.FillScheduledClosesIfMarketOpen(closesCtx); err != nil {
+				s.log.Error().Err(err).Msg("scheduler: startup fill scheduled closes failed")
+			} else if n > 0 {
+				s.log.Info().Int("filled", n).Msg("scheduler: startup filled scheduled closes (market already open)")
+			}
+			cancelCloses()
+
+			// Crash-recovery for the intraday cutoff: a cron trigger only
+			// fires if the process is running at that exact moment, so if
+			// the server was down at 3:20pm and comes back up any time
+			// later, this catches up immediately instead of leaving
+			// intraday positions open until the next trading day's cron.
+			squareOffCtx, cancel2 := context.WithTimeout(context.Background(), 10*time.Minute)
+			if n, err := s.paper.SquareOffIntradayIfPastCutoff(squareOffCtx); err != nil {
+				s.log.Error().Err(err).Msg("scheduler: startup square off intraday failed")
+			} else if n > 0 {
+				s.log.Info().Int("closed", n).Msg("scheduler: startup squared off intraday positions (past cutoff)")
+			}
+			cancel2()
 		}
 		if s.cfg.RunReconcileOnBoot {
 			bootCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)

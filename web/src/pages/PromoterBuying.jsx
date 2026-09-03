@@ -5,6 +5,8 @@ import autoTable from "jspdf-autotable";
 import { api } from "../api.js";
 import { Icon } from "../icons.jsx";
 import { SkeletonGrid } from "../Skeleton.jsx";
+import ShareButton from "../components/ShareButton.jsx";
+import { shareCard } from "../shareCard.js";
 
 function fmtNum(n) {
   if (n === null || n === undefined) return "—";
@@ -91,20 +93,28 @@ function drawStockCharts(ctx, byValue, byIncrease, { x, y, w, h, holeColor, mute
   ctx.fillStyle = holeColor;
   ctx.fill();
 
-  const barX = pieCx + pieR + 34;
+  const barAreaLeft = pieCx + pieR + 34;
+  const barAreaRight = x + w;
   const barTop = y + 6;
   const barBottom = y + h - 55;
   const zeroY = (barTop + barBottom) / 2;
   const maxAbs = Math.max(1, ...byIncrease.map((p) => Math.abs(p.point_increase)));
   const n = byIncrease.length;
   const gap = 8;
-  const bw = Math.max(6, (x + w - barX - gap * (n - 1)) / n);
+  // Capped, not stretched to fill the row — with only 1-2 people, dividing
+  // the full available width by n produced giant slab-like bars instead of
+  // a normal-looking chart. Cap the width and center the (now narrower)
+  // group in the same area instead.
+  const maxBarWidth = 56;
+  const bw = Math.min(maxBarWidth, Math.max(6, (barAreaRight - barAreaLeft - gap * (n - 1)) / n));
+  const groupWidth = n * bw + (n - 1) * gap;
+  const barX = barAreaLeft + Math.max(0, (barAreaRight - barAreaLeft - groupWidth) / 2);
   ctx.save();
   ctx.globalAlpha = 0.4;
   ctx.strokeStyle = mutedColor;
   ctx.beginPath();
-  ctx.moveTo(barX, zeroY);
-  ctx.lineTo(x + w, zeroY);
+  ctx.moveTo(barAreaLeft, zeroY);
+  ctx.lineTo(barAreaRight, zeroY);
   ctx.stroke();
   ctx.restore();
   byIncrease.forEach((p, i) => {
@@ -124,11 +134,11 @@ function drawStockCharts(ctx, byValue, byIncrease, { x, y, w, h, holeColor, mute
   });
 }
 
-// downloadStockImage renders a branded shareable card — the stock's tracked
-// promoters ranked by point-increase, a pie+bar breakdown, and the full
-// table — same canvas-drawing approach as the FII/DII snapshot
+// buildPromoterCardBlob renders a branded shareable card — the stock's
+// tracked promoters ranked by point-increase, a pie+bar breakdown, and the
+// full table — same canvas-drawing approach as the FII/DII snapshot
 // (Insights.jsx) and the mutual fund cards.
-async function downloadStockImage(symbol, detail) {
+async function buildPromoterCardBlob(symbol, detail) {
   await document.fonts.ready;
 
   const people = (detail.people || []).slice(0, 8);
@@ -192,15 +202,21 @@ async function downloadStockImage(symbol, detail) {
   ctx.font = "400 12px 'JetBrains Mono', monospace";
   ctx.fillText(`Generated ${new Date().toLocaleString("en-IN")}`, 32, H - 20);
 
-  canvas.toBlob((blob) => {
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${symbol.toLowerCase()}-promoter-buying.png`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, "image/png");
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+}
+
+// shareStockCard shares the card via the OS share sheet where supported,
+// falling back to a plain download (see shareCard.js). No caption text is
+// attached — unlike the IPO/stock cards, this and Mutual Funds are meant
+// to be shared as just the image, nothing added.
+async function sharePromoterCard(symbol, detail) {
+  const blob = await buildPromoterCardBlob(symbol, detail);
+  return shareCard({
+    blob,
+    filename: `${symbol.toLowerCase()}-promoter-buying.png`,
+    caption: "",
+    title: `${symbol} — Promoter Buying`,
+  });
 }
 
 // downloadStockPdf mirrors Audit.jsx's PDF pattern (jsPDF + autoTable) — the
@@ -351,7 +367,7 @@ function StockDetailModal({ symbol, onClose }) {
           ) : (
             <>
               <div className="row" style={{ gap: 8, marginBottom: 16 }}>
-                <button className="btn-sm" onClick={() => downloadStockImage(symbol, detail)}>Download image</button>
+                <ShareButton className="btn-sm" compact={false} share={() => sharePromoterCard(symbol, detail)} title="Share this stock's card" />
                 <button className="btn-sm" onClick={() => downloadStockPdf(symbol, detail)}>Download PDF</button>
               </div>
 
@@ -385,7 +401,7 @@ function StockDetailModal({ symbol, onClose }) {
   );
 }
 
-export default function PromoterBuying() {
+export default function PromoterBuying({ initialSymbol = null }) {
   const [stocks, setStocks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -398,6 +414,13 @@ export default function PromoterBuying() {
     window.history.pushState({ view: "promoter-buying", modal: "details" }, "");
   }
   function closeModal() { window.history.back(); }
+
+  // Deep link support (e.g. /promoter-buying/RELIANCE): the detail modal
+  // fetches by symbol directly, so this doesn't need to wait for the list.
+  useEffect(() => {
+    if (initialSymbol) openModal(initialSymbol.toUpperCase());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const onPop = () => { if (selected) setSelected(null); };

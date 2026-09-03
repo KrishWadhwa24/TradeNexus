@@ -9,8 +9,13 @@ import Home from "./pages/Home.jsx";
 import Analytics from "./pages/Analytics.jsx";
 import Watchlist from "./pages/Watchlist.jsx";
 import Scanner from "./pages/Scanner.jsx";
+import ScannerHub from "./pages/ScannerHub.jsx";
+import Stock360 from "./pages/Stock360.jsx";
+import AnalyserHub from "./pages/AnalyserHub.jsx";
+import MarketsHub from "./pages/MarketsHub.jsx";
 import Audit from "./pages/Audit.jsx";
 import Paper from "./pages/Paper.jsx";
+import Trade from "./pages/Trade.jsx";
 import Profile from "./pages/Profile.jsx";
 import Admin from "./pages/Admin.jsx";
 import IPO from "./pages/IPO.jsx";
@@ -18,7 +23,28 @@ import PromoterTrades from "./pages/PromoterTrades.jsx";
 import Deals from "./pages/Deals.jsx";
 import MutualFunds from "./pages/MutualFunds.jsx";
 import PromoterBuying from "./pages/PromoterBuying.jsx";
+import BigInvestors from "./pages/BigInvestors.jsx";
 import Insights from "./pages/Insights.jsx";
+import PublicShell from "./pages/PublicShell.jsx";
+
+// Maps a real URL path to one of the no-login views, for shareable/indexable
+// links (e.g. /promoter-trades/RELIANCE) — everything else in the app stays
+// purely state-driven (see the view/localStorage machinery below), only
+// these few paths are ever read from window.location.
+const PUBLIC_PATHS = [
+  { re: /^\/ipo\/?([^/]*)$/, view: "ipo" },
+  { re: /^\/promoter-trades\/?([^/]*)$/, view: "promoter-trades" },
+  { re: /^\/bulk-deals\/?([^/]*)$/, view: "bulk" },
+  { re: /^\/block-deals\/?([^/]*)$/, view: "block" },
+];
+
+function matchPublicPath(pathname) {
+  for (const { re, view } of PUBLIC_PATHS) {
+    const m = pathname.match(re);
+    if (m) return { view, symbol: m[1] ? decodeURIComponent(m[1]) : null };
+  }
+  return null;
+}
 
 // Flat top-level entries and collapsible groups. A group's `items` are the
 // actual navigable leaves; the group itself is just a collapsible header.
@@ -26,38 +52,34 @@ const NAV = [
   { key: "home", label: "Home", icon: "home" },
   { key: "watchlist", label: "Watchlist", icon: "star" },
   { key: "analytics", label: "Analytics", icon: "chart" },
+  // New, additive section (not folded into an existing one) — research any
+  // stock and see everything the platform tracks about it in one place.
+  { key: "stock360", label: "Stock 360", icon: "search" },
   { key: "insights", label: "Insights", icon: "pulse" },
-  {
-    group: "scanners", label: "Scanners", icon: "scan", items: [
-      { key: "scanner:pine", label: "Pine Scanner", icon: "scan" },
-      { key: "scanner:weekly", label: "Weekly Scanner", icon: "scan" },
-      { key: "patterns:cup_handle", label: "Cup and Handle", icon: "scan" },
-      { key: "patterns:downtrend_breakout", label: "Downtrend Breakout", icon: "scan" },
-      { key: "patterns:rectangle", label: "Rectangle Box", icon: "scan" },
-    ],
-  },
-  {
-    // Raw feeds — each already has its own bottom-nav tab on mobile, so this
-    // group stays sidebar-only there rather than duplicating that access.
-    group: "markets", label: "Markets", icon: "trending", mobileHidden: true, items: [
-      { key: "ipo", label: "IPO Tracker", icon: "rocket" },
-      { key: "promoter", label: "Promoter Trades", icon: "pulse" },
-      { key: "bulk", label: "Bulk Deals", icon: "list" },
-      { key: "block", label: "Block Deals", icon: "list" },
-    ],
-  },
-  {
-    // Derived/aggregated views — kept out of Markets on purpose (raw feed vs.
-    // analysis are different mental models) and shown on mobile since
-    // neither has a bottom-nav tab of its own.
-    group: "analyser", label: "Analyser", icon: "pulse", items: [
-      { key: "mutual-funds", label: "Mutual-Funds", icon: "wallet" },
-      { key: "promoter-buying", label: "Promoter Analyser", icon: "trending" },
-    ],
-  },
+  // Flat entry — lands on ScannerHub, a picker page, instead of expanding a
+  // 5-item sidebar submenu. The 5 scanner keys below are still valid `view`
+  // values (reached by picking a card on the hub), just no longer their own
+  // sidebar rows.
+  { key: "scanners", label: "Scanners", icon: "scan" },
+  // Flat entry, desktop-only (mobileHidden) — lands on MarketsHub, a picker
+  // page. Hidden on mobile because these four feeds already have their own
+  // bottom-nav tabs there (see SWIPE_TABS) — a picker would be a redundant
+  // extra tap on a phone that already has direct access.
+  { key: "markets", label: "Markets", icon: "trending", mobileHidden: true },
+  // Flat entry — lands on AnalyserHub, a picker page, same pattern as
+  // Scanners. mutual-funds/promoter-buying are still valid `view` values,
+  // just reached via the hub instead of their own sidebar rows.
+  { key: "analyser", label: "Analyser", icon: "pulse" },
 
   { key: "audit", label: "Audit", icon: "list" },
-  { key: "paper", label: "Paper Trading", icon: "wallet" },
+  {
+    // Two sub-views now: search-any-stock-and-trade, and the positions/
+    // history table — a flat entry can only ever render one component.
+    group: "paper", label: "Paper Trading", icon: "wallet", items: [
+      { key: "trade", label: "Trade", icon: "search" },
+      { key: "paper", label: "Positions", icon: "wallet" },
+    ],
+  },
   { key: "admin", label: "Admin", icon: "shield", admin: true },
 ];
 
@@ -65,20 +87,26 @@ const TITLES = {
   home: "Trending",
   watchlist: "Watchlist",
   analytics: "Analytics Dashboard",
+  stock360: "Stock 360",
   insights: "Insights",
+  scanners: "Scanners",
   "scanner:pine": "Pine Scanner",
   "scanner:weekly": "Weekly Scanner",
   "patterns:cup_handle": "Cup and Handle",
   "patterns:downtrend_breakout": "Downtrend Breakout",
   "patterns:rectangle": "Rectangle Box",
+  markets: "Markets",
   ipo: "IPO Tracker",
   promoter: "Promoter Trades",
+  analyser: "Analyser",
   "promoter-buying": "Promoter Buying Analyser",
   bulk: "Bulk Deals",
   block: "Block Deals",
   "mutual-funds": "Mutual Fund Analyser",
+  "big-investors": "Big Investor Portfolios",
   audit: "Signal Audit",
-  paper: "Paper Trading",
+  trade: "Paper Trading — Trade",
+  paper: "Paper Trading — Positions",
   profile: "Profile",
   admin: "Admin — Candle Tools",
 };
@@ -88,6 +116,15 @@ const GROUP_OF_KEY = NAV.filter((n) => n.items).reduce((acc, g) => {
   g.items.forEach((it) => { acc[it.key] = g.group; });
   return acc;
 }, {});
+
+// Flat nav entries that are actually picker hubs (ScannerHub/AnalyserHub) —
+// maps the hub's key to a predicate over `view` for "should this hub still
+// show as active" while browsing one of the views it leads to.
+const HUB_CHILDREN = {
+  scanners: (v) => v.startsWith("scanner:") || v.startsWith("patterns:"),
+  analyser: (v) => v === "mutual-funds" || v === "promoter-buying" || v === "big-investors",
+  markets: (v) => v === "ipo" || v === "promoter" || v === "bulk" || v === "block",
+};
 
 // The ordered list of tabs driven by bottom-nav swipe gestures.
 const SWIPE_TABS = ["home", "ipo", "promoter", "bulk", "block"];
@@ -121,6 +158,11 @@ function canSwipeRight(el) {
 }
 
 export default function App() {
+  // Computed once at mount from the real URL — the one place this app reads
+  // window.location.pathname, since everywhere else navigation is pure state
+  // (see `view` below). Only matters for a visitor who isn't logged in yet;
+  // an already-authed user just gets their normal last-viewed page.
+  const [publicRoute] = useState(() => matchPublicPath(window.location.pathname));
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "dark");
   const [view, setView] = useState(localStorage.getItem("view") || "home");
   const [slideDir, setSlideDir] = useState("fade");
@@ -284,7 +326,12 @@ export default function App() {
       el.removeEventListener("touchmove", onTouchMove);
       el.removeEventListener("touchend", onTouchEnd);
     };
-  }, [ptrHeight]);
+    // `authed` is the real trigger this needs: this effect's first run
+    // happens while still logged out, when .main doesn't exist yet and
+    // mainRef.current is null — it bails out and, since ptrHeight never
+    // changes on its own, would otherwise never get a second chance to
+    // attach once .main actually mounts after login.
+  }, [ptrHeight, authed]);
 
   function onAuthed(u) {
     setUser(u);
@@ -298,10 +345,26 @@ export default function App() {
   }
 
   if (!authed) {
+    if (publicRoute && !showLogin) {
+      return (
+        <PublicShell
+          view={publicRoute.view}
+          symbol={publicRoute.symbol}
+          theme={theme}
+          onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+          onGetStarted={() => {
+            window.history.pushState({ page: "login" }, "");
+            setShowLogin(true);
+          }}
+        />
+      );
+    }
     return showLogin ? (
       <Login onAuthed={onAuthed} onBack={() => window.history.back()} />
     ) : (
       <Landing
+        theme={theme}
+        onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
         onGetStarted={() => {
           window.history.pushState({ page: "login" }, "");
           setShowLogin(true);
@@ -317,19 +380,25 @@ export default function App() {
       case "home": return <Home {...p} />;
       case "watchlist": return <Watchlist {...p} />;
       case "analytics": return <Analytics {...p} />;
+      case "stock360": return <Stock360 {...p} />;
       case "insights": return <Insights isAdmin={isAdmin} />;
+      case "scanners": return <ScannerHub onSelect={enterHub} />;
       case "scanner:pine": return <Scanner source="pine" {...p} />;
       case "scanner:weekly": return <Scanner source="weekly" {...p} />;
       case "patterns:cup_handle": return <Scanner source="patterns" pattern="pattern_cup_handle" {...p} />;
       case "patterns:downtrend_breakout": return <Scanner source="patterns" pattern="pattern_downtrend_breakout" {...p} />;
       case "patterns:rectangle": return <Scanner source="patterns" pattern="pattern_rectangle" {...p} />;
+      case "markets": return <MarketsHub onSelect={enterHub} />;
       case "ipo": return <IPO isAdmin={isAdmin} />;
       case "promoter": return <PromoterTrades isAdmin={isAdmin} />;
+      case "analyser": return <AnalyserHub onSelect={enterHub} />;
       case "promoter-buying": return <PromoterBuying />;
       case "bulk": return <Deals type="bulk" isAdmin={isAdmin} />;
       case "block": return <Deals type="block" isAdmin={isAdmin} />;
       case "mutual-funds": return <MutualFunds />;
+      case "big-investors": return <BigInvestors />;
       case "audit": return <Audit isAdmin={isAdmin} />;
+      case "trade": return <Trade {...p} />;
       case "paper": return <Paper {...p} />;
       case "profile": return <Profile {...p} onLogout={logout} />;
       case "admin": return isAdmin ? <Admin /> : <Home {...p} />;
@@ -353,6 +422,19 @@ export default function App() {
       window.history.replaceState({ view: key }, "");
       setView(key);
     }
+    setMenuOpen(false);
+    setPaletteOpen(false);
+  }
+
+  // Hub → child navigation (ScannerHub/AnalyserHub picking a card) uses
+  // pushState instead of go()'s replaceState: the hub's own history entry
+  // must survive underneath so the back button (or swipe-back/hardware
+  // back on mobile) returns to the picker instead of skipping straight past
+  // it to whatever page was open before the hub.
+  function enterHub(key) {
+    setSlideDir("fade");
+    window.history.pushState({ view: key }, "");
+    setView(key);
     setMenuOpen(false);
     setPaletteOpen(false);
   }
@@ -434,10 +516,13 @@ export default function App() {
             );
           }
           const I = Icon[n.icon];
+          // A hub entry (Scanners/Analyser) lands on its picker page, but
+          // should still read as active while browsing any view it leads to.
+          const active = view === n.key || (HUB_CHILDREN[n.key] && HUB_CHILDREN[n.key](view));
           return (
             <div
               key={n.key}
-              className={"nav-item" + (view === n.key ? " active" : "") + (n.mobileHidden ? " hide-on-mobile" : "")}
+              className={"nav-item" + (active ? " active" : "") + (n.mobileHidden ? " hide-on-mobile" : "")}
               onClick={() => go(n.key)}
               title={n.label}
             >

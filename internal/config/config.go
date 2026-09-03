@@ -67,12 +67,24 @@ type Config struct {
 	AdminPassword string `env:"ADMIN_PASSWORD" envDefault:""`
 
 	// Scanner / scheduler
-	SchedulerEnabled   bool   `env:"SCHEDULER_ENABLED" envDefault:"true"`
-	DailyScanCron      string `env:"DAILY_SCAN_CRON" envDefault:"0 16 * * 1-5"`
-	CleanupCron        string `env:"CLEANUP_CRON" envDefault:"0 1 * * *"`
-	FillScheduledCron  string `env:"FILL_SCHEDULED_CRON" envDefault:"16 9 * * 1-5"`
-	RetentionDays      int    `env:"RETENTION_DAYS" envDefault:"100"`
-	ReconcileOnStartup bool   `env:"RECONCILE_ON_STARTUP" envDefault:"true"`
+	SchedulerEnabled  bool   `env:"SCHEDULER_ENABLED" envDefault:"true"`
+	DailyScanCron     string `env:"DAILY_SCAN_CRON" envDefault:"0 16 * * 1-5"`
+	CleanupCron       string `env:"CLEANUP_CRON" envDefault:"0 1 * * *"`
+	FillScheduledCron string `env:"FILL_SCHEDULED_CRON" envDefault:"16 9 * * 1-5"`
+	// SquareOffIntradayCron force-closes any still-OPEN intraday paper
+	// position (long or short) at 3:20pm IST — matches real brokers' MIS
+	// auto square-off time. See internal/paper/intraday.go.
+	SquareOffIntradayCron string `env:"SQUARE_OFF_INTRADAY_CRON" envDefault:"20 15 * * 1-5"`
+	// PaperFillRetryInterval re-runs the scheduled-fill jobs (FillScheduled,
+	// FillScheduledCloses) on this cadence throughout market hours — a
+	// backstop for FillScheduledCron: if that single 9:16am tick fails (a
+	// transient price-lookup error, a DB hiccup) or a per-row fill fails
+	// silently, nothing else retries it until the next trading day's cron.
+	// This closes that gap. Both fill functions are idempotent (they only
+	// ever act on rows still SCHEDULED/pending), so a no-op retry is cheap.
+	PaperFillRetryInterval time.Duration `env:"PAPER_FILL_RETRY_INTERVAL" envDefault:"5m"`
+	RetentionDays          int           `env:"RETENTION_DAYS" envDefault:"100"`
+	ReconcileOnStartup     bool          `env:"RECONCILE_ON_STARTUP" envDefault:"true"`
 
 	// Intraday cache (today's forming candle in Redis, market hours only)
 	IntradayCacheEnabled  bool          `env:"INTRADAY_CACHE_ENABLED" envDefault:"true"`
@@ -90,6 +102,9 @@ type Config struct {
 	PromoterPollInterval    time.Duration `env:"PROMOTER_POLL_INTERVAL" envDefault:"90m"`
 	PromoterAlertWindowDays int           `env:"PROMOTER_ALERT_WINDOW_DAYS" envDefault:"15"`
 	PromoterRetentionDays   int           `env:"PROMOTER_RETENTION_DAYS" envDefault:"60"`
+
+	// Big-investor portfolio tracker (NSE quarterly shareholding-pattern feed)
+	InvestorsEnabled bool `env:"INVESTORS_ENABLED" envDefault:"true"`
 
 	// Notifications (Module 7)
 	NotifyEnabled    bool   `env:"NOTIFY_ENABLED" envDefault:"true"`

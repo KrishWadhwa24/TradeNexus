@@ -3,6 +3,8 @@ import { createPortal } from "react-dom";
 import { api } from "../api.js";
 import { Icon } from "../icons.jsx";
 import { SkeletonGrid } from "../Skeleton.jsx";
+import ShareButton from "../components/ShareButton.jsx";
+import { shareIpoCard } from "../shareCard.js";
 
 function gmpLevel(pct) {
   if (pct >= 20) return "high";
@@ -101,7 +103,7 @@ function SubscriptionModal({ ipo, onClose }) {
   );
 }
 
-export default function IPO({ isAdmin = false }) {
+export default function IPO({ isAdmin = false, initialName = null }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -142,6 +144,15 @@ export default function IPO({ isAdmin = false }) {
   }
 
   useEffect(load, []);
+
+  // Deep link support (e.g. /ipo/Tempsens%20Instruments): open straight to
+  // the matching IPO's detail once the list has loaded.
+  useEffect(() => {
+    if (!initialName || !rows.length) return;
+    const match = rows.find((r) => r.name.toLowerCase() === initialName.toLowerCase());
+    if (match) openModal(match);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialName, rows]);
 
   async function refresh() {
     setMsg("Refreshing feed…");
@@ -218,6 +229,10 @@ export default function IPO({ isAdmin = false }) {
                 key={x.id}
                 onClick={() => openModal(x)}
               >
+                <div className="ipo-share-corner" onClick={(e) => e.stopPropagation()}>
+                  <ShareButton share={() => shareIpoCard(x)} title="Share this IPO's card" />
+                </div>
+
                 <div className="ipo-card-top">
                   <div className="ipo-id">
                     <span className="ipo-name">{x.name}</span>
@@ -266,7 +281,7 @@ export default function IPO({ isAdmin = false }) {
 
                 <div className="ipo-foot" onClick={(e) => e.stopPropagation()}>
                   <button className="btn-sm" onClick={() => openModal(x)}>Details</button>
-                  
+
                   {x.signal_tier && (
                     <span className={"conv conv-" + gmpLevel(x.gmp_percent)} style={{ marginLeft: "auto" }}>
                       {TIER_LABEL[x.signal_tier] || x.signal_tier}

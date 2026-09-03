@@ -22,6 +22,7 @@ export const Icon = {
   chevron: () => (<svg viewBox="0 0 24 24" {...s}><path d="M6 9l6 6 6-6" /></svg>),
   trending: () => (<svg viewBox="0 0 24 24" {...s}><path d="M3 17l6-6 4 4 8-8" /><path d="M15 6h6v6" /></svg>),
   pulse: () => (<svg viewBox="0 0 24 24" {...s}><path d="M3 12h4l2-7 4 14 2-7h6" /></svg>),
+  share: () => (<svg viewBox="0 0 24 24" {...s}><path d="M12 15V3" /><path d="M7 8l5-5 5 5" /><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" /></svg>),
 };
 
 // Brand mark inside the logo tile.

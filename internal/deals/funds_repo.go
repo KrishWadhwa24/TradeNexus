@@ -2,6 +2,36 @@ package deals
 
 import "context"
 
+// isDuplicateFundTrade reports whether the just-inserted row (id newID)
+// duplicates another already-stored row's real-world trade. Two known ways
+// this happens in NSE's raw feed, neither caught by market_deals' own
+// unique constraint (which keys on deal_type + the raw, un-normalized
+// client_name):
+//   - the identical trade disclosed as both a bulk deal and a block deal
+//   - the identical trade disclosed twice within the same feed with a
+//     formatting variant of the client name (e.g. a trailing period)
+//
+// Both rows are still kept in market_deals (each is a genuine disclosure,
+// worth showing on its own feed/search), but only one should ever be folded
+// into mutual_fund_positions, or that one real trade gets double-counted.
+func (r *Repo) isDuplicateFundTrade(ctx context.Context, newID int64, row Row) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM market_deals
+			WHERE id <> $1
+				AND deal_date = $2
+				AND symbol = $3
+				AND regexp_replace(upper(btrim(client_name)), '[.\s]+$', '') = $4
+				AND buy_sell = $5
+				AND quantity = $6
+				AND price = $7
+		)`,
+		newID, dateOnly(row.Date), row.Symbol, normalizeFundName(row.ClientName), row.Side, row.Quantity, row.Price,
+	).Scan(&exists)
+	return exists, err
+}
+
 // accumulateFundPosition adds one newly-inserted mutual-fund deal row's
 // qty/value into that fund's permanent (fund_name, symbol) position. Only
 // ever called from InsertRows for a row that was just actually inserted, so
@@ -91,6 +121,32 @@ func (r *Repo) FundPositionStocks(ctx context.Context, fundName string) ([]FundS
 	return out, rows.Err()
 }
 
+// FundPositionsForSymbol returns every fund that has traded one stock,
+// largest net value first — the Stock 360 view's mirror of FundPositionStocks.
+func (r *Repo) FundPositionsForSymbol(ctx context.Context, symbol string) ([]FundHolder, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT fund_name, buy_qty, sell_qty, buy_value, sell_value, deal_count, last_deal_date
+		FROM mutual_fund_positions
+		WHERE symbol = $1
+		ORDER BY (buy_value - sell_value) DESC`, symbol)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FundHolder
+	for rows.Next() {
+		var f FundHolder
+		if err := rows.Scan(&f.FundName, &f.BuyQty, &f.SellQty,
+			&f.BuyValue, &f.SellValue, &f.DealCount, &f.LastDealDate); err != nil {
+			return nil, err
+		}
+		f.NetQty = f.BuyQty - f.SellQty
+		f.NetValue = f.BuyValue - f.SellValue
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // BackfillFundPositions seeds mutual_fund_positions from whatever's
 // currently in market_deals, for (fund, symbol) pairs that don't already
 // have a position row. ON CONFLICT DO NOTHING (not DO UPDATE) deliberately
@@ -99,10 +155,27 @@ func (r *Repo) FundPositionStocks(ctx context.Context, fundName string) ([]FundS
 // history that's since grown beyond what market_deals currently holds.
 func (r *Repo) BackfillFundPositions(ctx context.Context) error {
 	_, err := r.pool.Exec(ctx, `
+		WITH distinct_deals AS (
+			-- NSE sometimes discloses the identical real-world trade as both a
+			-- bulk deal and a block deal (same symbol/client/side/qty/price/date).
+			-- Collapse each such pair to one row before aggregating, same as the
+			-- ingestion-time dedup in isDuplicateAcrossDealTypes.
+			SELECT DISTINCT ON (
+				regexp_replace(upper(btrim(client_name)), '[.\s]+$', ''),
+				symbol, buy_sell, quantity, price, deal_date
+			)
+				regexp_replace(upper(btrim(client_name)), '[.\s]+$', '') AS fund_name,
+				symbol, security_name, buy_sell, quantity, price, deal_date
+			FROM market_deals
+			WHERE client_name ILIKE '%MUTUAL FUND%'
+			ORDER BY
+				regexp_replace(upper(btrim(client_name)), '[.\s]+$', ''),
+				symbol, buy_sell, quantity, price, deal_date, deal_type
+		)
 		INSERT INTO mutual_fund_positions
 			(fund_name, symbol, security_name, buy_qty, sell_qty, buy_value, sell_value, deal_count, first_deal_date, last_deal_date, updated_at)
 		SELECT
-			regexp_replace(upper(btrim(client_name)), '[.\s]+$', '') AS fund_name,
+			fund_name,
 			symbol,
 			MAX(security_name),
 			COALESCE(SUM(quantity) FILTER (WHERE buy_sell = 'BUY'), 0),
@@ -113,9 +186,8 @@ func (r *Repo) BackfillFundPositions(ctx context.Context) error {
 			MIN(deal_date),
 			MAX(deal_date),
 			now()
-		FROM market_deals
-		WHERE client_name ILIKE '%MUTUAL FUND%'
-		GROUP BY 1, symbol
+		FROM distinct_deals
+		GROUP BY fund_name, symbol
 		ON CONFLICT (fund_name, symbol) DO NOTHING`)
 	return err
 }

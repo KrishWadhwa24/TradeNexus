@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -21,18 +22,28 @@ func NewRepo(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
 func (r *Repo) InsertRows(ctx context.Context, rows []Row) (int, error) {
 	inserted := 0
 	for _, row := range rows {
-		tag, err := r.pool.Exec(ctx, `
+		var newID int64
+		err := r.pool.QueryRow(ctx, `
 			INSERT INTO market_deals
 				(deal_type, deal_date, symbol, security_name, client_name, buy_sell, quantity, price, remarks)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-			ON CONFLICT (deal_type, deal_date, symbol, client_name, buy_sell, quantity, price) DO NOTHING`,
-			row.Type, row.Date, row.Symbol, row.SecurityName, row.ClientName, row.Side, row.Quantity, row.Price, row.Remarks)
+			ON CONFLICT (deal_type, deal_date, symbol, client_name, buy_sell, quantity, price) DO NOTHING
+			RETURNING id`,
+			row.Type, row.Date, row.Symbol, row.SecurityName, row.ClientName, row.Side, row.Quantity, row.Price, row.Remarks,
+		).Scan(&newID)
 		if err != nil {
+			if err == pgx.ErrNoRows {
+				continue // exact duplicate of an existing row (same deal_type + raw client_name too) — nothing to do
+			}
 			return inserted, err
 		}
-		if tag.RowsAffected() > 0 {
-			inserted++
-			if isMutualFund(row.ClientName) {
+		inserted++
+		if isMutualFund(row.ClientName) {
+			dup, err := r.isDuplicateFundTrade(ctx, newID, row)
+			if err != nil {
+				return inserted, err
+			}
+			if !dup {
 				if err := r.accumulateFundPosition(ctx, row); err != nil {
 					return inserted, err
 				}
@@ -79,7 +90,6 @@ func (r *Repo) RowsInWindow(ctx context.Context, t Type, days int) ([]Row, error
 func (r *Repo) RowsForSymbol(ctx context.Context, t Type, symbol string, days int) ([]Row, error) {
 	return r.rowsFor(ctx, t, symbol, cutoffDays(days))
 }
-
 
 // AlreadyAlerted reports whether a (type, date, symbol) has been alerted.
 func (r *Repo) AlreadyAlerted(ctx context.Context, t Type, day time.Time, symbol string) (bool, error) {
