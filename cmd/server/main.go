@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/robfig/cron/v3"
+
 	"tradenexus/internal/analytics"
 	"tradenexus/internal/angel"
 	"tradenexus/internal/api"
@@ -19,6 +21,7 @@ import (
 	"tradenexus/internal/calendar"
 	"tradenexus/internal/candles"
 	"tradenexus/internal/config"
+	"tradenexus/internal/cronx"
 	"tradenexus/internal/deals"
 	"tradenexus/internal/engine"
 	"tradenexus/internal/fiidii"
@@ -29,6 +32,7 @@ import (
 	"tradenexus/internal/ipo"
 	"tradenexus/internal/live"
 	"tradenexus/internal/logger"
+	"tradenexus/internal/market"
 	"tradenexus/internal/notify"
 	"tradenexus/internal/paper"
 	"tradenexus/internal/promoter"
@@ -154,7 +158,7 @@ func main() {
 	liveHub := live.NewHub(angelClient, log)
 
 	// Paper-trading service.
-	paperSvc := paper.New(pg.Pool, angelClient, candleRepo, instRepo, signalRepo, calSvc, log)
+	paperSvc := paper.New(pg.Pool, angelClient, candleRepo, instRepo, signalRepo, calSvc, liveHub, log)
 
 	// IPO tracker (open + upcoming IPOs + GMP signals). Polls the feed on a timer.
 	var ipoSvc *ipo.Service
@@ -232,6 +236,29 @@ func main() {
 		log.Fatal().Err(err).Msg("start scheduler")
 	}
 	defer sched.Stop()
+
+	// Weekly index-derivatives refresh (Nifty/BankNifty/FinNifty/Sensex/Bankex
+	// option chains + the two index-spot instruments) — picks up newly-listed
+	// expiries and deactivates ones past expiry. A standalone cron rather than
+	// part of scheduler.Scheduler since it's instrument-universe maintenance,
+	// not part of the trading-day scan/fill/square-off pipeline.
+	derivCron := cron.New(cron.WithLocation(market.IST), cron.WithChain(cronx.Recover(log)))
+	if _, err := derivCron.AddFunc("30 6 * * MON", func() {
+		jobCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		res, err := instruments.SyncDerivatives(jobCtx, angelClient, instRepo)
+		if err != nil {
+			log.Error().Err(err).Msg("weekly derivatives sync failed")
+			return
+		}
+		log.Info().Int("upserted", res.Upserted).Int("options", res.Options).
+			Int64("deactivated", res.Deactivated).Msg("weekly derivatives sync done")
+	}); err != nil {
+		log.Error().Err(err).Msg("weekly derivatives cron invalid")
+	} else {
+		derivCron.Start()
+		defer derivCron.Stop()
+	}
 
 	// 9) HTTP server.
 	srv := &http.Server{

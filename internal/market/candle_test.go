@@ -29,6 +29,47 @@ func TestAggToCandles_Empty(t *testing.T) {
 	}
 }
 
+func TestSameISTDate(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b time.Time
+		want bool
+	}{
+		{
+			name: "same instant",
+			a:    time.Date(2026, 8, 31, 10, 0, 0, 0, IST),
+			b:    time.Date(2026, 8, 31, 10, 0, 0, 0, IST),
+			want: true,
+		},
+		{
+			name: "same IST calendar day, different times",
+			a:    time.Date(2026, 8, 31, 9, 15, 0, 0, IST),
+			b:    time.Date(2026, 8, 31, 15, 30, 0, 0, IST),
+			want: true,
+		},
+		{
+			name: "different days",
+			a:    time.Date(2026, 8, 30, 23, 0, 0, 0, IST),
+			b:    time.Date(2026, 8, 31, 1, 0, 0, 0, IST),
+			want: false,
+		},
+		{
+			name: "UTC midnight crosses into the next IST day — the whole point of comparing in IST, not UTC",
+			// 2026-08-31 19:00 UTC = 2026-09-01 00:30 IST (UTC+5:30).
+			a:    time.Date(2026, 8, 31, 19, 0, 0, 0, time.UTC),
+			b:    time.Date(2026, 8, 31, 20, 0, 0, 0, time.UTC), // = 2026-09-01 01:30 IST
+			want: true,                                          // both are Sep 1 in IST, despite being Aug 31 in UTC
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := SameISTDate(c.a, c.b); got != c.want {
+				t.Errorf("SameISTDate(%v, %v) = %v, want %v", c.a, c.b, got, c.want)
+			}
+		})
+	}
+}
+
 func TestIST(t *testing.T) {
 	// IST must be UTC+5:30.
 	_, offset := time.Date(2026, 1, 1, 0, 0, 0, 0, IST).Zone()

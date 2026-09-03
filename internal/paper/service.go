@@ -17,6 +17,7 @@ import (
 	"tradenexus/internal/calendar"
 	"tradenexus/internal/candles"
 	"tradenexus/internal/instruments"
+	"tradenexus/internal/live"
 	"tradenexus/internal/market"
 	"tradenexus/internal/signals"
 )
@@ -29,13 +30,15 @@ type Service struct {
 	inst    *instruments.Repo
 	signals *signals.Repo
 	cal     *calendar.Service
+	live    *live.Hub // optional; nil falls straight back to the Angel REST path in price()
 	log     zerolog.Logger
 }
 
-// New builds the service.
+// New builds the service. liveHub may be nil (falls back to the slower Angel
+// REST path in price() for every call instead of the live-tick cache).
 func New(pool *pgxpool.Pool, ang *angel.Client, c *candles.Repo, inst *instruments.Repo,
-	sig *signals.Repo, cal *calendar.Service, log zerolog.Logger) *Service {
-	return &Service{pool: pool, angel: ang, candles: c, inst: inst, signals: sig, cal: cal, log: log}
+	sig *signals.Repo, cal *calendar.Service, liveHub *live.Hub, log zerolog.Logger) *Service {
+	return &Service{pool: pool, angel: ang, candles: c, inst: inst, signals: sig, cal: cal, live: liveHub, log: log}
 }
 
 // Account is a user's paper account.
@@ -135,6 +138,50 @@ func (s *Service) GetAccount(ctx context.Context, userID string) (Account, error
 // to FillScheduled/FillScheduledCloses without duplicating calendar wiring.
 func (s *Service) MarketOpen(t time.Time) bool {
 	return s.cal.Cal().IsMarketOpen(t)
+}
+
+// displayPrice resolves a price for read-only display (Trades/Summary — the
+// unrealized-P&L column, not an order fill) the same way handleDashboard's
+// instrumentParams already does for Home/Analytics: live-tick cache first
+// (an in-memory read, already kept warm by the user's own open live-prices
+// WebSocket connection — see Server.liveInstruments/OpenInstrumentIDs), else
+// the last stored daily close — never a synchronous Angel network call.
+// That match matters, not just the cache-first part: price()'s fallback
+// tries a live Angel LTP REST call before giving up on the candle close, so
+// using price() here would still leave a slow path (network-bound, queued
+// behind the same rate limiter the intraday-cache job hammers) for any
+// position whose live tick hasn't arrived yet — precisely the failure mode
+// this function exists to remove. The true current price still shows up
+// moments later regardless, once its tick arrives over the already-open
+// WebSocket (see Paper.jsx's connectLivePrices merge) — nothing here is
+// ever worth blocking a page load on. Never used for an actual fill —
+// pricing a real order still goes through price() unchanged, so execution
+// behavior is untouched by this.
+//
+// Trades() used to call price() directly for every OPEN position, in a
+// per-row loop — each one a blocking Angel REST call queued behind that same
+// rate limiter, which is exactly why /paper/trades and /paper/summary were
+// measured taking 10-30s (some hitting the router's 30s timeout and
+// returning a truncated response) instead of near-instant.
+//
+// A cached tick is only trusted if it's from today (IST) — a tick from a
+// prior session (the instrument hasn't traded yet today, or its WebSocket
+// subscription only picked it up after a stale value was already cached) is
+// not "the latest price."
+func (s *Service) displayPrice(ctx context.Context, inst instruments.Instrument) (float64, error) {
+	if s.live != nil {
+		if tick, ok := s.live.GetLastTick(inst.Exchange, inst.SymbolToken); ok && tick.Price > 0 && market.SameISTDate(tick.Timestamp, time.Now()) {
+			return tick.Price, nil
+		}
+	}
+	daily, err := s.candles.GetDaily(ctx, inst.ID)
+	if err != nil {
+		return 0, err
+	}
+	if len(daily) == 0 {
+		return 0, errors.New("no price available (no candles); sync the instrument first")
+	}
+	return daily[len(daily)-1].Close, nil
 }
 
 // price resolves the current price: live LTP if available, else last daily close.
@@ -456,7 +503,7 @@ func (s *Service) Trades(ctx context.Context, userID string) ([]Trade, error) {
 		}
 		if t.Status == "OPEN" {
 			if inst, err := s.inst.GetByID(ctx, t.InstrumentID); err == nil {
-				if px, err := s.price(ctx, inst); err == nil {
+				if px, err := s.displayPrice(ctx, inst); err == nil {
 					u := unrealizedPnL(t.Side, t.EntryPrice, px, t.Quantity)
 					t.CurrentPrice = &px
 					t.Unrealized = &u

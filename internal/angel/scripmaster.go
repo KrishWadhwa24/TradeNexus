@@ -46,6 +46,72 @@ func (c *Client) FetchScripMaster(ctx context.Context) ([]Scrip, error) {
 	return out, nil
 }
 
+// indexUnderlyings is the curated set of index option chains Step 1 tracks —
+// deliberately narrow (not the full F&O universe) to keep instrument count
+// and live-subscription load sane. NIFTY/BANKNIFTY/FINNIFTY trade in NFO
+// (NSE F&O); SENSEX/BANKEX trade in BFO (BSE F&O) — a real, easy-to-miss
+// distinction confirmed against the live scrip master.
+var indexUnderlyings = map[string]bool{
+	"NIFTY": true, "BANKNIFTY": true, "FINNIFTY": true,
+	"SENSEX": true, "BANKEX": true,
+}
+
+// indexSpotTokens are the underlying index instruments themselves (not
+// derivatives) — needed as the signal source. Keyed by (exch_seg, name) — the
+// scrip master's "name" field is the clean ticker ("NIFTY"); "symbol" is an
+// inconsistent display string ("Nifty 50" for this row, but plain "SENSEX"
+// for that one — verified live), so name is the reliable match field.
+var indexSpotTokens = map[[2]string]bool{
+	{"NSE", "NIFTY"}:  true, // symbol field is "Nifty 50"
+	{"BSE", "SENSEX"}: true, // symbol field is "SENSEX"
+}
+
+// nearDatedWindow bounds which expiries FetchIndexDerivatives keeps. NIFTY/
+// SENSEX still have weekly expiries, but BANKNIFTY/FINNIFTY/BANKEX were
+// rationalized to monthly-only in 2024 (verified live — their nearest expiry
+// can be ~29 days out), so this has to be wide enough to always catch at
+// least the current monthly contract for those, not just weeklies.
+const nearDatedWindow = 35 * 24 * time.Hour
+
+// FetchIndexDerivatives downloads the full Angel scrip master (a second,
+// separate fetch from FetchScripMaster — the two apply different filters to
+// the same source file) and returns near-dated NIFTY/BANKNIFTY/FINNIFTY/
+// SENSEX/BANKEX option contracts plus the Nifty 50 and SENSEX index-spot
+// instruments themselves.
+func (c *Client) FetchIndexDerivatives(ctx context.Context) ([]Scrip, error) {
+	resp, err := c.fetchScripMasterResponse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var all []Scrip
+	if err := json.NewDecoder(resp.Body).Decode(&all); err != nil {
+		return nil, fmt.Errorf("decode scrip master: %w", err)
+	}
+
+	now := time.Now()
+	cutoff := now.Add(nearDatedWindow)
+	out := make([]Scrip, 0, 500)
+	var options, spots int
+	for _, s := range all {
+		switch {
+		case (s.ExchSeg == "NFO" || s.ExchSeg == "BFO") && s.InstrumentType == "OPTIDX" && indexUnderlyings[s.Name]:
+			expiry, err := time.Parse("02Jan2006", s.Expiry)
+			if err != nil || expiry.Before(now) || expiry.After(cutoff) {
+				continue
+			}
+			out = append(out, s)
+			options++
+		case s.InstrumentType == "AMXIDX" && indexSpotTokens[[2]string{s.ExchSeg, s.Name}]:
+			out = append(out, s)
+			spots++
+		}
+	}
+	c.log.Info().Int("total", len(all)).Int("options", options).Int("index_spots", spots).Msg("angel: index derivatives loaded")
+	return out, nil
+}
+
 func (c *Client) fetchScripMasterResponse(ctx context.Context) (*http.Response, error) {
 	httpc := &http.Client{Timeout: c.cfg.ScripMasterTimeout}
 	var lastErr error

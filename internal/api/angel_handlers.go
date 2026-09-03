@@ -60,6 +60,23 @@ func (s *Server) handleScripMasterSync(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// POST /v1/admin/angel/derivatives/sync — pulls near-dated NIFTY/BANKNIFTY/
+// FINNIFTY (NFO) and SENSEX/BANKEX (BFO) option chains, plus the Nifty 50 and
+// SENSEX index-spot instruments, into `instruments`, and deactivates any
+// option past expiry. Same logic the weekly refresh cron runs — safe to
+// re-run manually any time (see instruments.SyncDerivatives).
+func (s *Server) handleDerivativesSync(w http.ResponseWriter, r *http.Request) {
+	res, err := instruments.SyncDerivatives(r.Context(), s.angel, s.inst)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"fetched": res.Fetched, "upserted": res.Upserted,
+		"options": res.Options, "index_spots": res.IndexSpots, "deactivated": res.Deactivated,
+	})
+}
+
 // POST /v1/angel/historical — raw daily-candle passthrough for testing.
 // Body: {"exchange":"NSE","symbol_token":"3045","from":"2024-01-01","to":"2024-03-01"}
 // from/to optional (default: last 30 days).

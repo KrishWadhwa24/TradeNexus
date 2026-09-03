@@ -8,6 +8,12 @@ import "time"
 // IST is the exchange timezone. All candle dates are normalized to it.
 var IST = time.FixedZone("IST", 5*3600+30*60)
 
+// SameISTDate reports whether two instants fall on the same calendar day in IST.
+func SameISTDate(a, b time.Time) bool {
+	a, b = a.In(IST), b.In(IST)
+	return a.Year() == b.Year() && a.YearDay() == b.YearDay()
+}
+
 // Timeframe identifiers.
 const (
 	TF1D = "1D"

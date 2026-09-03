@@ -188,7 +188,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(s.requestLogger)
 	r.Use(middleware.Recoverer)
-	r.Use(timeoutExcept(30*time.Second, "/live-prices", "/admin/reconcile", "/candles/sync", "/sync-scan", "/admin/candles/refetch"))
+	r.Use(timeoutExcept(30*time.Second, "/live-prices", "/admin/reconcile", "/candles/sync", "/sync-scan", "/admin/candles/refetch", "/derivatives/sync", "/paper/trades", "/paper/summary"))
 
 	r.Get("/health", s.handleHealth)
 	r.Get("/health/ready", s.handleReady)
@@ -269,6 +269,7 @@ func (s *Server) Router() http.Handler {
 				// Stock universe: re-download the Angel scrip master and upsert
 				// NSE/BSE cash equities (picks up newly listed IPOs, etc.).
 				r.Post("/angel/scripmaster/sync", s.handleScripMasterSync)
+				r.Post("/angel/derivatives/sync", s.handleDerivativesSync)
 
 				// IPO admin: refresh the feed now, or push a manual "Apply".
 				r.Post("/admin/ipos/refresh", s.handleRefreshIPOs)

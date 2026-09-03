@@ -123,7 +123,7 @@ func (s *Server) instrumentParams(r *http.Request, id int64) (analytics.Params, 
 	last := daily[len(daily)-1]
 	prevClose := p.PrevClose // ComputeParams: second-to-last close
 	current := last.Close    // last stored close
-	if !sameISTDate(last.Time, time.Now()) {
+	if !market.SameISTDate(last.Time, time.Now()) {
 		// Last stored candle is a prior day → it IS the previous close, and we
 		// have no price for today yet (flat until a live tick lands).
 		prevClose = last.Close
@@ -143,8 +143,3 @@ func (s *Server) instrumentParams(r *http.Request, id int64) (analytics.Params, 
 	return p, nil
 }
 
-// sameISTDate reports whether two instants fall on the same calendar day in IST.
-func sameISTDate(a, b time.Time) bool {
-	a, b = a.In(market.IST), b.In(market.IST)
-	return a.Year() == b.Year() && a.YearDay() == b.YearDay()
-}
