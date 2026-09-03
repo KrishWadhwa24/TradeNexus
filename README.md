@@ -573,3 +573,8 @@ paper trading (market-aware), and the full web UI.
   for local single-tenant use, but add an "is this my uid" guard before multi-tenant use.
 - **`DAILY_SCAN_CRON` default is 15:20 IST** (from the "~3:15 PM" spec) which is *before*
   the 15:30 close; set it to ~15:45 or later so the finalized daily candle is available.
+
+
+add algo-trading and real money account connect so that user can do real algo trading
+
+add big investor in 360 degree stock as well

@@ -25,6 +25,7 @@ import (
 	"tradenexus/internal/insights"
 	"tradenexus/internal/instruments"
 	"tradenexus/internal/intraday"
+	"tradenexus/internal/investors"
 	"tradenexus/internal/ipo"
 	"tradenexus/internal/live"
 	"tradenexus/internal/logger"
@@ -178,6 +179,13 @@ func main() {
 		promoterSvc.StartPolling(ctx)
 	}
 
+	// Big-investor portfolio tracker (NSE quarterly shareholding-pattern feed).
+	var investorsSvc *investors.Service
+	if cfg.InvestorsEnabled {
+		investorsSvc = investors.New(investors.NewClient(), investors.NewRepo(pg.Pool), log)
+		investorsSvc.StartPolling(ctx)
+	}
+
 	// Bulk & block deals tracker (NSE historical bulk-block CSV feed).
 	var dealsSvc *deals.Service
 	if cfg.DealsEnabled {
@@ -211,12 +219,14 @@ func main() {
 
 	// 8) Scheduler (daily scan + cleanup + startup reconciliation + fill).
 	sched := scheduler.New(engineSvc, paperSvc, intradayCache, fiidiiSvc, scheduler.Config{
-		Enabled:            cfg.SchedulerEnabled,
-		DailyScanCron:      cfg.DailyScanCron,
-		CleanupCron:        cfg.CleanupCron,
-		FillScheduledCron:  cfg.FillScheduledCron,
-		IntradayInterval:   cfg.IntradayCacheInterval,
-		RunReconcileOnBoot: cfg.ReconcileOnStartup,
+		Enabled:                cfg.SchedulerEnabled,
+		DailyScanCron:          cfg.DailyScanCron,
+		CleanupCron:            cfg.CleanupCron,
+		FillScheduledCron:      cfg.FillScheduledCron,
+		SquareOffIntradayCron:  cfg.SquareOffIntradayCron,
+		PaperFillRetryInterval: cfg.PaperFillRetryInterval,
+		IntradayInterval:       cfg.IntradayCacheInterval,
+		RunReconcileOnBoot:     cfg.ReconcileOnStartup,
 	}, log)
 	if err := sched.Start(ctx); err != nil {
 		log.Fatal().Err(err).Msg("start scheduler")
@@ -245,6 +255,7 @@ func main() {
 			IPO:            ipoSvc,
 			Promoter:       promoterSvc,
 			Deals:          dealsSvc,
+			Investors:      investorsSvc,
 			Insights:       insightsSvc,
 			FiiDii:         fiidiiSvc,
 			JWTSecret:      cfg.JWTSecret,
@@ -278,6 +289,5 @@ func main() {
 	}
 	log.Info().Msg("bye")
 }
-
 
 //end

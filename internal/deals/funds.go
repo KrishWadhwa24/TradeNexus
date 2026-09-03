@@ -60,6 +60,21 @@ type FundDetail struct {
 	Stocks    []FundStock `json:"stocks"` // net_value desc
 }
 
+// FundHolder is one mutual fund's position in a specific stock — the Stock
+// 360 view's mirror of FundStock: FundStock answers "what has this fund
+// traded", FundHolder answers "which funds have traded this stock".
+type FundHolder struct {
+	FundName     string    `json:"fund_name"`
+	BuyQty       int64     `json:"buy_qty"`
+	SellQty      int64     `json:"sell_qty"`
+	BuyValue     float64   `json:"buy_value"`
+	SellValue    float64   `json:"sell_value"`
+	NetQty       int64     `json:"net_qty"`
+	NetValue     float64   `json:"net_value"`
+	DealCount    int       `json:"deal_count"`
+	LastDealDate time.Time `json:"last_deal_date"`
+}
+
 // ListFunds returns mutual-fund summary cards, largest gross value first.
 func (s *Service) ListFunds(ctx context.Context) ([]FundSummary, error) {
 	return s.repo.ListFundPositions(ctx)
@@ -79,6 +94,12 @@ func (s *Service) GetFund(ctx context.Context, fundName string) (FundDetail, err
 		d.SellValue += st.SellValue
 	}
 	return d, nil
+}
+
+// GetStockFunds returns every fund that has traded a stock, largest net
+// value first — the Stock 360 view's mirror of GetFund.
+func (s *Service) GetStockFunds(ctx context.Context, symbol string) ([]FundHolder, error) {
+	return s.repo.FundPositionsForSymbol(ctx, symbol)
 }
 
 // BackfillFundPositions seeds mutual_fund_positions from whatever raw deal
