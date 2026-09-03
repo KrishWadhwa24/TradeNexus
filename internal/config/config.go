@@ -103,6 +103,9 @@ type Config struct {
 	PromoterAlertWindowDays int           `env:"PROMOTER_ALERT_WINDOW_DAYS" envDefault:"15"`
 	PromoterRetentionDays   int           `env:"PROMOTER_RETENTION_DAYS" envDefault:"60"`
 
+	// Big-investor portfolio tracker (NSE quarterly shareholding-pattern feed)
+	InvestorsEnabled bool `env:"INVESTORS_ENABLED" envDefault:"true"`
+
 	// Notifications (Module 7)
 	NotifyEnabled    bool   `env:"NOTIFY_ENABLED" envDefault:"true"`
 	NotifyWindowDays int    `env:"NOTIFY_WINDOW_DAYS" envDefault:"7"`

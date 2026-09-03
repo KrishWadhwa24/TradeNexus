@@ -796,25 +796,44 @@ tbody tr:hover {
 }
 
 .tabs {
-  display: flex;
-  gap: 8px;
+  display: inline-flex;
+  gap: 4px;
   margin-bottom: 20px;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .tab {
-  padding: 8px 16px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
+  padding: 9px 18px;
+  border-radius: 10px;
+  border: 1px solid transparent;
   cursor: pointer;
   font-family: var(--font-mono);
   font-size: 13px;
+  font-weight: 600;
   color: var(--muted);
+  white-space: nowrap;
+  transition: color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+
+.tab:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .tab.active {
   background: var(--accent);
   color: #fff;
-  border-color: var(--accent);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.tab.active:hover {
+  color: #fff;
+  background: var(--accent);
 }
 
 .toolbar {
@@ -2751,6 +2770,205 @@ code {
   color: var(--muted);
   font-size: 11px;
   white-space: nowrap;
+}
+
+/* ---------- Big investor portfolios ---------- */
+.investor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.investor-card {
+  position: relative;
+  background: linear-gradient(165deg, var(--surface) 0%, var(--surface-2) 130%);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px 18px 16px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: hidden;
+  transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+
+.investor-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: var(--icon-color, var(--accent));
+}
+
+.investor-card:hover {
+  border-color: color-mix(in srgb, var(--icon-color, var(--accent)) 50%, var(--border));
+  transform: translateY(-3px);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .32);
+}
+
+.investor-card-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.investor-avatar {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--icon-color, var(--accent));
+  background: color-mix(in srgb, var(--icon-color, var(--accent)) 20%, var(--surface-2));
+}
+
+.investor-name-block {
+  flex: 1;
+  min-width: 0;
+}
+
+.investor-name {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -.2px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.investor-rank {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  background: var(--surface-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.investor-rank.is-top1 { background: color-mix(in srgb, #f0b84a 24%, var(--surface-2)); color: #f0b84a; border-color: color-mix(in srgb, #f0b84a 45%, var(--border)); }
+.investor-rank.is-top2 { background: color-mix(in srgb, #c9ccd6 24%, var(--surface-2)); color: #c9ccd6; border-color: color-mix(in srgb, #c9ccd6 45%, var(--border)); }
+.investor-rank.is-top3 { background: color-mix(in srgb, #cd8a52 24%, var(--surface-2)); color: #cd8a52; border-color: color-mix(in srgb, #cd8a52 45%, var(--border)); }
+
+.investor-top-holding {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--icon-color, var(--accent)) 10%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--icon-color, var(--accent)) 22%, var(--border));
+}
+
+.investor-top-holding .k {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--muted);
+}
+
+.investor-top-holding .v {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--icon-color, var(--accent));
+}
+
+.investor-meta {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.investor-meta > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.investor-meta .k {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--muted);
+}
+
+.investor-meta .v {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.investor-card-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+.investor-holding-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.investor-holding-row:last-child { border-bottom: none; }
+
+.investor-holding-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.investor-holding-symbol {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.investor-holding-pct {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.investor-holding-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.investor-holding-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--icon-color, var(--accent));
+}
+
+.investor-holding-sub {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
 }
 
 /* ---------- Promoter buying analyser (detail rows) ---------- */

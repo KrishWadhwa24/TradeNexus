@@ -25,6 +25,7 @@ import (
 	"tradenexus/internal/insights"
 	"tradenexus/internal/instruments"
 	"tradenexus/internal/intraday"
+	"tradenexus/internal/investors"
 	"tradenexus/internal/ipo"
 	"tradenexus/internal/live"
 	"tradenexus/internal/logger"
@@ -178,6 +179,13 @@ func main() {
 		promoterSvc.StartPolling(ctx)
 	}
 
+	// Big-investor portfolio tracker (NSE quarterly shareholding-pattern feed).
+	var investorsSvc *investors.Service
+	if cfg.InvestorsEnabled {
+		investorsSvc = investors.New(investors.NewClient(), investors.NewRepo(pg.Pool), log)
+		investorsSvc.StartPolling(ctx)
+	}
+
 	// Bulk & block deals tracker (NSE historical bulk-block CSV feed).
 	var dealsSvc *deals.Service
 	if cfg.DealsEnabled {
@@ -247,6 +255,7 @@ func main() {
 			IPO:            ipoSvc,
 			Promoter:       promoterSvc,
 			Deals:          dealsSvc,
+			Investors:      investorsSvc,
 			Insights:       insightsSvc,
 			FiiDii:         fiidiiSvc,
 			JWTSecret:      cfg.JWTSecret,

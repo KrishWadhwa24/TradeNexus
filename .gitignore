@@ -6,5 +6,6 @@ bin/
 web/node_modules/
 web/.env.local
 node_modules
-node_modules
 IMPLEMENTATION_PLAN.md
+README.md
+architecture.svg
