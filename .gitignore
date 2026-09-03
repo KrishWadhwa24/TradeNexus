@@ -1,5 +1,11 @@
 .env
+*.local
 bin/
 *.log
 .DS_Store
 web/node_modules/
+web/.env.local
+node_modules
+IMPLEMENTATION_PLAN.md
+README.md
+architecture.svg

@@ -67,6 +67,15 @@ const sampleFeed = `{
       "~gmp_percent_calc": "41.53",
       "~IPO_Category": "SME",
       "~ipo_name": "Devson Catalyst"
+    },
+    {
+      "Name": "<a>Indo-MIM</a> <span class=\"badge rounded-pill bg-secondary d-inline ms-2\">IPO</span><span class=\"badge rounded-pill bg-danger d-inline ms-2\">CT</span>",
+      "GMP": "&#8377;<b>193</b> (39.79%)",
+      "~id": 1594,
+      "~gmp_percent_calc": "39.79",
+      "~Srt_Close": "2026-07-27",
+      "~IPO_Category": "IPO",
+      "~ipo_name": "Indo-MIM"
     }
   ]
 }`
@@ -76,8 +85,8 @@ func TestParseFeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(items) != 5 {
-		t.Fatalf("expected 5 items, got %d", len(items))
+	if len(items) != 6 {
+		t.Fatalf("expected 6 items, got %d", len(items))
 	}
 	by := map[int64]IPO{}
 	for _, x := range items {
@@ -107,6 +116,10 @@ func TestParseFeed(t *testing.T) {
 	if by[2204].Status != "listed" {
 		t.Errorf("devson should be listed, got %q", by[2204].Status)
 	}
+	// "CT" (closing today) badge must count as still open, not dropped.
+	if by[1594].Status != "open" {
+		t.Errorf("indo-mim (CT badge) should be open, got %q", by[1594].Status)
+	}
 	// Board parse for SME.
 	if by[2129].Board != "BSE SME" {
 		t.Errorf("millworks board: %q", by[2129].Board)
@@ -114,6 +127,93 @@ func TestParseFeed(t *testing.T) {
 	// Date parse.
 	if by[1862].CloseDate == nil || by[1862].CloseDate.Format("2006-01-02") != "2026-07-27" {
 		t.Errorf("lohia close date wrong: %v", by[1862].CloseDate)
+	}
+}
+
+// sampleSubscriptionFeed is trimmed from the real InvestorGain subscription
+// report (report id 333) — Indo-MIM (~id 1594, QIB well under threshold,
+// anchor ✅) and Caliber Mining (~id 1610, QIB well over threshold, same id
+// used by sampleFeed's "open" IPO above so the two feeds merge realistically).
+const sampleSubscriptionFeed = `{
+  "reportTableData": [
+    {
+      "Name": "<a>Indo-MIM</a>",
+      "Total": "<b>1.14</b><br><small><b>23rd Jul 18:55</b></small>",
+      "QIB": "0.18",
+      "SHNI": "3.61",
+      "BHNI": "2.75",
+      "NII": "3.04",
+      "RII": "0.88",
+      "Anchor": "<span style=\"color:green;font-weight:bold;\">✅</span>",
+      "~id": 1594
+    },
+    {
+      "Name": "<a>Caliber Mining</a>",
+      "Total": "<b>154.66</b><br><small><b>21st Jul 18:55</b></small>",
+      "QIB": "253.88",
+      "SHNI": "227.37",
+      "BHNI": "309.31",
+      "NII": "281.99",
+      "RII": "43.4",
+      "Anchor": "<span style=\"color:green;font-weight:bold;\">✅</span>",
+      "~id": 1610
+    },
+    {
+      "Name": "<a>No Anchor</a>",
+      "Total": "<b>10.85</b><br>",
+      "QIB": "",
+      "SHNI": "",
+      "BHNI": "",
+      "NII": "2.86",
+      "RII": "18.83",
+      "Anchor": "<span style=\"color:red;font-weight:bold;\">❌</span>",
+      "~id": 2214
+    }
+  ]
+}`
+
+func TestParseSubscriptionFeed(t *testing.T) {
+	subs, err := ParseSubscriptionFeed([]byte(sampleSubscriptionFeed))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(subs) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(subs))
+	}
+
+	indoMim := subs[1594]
+	if indoMim.QIB != 0.18 || indoMim.Total != 1.14 || !indoMim.AnchorPositive {
+		t.Errorf("indo-mim: %+v", indoMim)
+	}
+	caliber := subs[1610]
+	if caliber.QIB != 253.88 || caliber.Total != 154.66 || !caliber.AnchorPositive {
+		t.Errorf("caliber: %+v", caliber)
+	}
+	noAnchor := subs[2214]
+	if noAnchor.QIB != 0 || noAnchor.NII != 2.86 || noAnchor.AnchorPositive {
+		t.Errorf("no-anchor: %+v", noAnchor)
+	}
+}
+
+func TestQIBGateThreshold(t *testing.T) {
+	// Mirrors the AND-gate in RunClosingDaySignals: both the GMP tier and
+	// QIB > qibAlertThreshold must hold before a signal is allowed.
+	cases := []struct {
+		gmpPct, qib float64
+		wantSignal  bool
+	}{
+		{25, 253.88, true}, // Caliber-like: strong GMP tier + strong QIB
+		{25, 0.18, false},  // Indo-MIM-like: strong GMP tier but weak QIB
+		{5, 253.88, false}, // strong QIB but GMP tier doesn't qualify
+		{25, 5.0, false},   // QIB exactly at threshold — must exceed, not equal
+		{25, 5.01, true},
+	}
+	for _, c := range cases {
+		tier := tierFor(c.gmpPct)
+		gotSignal := tier != "" && c.qib > qibAlertThreshold
+		if gotSignal != c.wantSignal {
+			t.Errorf("gmp=%.2f qib=%.2f: signal=%v, want %v", c.gmpPct, c.qib, gotSignal, c.wantSignal)
+		}
 	}
 }
 

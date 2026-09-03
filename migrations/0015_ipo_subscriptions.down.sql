@@ -1,0 +1,8 @@
+ALTER TABLE ipos
+    DROP COLUMN IF EXISTS qib,
+    DROP COLUMN IF EXISTS shni,
+    DROP COLUMN IF EXISTS bhni,
+    DROP COLUMN IF EXISTS nii,
+    DROP COLUMN IF EXISTS rii,
+    DROP COLUMN IF EXISTS total_subscription,
+    DROP COLUMN IF EXISTS anchor_positive;

@@ -1,12 +1,15 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { authApi, setToken } from "../api.js";
 
-export default function Login({ onAuthed }) {
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
+
+export default function Login({ onAuthed, onBack }) {
   const [mode, setMode] = useState("login"); // login | register
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const googleBtnRef = useRef(null);
 
   async function submit(e) {
     e.preventDefault();
@@ -24,10 +27,59 @@ export default function Login({ onAuthed }) {
     }
   }
 
+  async function onGoogleCredential(response) {
+    setErr("");
+    setBusy(true);
+    try {
+      const r = await authApi.google(response.credential);
+      setToken(r.token);
+      onAuthed(r.user);
+    } catch (e2) {
+      setErr(e2.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Google Identity Services renders the button itself (its own styling,
+  // ID-token flow) — loaded as a plain script tag rather than an npm package,
+  // so this stays a zero-new-dependency feature on both ends.
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) return;
+
+    function render() {
+      if (!window.google || !googleBtnRef.current) return;
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: onGoogleCredential,
+      });
+      window.google.accounts.id.renderButton(googleBtnRef.current, {
+        theme: "outline",
+        size: "large",
+        width: 320,
+      });
+    }
+
+    if (window.google) {
+      render();
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.onload = render;
+    document.body.appendChild(script);
+    return () => { document.body.removeChild(script); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="auth-wrap">
+      {onBack && (
+        <a className="back-home-btn" onClick={onBack}>← Back to home</a>
+      )}
       <div className="auth-art">
-        <div className="brand" style={{ padding: 0 }}>
+        <div className="brand" style={{ padding: 0, cursor: onBack ? "pointer" : "default" }} onClick={onBack}>
           <span className="prompt">&gt;_</span> Trade<em>Nexus</em>
         </div>
         <span className="kicker">// UNIFIED_STOCK_SCANNER</span>
@@ -53,6 +105,13 @@ export default function Login({ onAuthed }) {
         <button className="btn-primary" disabled={busy}>
           {busy ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
         </button>
+
+        {GOOGLE_CLIENT_ID && (
+          <>
+            <div className="auth-divider"><span>or</span></div>
+            <div ref={googleBtnRef} style={{ display: "flex", justifyContent: "center" }} />
+          </>
+        )}
 
         <div className="auth-switch">
           {mode === "login" ? (

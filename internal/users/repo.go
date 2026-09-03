@@ -174,6 +174,17 @@ func (r *Repo) DeleteWatchlist(ctx context.Context, userID, watchlistID string) 
 	return nil
 }
 
+// WatchlistOwner returns the user id that owns a watchlist.
+func (r *Repo) WatchlistOwner(ctx context.Context, watchlistID string) (string, error) {
+	var userID string
+	err := r.pool.QueryRow(ctx,
+		`SELECT user_id::text FROM watchlists WHERE id = $1::uuid`, watchlistID).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return userID, err
+}
+
 // AddWatchlistItem adds an instrument to a watchlist.
 func (r *Repo) AddWatchlistItem(ctx context.Context, watchlistID string, instrumentID int64) error {
 	_, err := r.pool.Exec(ctx, `

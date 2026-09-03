@@ -8,9 +8,13 @@ import (
 )
 
 // parseAnalyticsFilter reads shared query params: from, to (YYYY-MM-DD), tf, source.
+// Non-admins are scoped to their own watchlists; admins see everything.
 func parseAnalyticsFilter(r *http.Request) analytics.Filter {
 	q := r.URL.Query()
 	f := analytics.Filter{Timeframe: q.Get("tf"), Source: q.Get("source")}
+	if isAdmin, _ := r.Context().Value(isAdminKey).(bool); !isAdmin {
+		f.UserID, _ = r.Context().Value(userIDKey).(string)
+	}
 	const layout = "2006-01-02"
 	if v := q.Get("from"); v != "" {
 		if t, err := time.Parse(layout, v); err == nil {

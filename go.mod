@@ -5,6 +5,7 @@ go 1.22
 require (
 	github.com/caarlos0/env/v11 v11.2.0
 	github.com/go-chi/chi/v5 v5.1.0
+	github.com/go-chi/cors v1.2.2
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/golang-migrate/migrate/v4 v4.17.1
 	github.com/gorilla/websocket v1.5.3

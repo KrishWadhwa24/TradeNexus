@@ -8,6 +8,7 @@ export default function Watchlist({ userId }) {
   const [items, setItems] = useState([]); // instrument detail objects
   const [newName, setNewName] = useState("");
   const [q, setQ] = useState("");
+  const [localQuery, setLocalQuery] = useState("");
   const [results, setResults] = useState([]);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
@@ -226,7 +227,19 @@ export default function Watchlist({ userId }) {
 
       {err && <div className="err">{err}</div>}
 
-      <div className="section-title">{activeWatchlist?.name || "Your watchlist"}</div>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end", marginBottom: 10 }}>
+        <div className="section-title" style={{ margin: 0 }}>{activeWatchlist?.name || "Your watchlist"}</div>
+        {items.length > 0 && (
+          <input
+            className="btn-sm"
+            type="text"
+            placeholder="Search in watchlist"
+            value={localQuery}
+            onChange={(e) => setLocalQuery(e.target.value)}
+            style={{ minWidth: 150 }}
+          />
+        )}
+      </div>
       {!items.length ? (
         <div className="empty"><EmptyArt /><div>No stocks yet. Search above to add your first.</div></div>
       ) : (
@@ -236,7 +249,10 @@ export default function Watchlist({ userId }) {
               <tr><th>Symbol</th><th>Name</th><th>Exchange</th><th></th></tr>
             </thead>
             <tbody>
-              {items.map((it) => (
+              {items.filter((it) => 
+                (it.trading_symbol || "").toLowerCase().includes(localQuery.toLowerCase()) || 
+                (it.name || "").toLowerCase().includes(localQuery.toLowerCase())
+              ).map((it) => (
                 <tr key={it.id}>
                   <td><b>{it.trading_symbol || `#${it.id}`}</b></td>
                   <td className="muted">{it.name || "—"}</td>
