@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api } from "../api.js";
 
 // Admin-only candle tools: inspect / delete / refetch a specific trading day.
@@ -11,6 +11,112 @@ export default function Admin() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");     // "" | "count" | "delete" | "refetch"
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Featured stocks (shown on the public landing page, before sign-in)
+  const [featured, setFeatured] = useState([]);
+  const [featuredMax, setFeaturedMax] = useState(10);
+  const [fq, setFq] = useState("");
+  const [fresults, setFresults] = useState([]);
+  const [fBusy, setFBusy] = useState(false);
+  const [fErr, setFErr] = useState("");
+
+  const loadFeatured = React.useCallback(async () => {
+    try {
+      const r = await api.get("/v1/public/featured-stocks");
+      setFeatured(r.stocks || []);
+      setFeaturedMax(r.max || 10);
+    } catch (e) { setFErr(e.message); }
+  }, []);
+
+  useEffect(() => { loadFeatured(); }, [loadFeatured]);
+
+  // Mutual fund positions: one-time (but safe to re-run) seed from whatever's
+  // currently in market_deals — see internal/deals/funds_repo.go.
+  const [mfBusy, setMfBusy] = useState(false);
+  const [mfMsg, setMfMsg] = useState("");
+  const [mfErr, setMfErr] = useState("");
+
+  async function backfillMutualFunds() {
+    setMfBusy(true); setMfMsg(""); setMfErr("");
+    try {
+      await api.post("/v1/admin/mutual-funds/backfill", {});
+      setMfMsg("Backfill done — check the Mutual Funds page for updated positions.");
+    } catch (e) { setMfErr(e.message); }
+    finally { setMfBusy(false); }
+  }
+
+  // Promoter buying positions: same one-time (safe to re-run) seed pattern —
+  // see internal/promoter/positions_repo.go.
+  const [pbBusy, setPbBusy] = useState(false);
+  const [pbMsg, setPbMsg] = useState("");
+  const [pbErr, setPbErr] = useState("");
+
+  async function backfillPromoterBuying() {
+    setPbBusy(true); setPbMsg(""); setPbErr("");
+    try {
+      await api.post("/v1/admin/promoter-buying/backfill", {});
+      setPbMsg("Backfill done — check the Promoter Buying page for updated positions.");
+    } catch (e) { setPbErr(e.message); }
+    finally { setPbBusy(false); }
+  }
+
+  // Big investor holdings: unlike the two backfills above (which aggregate
+  // from already-ingested local data, so they finish within the request),
+  // this polls NSE's shareholding-pattern feed live — cooldown-guarded and
+  // runs in the background (see internal/investors.Service.RefreshNow), so
+  // the response just confirms it started, not that it's done.
+  const [invBusy, setInvBusy] = useState(false);
+  const [invMsg, setInvMsg] = useState("");
+  const [invErr, setInvErr] = useState("");
+
+  async function refreshInvestors() {
+    setInvBusy(true); setInvMsg(""); setInvErr("");
+    try {
+      await api.post("/v1/admin/big-investors/refresh", {});
+      setInvMsg("Refresh started — this polls NSE live and runs in the background, check the Big Investor Portfolios page in a bit.");
+    } catch (e) { setInvErr(e.message); }
+    finally { setInvBusy(false); }
+  }
+
+  useEffect(() => {
+    if (!invMsg) return;
+    const t = setTimeout(() => setInvMsg(""), 6000);
+    return () => clearTimeout(t);
+  }, [invMsg]);
+
+  async function searchFeatured(e) {
+    const v = e.target.value;
+    setFq(v);
+    if (v.trim().length < 1) { setFresults([]); return; }
+    try {
+      const r = await api.get(`/v1/instruments/search?q=${encodeURIComponent(v)}&limit=12`);
+      setFresults(r.instruments || []);
+    } catch { setFresults([]); }
+  }
+
+  async function addFeatured(inst) {
+    setFBusy(true); setFErr("");
+    try {
+      await api.post("/v1/admin/featured-stocks", { instrument_id: inst.id });
+      setFq(""); setFresults([]);
+      await loadFeatured();
+    } catch (e) { setFErr(e.message); }
+    finally { setFBusy(false); }
+  }
+
+  async function removeFeatured(inst) {
+    setFBusy(true); setFErr("");
+    try {
+      await api.del(`/v1/admin/featured-stocks/${inst.id}`);
+      await loadFeatured();
+    } catch (e) { setFErr(e.message); }
+    finally { setFBusy(false); }
+  }
+
+  // Stock universe sync
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+  const [syncErr, setSyncErr] = useState("");
 
   // Stock candle lookup
   const [sq, setSq] = useState("");
@@ -51,6 +157,15 @@ export default function Admin() {
     finally { setBusy(""); }
   }
 
+  async function syncUniverse() {
+    setSyncBusy(true); setSyncErr(""); setSyncResult(null);
+    try {
+      const r = await api.post("/v1/angel/scripmaster/sync", {});
+      setSyncResult(r);
+    } catch (e) { setSyncErr(e.message); }
+    finally { setSyncBusy(false); }
+  }
+
   async function searchStock(e) {
     const v = e.target.value;
     setSq(v);
@@ -73,6 +188,112 @@ export default function Admin() {
 
   return (
     <div>
+      <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+        <div className="section-title" style={{ margin: "0 0 6px" }}>
+          Featured stocks (home page) — {featured.length}/{featuredMax}
+        </div>
+        <div className="subtle" style={{ marginBottom: 14 }}>
+          Shown to every visitor on the home page, before sign-in — a fixed, curated list independent
+          of any individual watchlist. Pick up to {featuredMax}.
+        </div>
+        <input
+          style={{ width: "100%", maxWidth: 460 }}
+          placeholder="Search NSE/BSE stocks (e.g. RELI, TATA)…"
+          value={fq}
+          onChange={searchFeatured}
+          disabled={featured.length >= featuredMax}
+        />
+        {featured.length >= featuredMax && (
+          <div className="subtle" style={{ marginTop: 8 }}>
+            List is full — remove one below to add another.
+          </div>
+        )}
+        {fresults.length > 0 && (
+          <div className="search-results" style={{ maxWidth: 460 }}>
+            {fresults.map((r) => (
+              <div className="search-row" key={r.id}>
+                <div><b>{r.trading_symbol}</b> <span className="subtle">{r.name}</span></div>
+                <button
+                  className="btn-primary btn-sm pill"
+                  onClick={() => addFeatured(r)}
+                  disabled={fBusy || featured.some((f) => f.id === r.id)}
+                >
+                  {featured.some((f) => f.id === r.id) ? "Added" : "Add"}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {fErr && <div className="err" style={{ marginTop: 12 }}>{fErr}</div>}
+        {featured.length > 0 && (
+          <div className="cards" style={{ marginTop: 14 }}>
+            {featured.map((f) => (
+              <div className="card" key={f.id}>
+                <div className="label">{f.trading_symbol}</div>
+                <div className="value" style={{ fontSize: 14 }}>{f.name}</div>
+                <button className="btn-sm" style={{ marginTop: 10 }} disabled={fBusy} onClick={() => removeFeatured(f)}>
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+        <div className="section-title" style={{ margin: "0 0 6px" }}>Mutual fund positions</div>
+        <button className="btn-sm btn-primary" onClick={backfillMutualFunds} disabled={mfBusy}>
+          {mfBusy ? "Backfilling…" : "Run mutual fund backfill"}
+        </button>
+        {mfMsg && <div className="msg" style={{ marginTop: 12 }}>{mfMsg}</div>}
+        {mfErr && <div className="err" style={{ marginTop: 12 }}>{mfErr}</div>}
+      </div>
+
+      <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+        <div className="section-title" style={{ margin: "0 0 6px" }}>Promoter buying positions</div>
+        <button className="btn-sm btn-primary" onClick={backfillPromoterBuying} disabled={pbBusy}>
+          {pbBusy ? "Backfilling…" : "Run promoter buying backfill"}
+        </button>
+        {pbMsg && <div className="msg" style={{ marginTop: 12 }}>{pbMsg}</div>}
+        {pbErr && <div className="err" style={{ marginTop: 12 }}>{pbErr}</div>}
+      </div>
+
+      <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+        <div className="section-title" style={{ margin: "0 0 6px" }}>Big investor holdings</div>
+        <div className="subtle" style={{ marginBottom: 14 }}>
+          Polls NSE's quarterly shareholding-pattern feed for the last 30 days, cooldown-guarded
+          (max once every 2 minutes) — runs in the background, so this just confirms it started.
+        </div>
+        <button className="btn-sm btn-primary" onClick={refreshInvestors} disabled={invBusy}>
+          {invBusy ? "Starting…" : "Refresh big investor holdings"}
+        </button>
+        {invMsg && <div className="msg" style={{ marginTop: 12 }}>{invMsg}</div>}
+        {invErr && <div className="err" style={{ marginTop: 12 }}>{invErr}</div>}
+      </div>
+
+      <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+        <div className="section-title" style={{ margin: "0 0 6px" }}>Stock universe</div>
+        <div className="subtle" style={{ marginBottom: 14 }}>
+          Re-downloads the full Angel scrip master and upserts every NSE/BSE cash equity —
+          this is how newly listed companies (e.g. an IPO that just started trading) get added.
+          It's safe to run any time: existing stocks are just refreshed, nothing is deleted.
+          There's no schedule for this yet, so re-run it every few months or whenever you know
+          new stocks have listed.
+        </div>
+        <button className="btn-sm btn-primary" onClick={syncUniverse} disabled={syncBusy}>
+          {syncBusy ? "Syncing…" : "Sync stock universe"}
+        </button>
+        {syncResult && (
+          <div className="msg" style={{ marginTop: 12 }}>
+            Fetched {syncResult.fetched}, upserted {syncResult.upserted}
+            {syncResult.by_exchange && (
+              <> ({Object.entries(syncResult.by_exchange).map(([ex, n]) => `${ex}: ${n}`).join(", ")})</>
+            )}.
+          </div>
+        )}
+        {syncErr && <div className="err" style={{ marginTop: 12 }}>{syncErr}</div>}
+      </div>
+
       <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
         <div className="section-title" style={{ margin: "0 0 6px" }}>Stock candle lookup</div>
         <div className="subtle" style={{ marginBottom: 14 }}>

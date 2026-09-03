@@ -1,19 +1,50 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { getToken, setToken } from "./api.js";
 import { Icon } from "./icons.jsx";
 import CommandPalette from "./CommandPalette.jsx";
+import ErrorBoundary from "./ErrorBoundary.jsx";
 import Landing from "./pages/Landing.jsx";
 import Login from "./pages/Login.jsx";
 import Home from "./pages/Home.jsx";
 import Analytics from "./pages/Analytics.jsx";
 import Watchlist from "./pages/Watchlist.jsx";
 import Scanner from "./pages/Scanner.jsx";
+import ScannerHub from "./pages/ScannerHub.jsx";
+import Stock360 from "./pages/Stock360.jsx";
+import AnalyserHub from "./pages/AnalyserHub.jsx";
+import MarketsHub from "./pages/MarketsHub.jsx";
 import Audit from "./pages/Audit.jsx";
 import Paper from "./pages/Paper.jsx";
+import Trade from "./pages/Trade.jsx";
 import Profile from "./pages/Profile.jsx";
 import Admin from "./pages/Admin.jsx";
 import IPO from "./pages/IPO.jsx";
 import PromoterTrades from "./pages/PromoterTrades.jsx";
+import Deals from "./pages/Deals.jsx";
+import MutualFunds from "./pages/MutualFunds.jsx";
+import PromoterBuying from "./pages/PromoterBuying.jsx";
+import BigInvestors from "./pages/BigInvestors.jsx";
+import Insights from "./pages/Insights.jsx";
+import PublicShell from "./pages/PublicShell.jsx";
+
+// Maps a real URL path to one of the no-login views, for shareable/indexable
+// links (e.g. /promoter-trades/RELIANCE) — everything else in the app stays
+// purely state-driven (see the view/localStorage machinery below), only
+// these few paths are ever read from window.location.
+const PUBLIC_PATHS = [
+  { re: /^\/ipo\/?([^/]*)$/, view: "ipo" },
+  { re: /^\/promoter-trades\/?([^/]*)$/, view: "promoter-trades" },
+  { re: /^\/bulk-deals\/?([^/]*)$/, view: "bulk" },
+  { re: /^\/block-deals\/?([^/]*)$/, view: "block" },
+];
+
+function matchPublicPath(pathname) {
+  for (const { re, view } of PUBLIC_PATHS) {
+    const m = pathname.match(re);
+    if (m) return { view, symbol: m[1] ? decodeURIComponent(m[1]) : null };
+  }
+  return null;
+}
 
 // Flat top-level entries and collapsible groups. A group's `items` are the
 // actual navigable leaves; the group itself is just a collapsible header.
@@ -21,24 +52,34 @@ const NAV = [
   { key: "home", label: "Home", icon: "home" },
   { key: "watchlist", label: "Watchlist", icon: "star" },
   { key: "analytics", label: "Analytics", icon: "chart" },
-  {
-    group: "scanners", label: "Scanners", icon: "scan", items: [
-      { key: "scanner:pine", label: "Pine Scanner", icon: "scan" },
-      { key: "scanner:weekly", label: "Weekly Scanner", icon: "scan" },
-      { key: "patterns:cup_handle", label: "Cup and Handle", icon: "scan" },
-      { key: "patterns:downtrend_breakout", label: "Downtrend Breakout", icon: "scan" },
-      { key: "patterns:rectangle", label: "Rectangle Box", icon: "scan" },
-    ],
-  },
-  {
-    group: "markets", label: "Markets", icon: "trending", items: [
-      { key: "ipo", label: "IPO Tracker", icon: "rocket" },
-      { key: "promoter", label: "Promoter Trades", icon: "pulse" },
-    ],
-  },
+  // New, additive section (not folded into an existing one) — research any
+  // stock and see everything the platform tracks about it in one place.
+  { key: "stock360", label: "Stock 360", icon: "search" },
+  { key: "insights", label: "Insights", icon: "pulse" },
+  // Flat entry — lands on ScannerHub, a picker page, instead of expanding a
+  // 5-item sidebar submenu. The 5 scanner keys below are still valid `view`
+  // values (reached by picking a card on the hub), just no longer their own
+  // sidebar rows.
+  { key: "scanners", label: "Scanners", icon: "scan" },
+  // Flat entry, desktop-only (mobileHidden) — lands on MarketsHub, a picker
+  // page. Hidden on mobile because these four feeds already have their own
+  // bottom-nav tabs there (see SWIPE_TABS) — a picker would be a redundant
+  // extra tap on a phone that already has direct access.
+  { key: "markets", label: "Markets", icon: "trending", mobileHidden: true },
+  // Flat entry — lands on AnalyserHub, a picker page, same pattern as
+  // Scanners. mutual-funds/promoter-buying are still valid `view` values,
+  // just reached via the hub instead of their own sidebar rows.
+  { key: "analyser", label: "Analyser", icon: "pulse" },
+
   { key: "audit", label: "Audit", icon: "list" },
-  { key: "paper", label: "Paper Trading", icon: "wallet" },
-  { key: "profile", label: "Profile", icon: "user" },
+  {
+    // Two sub-views now: search-any-stock-and-trade, and the positions/
+    // history table — a flat entry can only ever render one component.
+    group: "paper", label: "Paper Trading", icon: "wallet", items: [
+      { key: "trade", label: "Trade", icon: "search" },
+      { key: "paper", label: "Positions", icon: "wallet" },
+    ],
+  },
   { key: "admin", label: "Admin", icon: "shield", admin: true },
 ];
 
@@ -46,15 +87,26 @@ const TITLES = {
   home: "Trending",
   watchlist: "Watchlist",
   analytics: "Analytics Dashboard",
+  stock360: "Stock 360",
+  insights: "Insights",
+  scanners: "Scanners",
   "scanner:pine": "Pine Scanner",
   "scanner:weekly": "Weekly Scanner",
   "patterns:cup_handle": "Cup and Handle",
   "patterns:downtrend_breakout": "Downtrend Breakout",
   "patterns:rectangle": "Rectangle Box",
+  markets: "Markets",
   ipo: "IPO Tracker",
   promoter: "Promoter Trades",
+  analyser: "Analyser",
+  "promoter-buying": "Promoter Buying Analyser",
+  bulk: "Bulk Deals",
+  block: "Block Deals",
+  "mutual-funds": "Mutual Fund Analyser",
+  "big-investors": "Big Investor Portfolios",
   audit: "Signal Audit",
-  paper: "Paper Trading",
+  trade: "Paper Trading — Trade",
+  paper: "Paper Trading — Positions",
   profile: "Profile",
   admin: "Admin — Candle Tools",
 };
@@ -65,14 +117,69 @@ const GROUP_OF_KEY = NAV.filter((n) => n.items).reduce((acc, g) => {
   return acc;
 }, {});
 
+// Flat nav entries that are actually picker hubs (ScannerHub/AnalyserHub) —
+// maps the hub's key to a predicate over `view` for "should this hub still
+// show as active" while browsing one of the views it leads to.
+const HUB_CHILDREN = {
+  scanners: (v) => v.startsWith("scanner:") || v.startsWith("patterns:"),
+  analyser: (v) => v === "mutual-funds" || v === "promoter-buying" || v === "big-investors",
+  markets: (v) => v === "ipo" || v === "promoter" || v === "bulk" || v === "block",
+};
+
+// The ordered list of tabs driven by bottom-nav swipe gestures.
+const SWIPE_TABS = ["home", "ipo", "promoter", "bulk", "block"];
+
+// Returns true when every scrollable ancestor is at its leftmost position
+// (nothing left to pan through, so a right-swipe can open the sidebar or go prev-tab).
+function canSwipeLeft(el) {
+  let node = el;
+  while (node && node !== document.body) {
+    const ox = window.getComputedStyle(node).overflowX;
+    if ((ox === "auto" || ox === "scroll") && node.scrollWidth > node.clientWidth) {
+      if (node.scrollLeft > 4) return false;
+    }
+    node = node.parentElement;
+  }
+  return true;
+}
+
+// Returns true when every scrollable ancestor is at its rightmost position
+// (nothing right to pan through, so a left-swipe can advance to the next tab).
+function canSwipeRight(el) {
+  let node = el;
+  while (node && node !== document.body) {
+    const ox = window.getComputedStyle(node).overflowX;
+    if ((ox === "auto" || ox === "scroll") && node.scrollWidth > node.clientWidth) {
+      if (node.scrollLeft < node.scrollWidth - node.clientWidth - 4) return false;
+    }
+    node = node.parentElement;
+  }
+  return true;
+}
+
 export default function App() {
+  // Computed once at mount from the real URL — the one place this app reads
+  // window.location.pathname, since everywhere else navigation is pure state
+  // (see `view` below). Only matters for a visitor who isn't logged in yet;
+  // an already-authed user just gets their normal last-viewed page.
+  const [publicRoute] = useState(() => matchPublicPath(window.location.pathname));
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "dark");
   const [view, setView] = useState(localStorage.getItem("view") || "home");
+  const [slideDir, setSlideDir] = useState("fade");
   const [menuOpen, setMenuOpen] = useState(false);
+  const swipeRef = useRef({}); // { startX, startY, target }
+  const mainRef = useRef(null);
+  const [ptrState, setPtrState] = useState("idle"); // idle | pulling | active | refreshing
+  const [ptrHeight, setPtrHeight] = useState(0);
+  const ptrRef = useRef({ startY: 0, pulling: false });
   const [collapsedGroups, setCollapsedGroups] = useState(() => {
     try { return JSON.parse(localStorage.getItem("navCollapsedGroups") || "{}"); } catch { return {}; }
   });
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [sidebarPinned, setSidebarPinned] = useState(() => {
+    const saved = localStorage.getItem("sidebarPinned");
+    return saved === null ? true : saved === "true";
+  });
   const [showLogin, setShowLogin] = useState(false); // false → marketing landing
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem("user") || "null"); } catch { return null; }
@@ -102,7 +209,21 @@ export default function App() {
   }, [collapsedGroups]);
 
   function toggleGroup(key) {
-    setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+    if (!sidebarPinned) {
+      setSidebarPinned(true);
+      localStorage.setItem("sidebarPinned", "true");
+      setCollapsedGroups((prev) => ({ ...prev, [key]: false }));
+    } else {
+      setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+    }
+  }
+
+  function toggleSidebarPin() {
+    setSidebarPinned((prev) => {
+      const next = !prev;
+      localStorage.setItem("sidebarPinned", String(next));
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -111,25 +232,106 @@ export default function App() {
     return () => window.removeEventListener("auth-expired", onExpire);
   }, []);
 
-  // Give the login screen a real history entry so the browser Back button
-  // returns to the landing page instead of leaving the app entirely.
+  // Handle browser back button (both for login and internal app views)
   useEffect(() => {
-    const onPopState = () => setShowLogin(false);
+    // Set the initial state so the first back navigation works properly
+    window.history.replaceState({ view }, "");
+
+    const onPopState = (e) => {
+      if (e.state && e.state.view) {
+        setSlideDir("fade"); // Default to fade on browser back/forward
+        setView(e.state.view);
+      }
+      setShowLogin(false); // Always close login screen if it was open
+      setPaletteOpen(false); // ALWAYS close the command palette if it was open
+    };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
+
+  function openPalette() {
+    setPaletteOpen(true);
+    window.history.pushState(Object.assign({}, window.history.state, { modal: "cmdk" }), "");
+  }
 
   // Cmd/Ctrl-K toggles the command palette.
   useEffect(() => {
     const onKey = (e) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
         e.preventDefault();
-        setPaletteOpen((o) => !o);
+        if (paletteOpen) {
+          window.history.back();
+        } else {
+          openPalette();
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [paletteOpen]);
+
+  // ── Custom pull-to-refresh (replaces native since body is overflow:hidden) ──
+  const PTR_THRESHOLD = 60;
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+
+    const onTouchStart = (e) => {
+      // Only start tracking if scrolled to the very top
+      if (el.scrollTop > 0) return;
+      ptrRef.current = { startY: e.touches[0].clientY, pulling: false };
+    };
+
+    const onTouchMove = (e) => {
+      const { startY } = ptrRef.current;
+      if (startY === 0) return;
+      const dy = e.touches[0].clientY - startY;
+      if (dy < 0) { ptrRef.current.startY = 0; return; } // pulling up, ignore
+
+      // Don't interfere until we're sure user is pulling down at the top
+      if (el.scrollTop > 0) { ptrRef.current.startY = 0; return; }
+
+      ptrRef.current.pulling = true;
+      // Apply resistance (diminishing returns past threshold)
+      const pull = Math.min(dy * 0.45, 100);
+      setPtrHeight(pull);
+      setPtrState(pull >= PTR_THRESHOLD ? "active" : "pulling");
+
+      // Prevent the page bounce on iOS
+      if (dy > 0 && el.scrollTop <= 0) {
+        e.preventDefault();
+      }
+    };
+
+    const onTouchEnd = () => {
+      if (!ptrRef.current.pulling) { ptrRef.current = { startY: 0, pulling: false }; return; }
+
+      if (ptrHeight >= PTR_THRESHOLD) {
+        setPtrState("refreshing");
+        setPtrHeight(0);
+        // Reload after a brief visual delay
+        setTimeout(() => window.location.reload(), 600);
+      } else {
+        setPtrState("idle");
+        setPtrHeight(0);
+      }
+      ptrRef.current = { startY: 0, pulling: false };
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+    };
+    // `authed` is the real trigger this needs: this effect's first run
+    // happens while still logged out, when .main doesn't exist yet and
+    // mainRef.current is null — it bails out and, since ptrHeight never
+    // changes on its own, would otherwise never get a second chance to
+    // attach once .main actually mounts after login.
+  }, [ptrHeight, authed]);
 
   function onAuthed(u) {
     setUser(u);
@@ -143,10 +345,26 @@ export default function App() {
   }
 
   if (!authed) {
+    if (publicRoute && !showLogin) {
+      return (
+        <PublicShell
+          view={publicRoute.view}
+          symbol={publicRoute.symbol}
+          theme={theme}
+          onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+          onGetStarted={() => {
+            window.history.pushState({ page: "login" }, "");
+            setShowLogin(true);
+          }}
+        />
+      );
+    }
     return showLogin ? (
       <Login onAuthed={onAuthed} onBack={() => window.history.back()} />
     ) : (
       <Landing
+        theme={theme}
+        onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
         onGetStarted={() => {
           window.history.pushState({ page: "login" }, "");
           setShowLogin(true);
@@ -162,23 +380,64 @@ export default function App() {
       case "home": return <Home {...p} />;
       case "watchlist": return <Watchlist {...p} />;
       case "analytics": return <Analytics {...p} />;
+      case "stock360": return <Stock360 {...p} />;
+      case "insights": return <Insights isAdmin={isAdmin} />;
+      case "scanners": return <ScannerHub onSelect={enterHub} />;
       case "scanner:pine": return <Scanner source="pine" {...p} />;
       case "scanner:weekly": return <Scanner source="weekly" {...p} />;
       case "patterns:cup_handle": return <Scanner source="patterns" pattern="pattern_cup_handle" {...p} />;
       case "patterns:downtrend_breakout": return <Scanner source="patterns" pattern="pattern_downtrend_breakout" {...p} />;
       case "patterns:rectangle": return <Scanner source="patterns" pattern="pattern_rectangle" {...p} />;
+      case "markets": return <MarketsHub onSelect={enterHub} />;
       case "ipo": return <IPO isAdmin={isAdmin} />;
       case "promoter": return <PromoterTrades isAdmin={isAdmin} />;
+      case "analyser": return <AnalyserHub onSelect={enterHub} />;
+      case "promoter-buying": return <PromoterBuying />;
+      case "bulk": return <Deals type="bulk" isAdmin={isAdmin} />;
+      case "block": return <Deals type="block" isAdmin={isAdmin} />;
+      case "mutual-funds": return <MutualFunds />;
+      case "big-investors": return <BigInvestors />;
       case "audit": return <Audit isAdmin={isAdmin} />;
+      case "trade": return <Trade {...p} />;
       case "paper": return <Paper {...p} />;
-      case "profile": return <Profile {...p} />;
+      case "profile": return <Profile {...p} onLogout={logout} />;
       case "admin": return isAdmin ? <Admin /> : <Home {...p} />;
       default: return null;
     }
   }
 
   const initial = (user.email || "?").slice(0, 1).toUpperCase();
-  function go(key) { setView(key); setMenuOpen(false); }
+  function go(key) {
+    if (key !== view) {
+      const fromIdx = SWIPE_TABS.indexOf(view);
+      const toIdx = SWIPE_TABS.indexOf(key);
+      if (fromIdx !== -1 && toIdx !== -1) {
+        setSlideDir(toIdx > fromIdx ? "left" : "right");
+      } else {
+        setSlideDir("fade");
+      }
+
+      // Always use replaceState for top-level navigation so we don't build up
+      // a massive back-button history of tab switches.
+      window.history.replaceState({ view: key }, "");
+      setView(key);
+    }
+    setMenuOpen(false);
+    setPaletteOpen(false);
+  }
+
+  // Hub → child navigation (ScannerHub/AnalyserHub picking a card) uses
+  // pushState instead of go()'s replaceState: the hub's own history entry
+  // must survive underneath so the back button (or swipe-back/hardware
+  // back on mobile) returns to the picker instead of skipping straight past
+  // it to whatever page was open before the hub.
+  function enterHub(key) {
+    setSlideDir("fade");
+    window.history.pushState({ view: key }, "");
+    setView(key);
+    setMenuOpen(false);
+    setPaletteOpen(false);
+  }
 
   const nav = NAV
     .filter((n) => !n.admin || isAdmin)
@@ -186,17 +445,44 @@ export default function App() {
   const leafItems = nav.flatMap((n) => n.items || [n]);
   const commands = [
     ...leafItems.map((n) => ({ id: "nav-" + n.key, label: n.label, hint: "Go to page", run: () => go(n.key) })),
-    { id: "theme", label: "Toggle theme (dark / light)", hint: "Appearance", run: () => setTheme(theme === "dark" ? "light" : "dark") },
-    { id: "signout", label: "Sign out", hint: "Session", run: logout },
+    { id: "theme", label: "Toggle theme (dark / light)", hint: "Appearance", run: () => { setTheme(theme === "dark" ? "light" : "dark"); window.history.back(); } },
+    { id: "signout", label: "Sign out", hint: "Session", run: () => { logout(); window.history.back(); } },
   ];
 
   return (
     <div className="app">
       {menuOpen && <div className="backdrop" onClick={() => setMenuOpen(false)} />}
-      <aside className={"sidebar" + (menuOpen ? " open" : "")}>
+      <aside
+        className={"sidebar" + (menuOpen ? " open" : "") + (sidebarPinned ? " pinned" : " pinned-collapsed")}
+        onTouchStart={(e) => {
+          const t = e.touches[0];
+          swipeRef.current = { startX: t.clientX, startY: t.clientY, target: e.target };
+        }}
+        onTouchEnd={(e) => {
+          const { startX, startY } = swipeRef.current;
+          if (startX == null) return;
+          const t = e.changedTouches[0];
+          const dx = t.clientX - startX;
+          const dy = t.clientY - startY;
+          swipeRef.current = {};
+          if (Math.abs(dx) < Math.abs(dy)) return; // more vertical than horizontal
+          if (Math.abs(dx) < 50) return;            // too short
+          if (dx < 0 && menuOpen) setMenuOpen(false); // swipe left → close
+        }}
+      >
         <div className="brand">
-          <span className="prompt">&gt;_</span>
-          <span className="brand-text">Trade<em>Nexus</em></span>
+          <div className="brand-logo" onClick={() => go("home")} title="Go to home">
+            <span className="prompt">&gt;_</span>
+            <span className="brand-text">Trade<em>Nexus</em></span>
+          </div>
+          <button className="sidebar-collapse-btn" onClick={toggleSidebarPin} title={sidebarPinned ? "Collapse sidebar" : "Expand sidebar"}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              {sidebarPinned
+                ? <path d="M15 18l-6-6 6-6" />
+                : <path d="M9 18l6-6-6-6" />
+              }
+            </svg>
+          </button>
         </div>
         {nav.map((n) => {
           if (n.items) {
@@ -204,7 +490,7 @@ export default function App() {
             const collapsed = !!collapsedGroups[n.group];
             const hasActive = n.items.some((it) => it.key === view);
             return (
-              <div className="nav-group" key={n.group}>
+              <div className={"nav-group" + (n.mobileHidden ? " hide-on-mobile" : "")} key={n.group}>
                 <div
                   className={"nav-group-head" + (hasActive ? " active" : "")}
                   onClick={() => toggleGroup(n.group)}
@@ -230,10 +516,13 @@ export default function App() {
             );
           }
           const I = Icon[n.icon];
+          // A hub entry (Scanners/Analyser) lands on its picker page, but
+          // should still read as active while browsing any view it leads to.
+          const active = view === n.key || (HUB_CHILDREN[n.key] && HUB_CHILDREN[n.key](view));
           return (
             <div
               key={n.key}
-              className={"nav-item" + (view === n.key ? " active" : "")}
+              className={"nav-item" + (active ? " active" : "") + (n.mobileHidden ? " hide-on-mobile" : "")}
               onClick={() => go(n.key)}
               title={n.label}
             >
@@ -241,25 +530,69 @@ export default function App() {
             </div>
           );
         })}
-        <div className="sidebar-foot">
-          <div className="user-chip">
-            <span className="avatar">{initial}</span>
-            <div className="user-info" style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{user.email}</div>
-              <a className="subtle" style={{ cursor: "pointer" }} onClick={logout}>Sign out</a>
-            </div>
-          </div>
-        </div>
+
       </aside>
 
-      <div className="main">
+      <div
+        className="main"
+        ref={mainRef}
+        onTouchStart={(e) => {
+          const t = e.touches[0];
+          swipeRef.current = { startX: t.clientX, startY: t.clientY, target: e.target, isLocked: false, isVertical: false };
+        }}
+        onTouchMove={(e) => {
+          const state = swipeRef.current;
+          if (state.startX == null || state.isLocked) return;
+          const t = e.changedTouches[0];
+          const dx = t.clientX - state.startX;
+          const dy = t.clientY - state.startY;
+          if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+            state.isLocked = true;
+            state.isVertical = Math.abs(dy) > Math.abs(dx);
+          }
+        }}
+        onTouchEnd={(e) => {
+          const { startX, target, isVertical } = swipeRef.current;
+          if (startX == null) return;
+          const t = e.changedTouches[0];
+          const dx = t.clientX - startX;
+          swipeRef.current = {};
+
+          // Ignore swipes that started in a portaled modal (they bubble in React but aren't in .main DOM)
+          if (target && !target.closest('.main')) return;
+
+          if (isVertical) return;                   // Locked to vertical scroll — ignore
+          if (Math.abs(dx) < 50) return;            // too short — ignore
+
+          const tabIdx = SWIPE_TABS.indexOf(view);
+
+          if (dx < 0) {
+            // ── Swipe LEFT (finger moves right-to-left) ──
+            // Close sidebar if open, otherwise advance to next tab.
+            if (menuOpen) { setMenuOpen(false); return; }
+            if (!canSwipeRight(target)) return; // content still has room to scroll right
+            const next = tabIdx !== -1 && tabIdx < SWIPE_TABS.length - 1
+              ? SWIPE_TABS[tabIdx + 1] : null;
+            if (next) go(next);
+          } else {
+            // ── Swipe RIGHT (finger moves left-to-right) ──
+            // Go to previous tab; if already on the first tab open the sidebar.
+            if (!canSwipeLeft(target)) return; // content still has room to scroll left
+            if (tabIdx > 0) {
+              go(SWIPE_TABS[tabIdx - 1]);
+            } else if (!menuOpen) {
+              setMenuOpen(true);
+            }
+          }
+        }}
+      >
         <div className="topbar">
           <div className="row" style={{ gap: 12 }}>
             <button className="icon-btn hamburger" onClick={() => setMenuOpen(true)} aria-label="Menu"><Icon.menu /></button>
             <h1>{TITLES[view]}</h1>
           </div>
           <div className="topbar-right">
-            <button className="cmdk-trigger" title="Command palette" onClick={() => setPaletteOpen(true)}>
+            <button className="cmdk-trigger" title="Command palette" onClick={openPalette}>
               <Icon.search />
               <span>Search</span>
               <kbd>⌘K</kbd>
@@ -271,12 +604,53 @@ export default function App() {
             >
               {theme === "dark" ? <Icon.sun /> : <Icon.moon />}
             </button>
+            <button
+              className="avatar-btn"
+              title="Profile"
+              onClick={() => go("profile")}
+              style={{
+                width: 32, height: 32, borderRadius: '50%',
+                background: 'var(--accent)', color: 'var(--bg)',
+                display: 'grid', placeItems: 'center',
+                fontWeight: 700, fontSize: 13, border: 'none',
+                cursor: 'pointer', padding: 0
+              }}
+            >
+              {initial}
+            </button>
           </div>
         </div>
-        <div className="content" key={view}>{render()}</div>
+        <div
+          className={`ptr-indicator${ptrState === "pulling" ? " ptr-pulling" : ""}${ptrState === "active" ? " ptr-active" : ""}${ptrState === "refreshing" ? " ptr-refreshing ptr-active" : ""}${ptrState === "idle" && ptrHeight === 0 ? " ptr-snapping" : ""}`}
+          style={{ height: ptrState === "refreshing" ? 48 : ptrHeight }}
+        >
+          <div className="ptr-spinner" />
+        </div>
+        <div className={`content slide-${slideDir}`} key={view}><ErrorBoundary>{render()}</ErrorBoundary></div>
       </div>
 
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
+      <CommandPalette open={paletteOpen} onClose={() => window.history.back()} commands={commands} />
+
+      {/* ── Groww-style bottom nav (mobile only) ── */}
+      <nav className="bottom-nav" aria-label="Quick navigation">
+        {[
+          { key: "home", label: "Dashboard", icon: <Icon.home /> },
+          { key: "ipo", label: "IPO", icon: <Icon.rocket /> },
+          { key: "promoter", label: "Promoter", icon: <Icon.pulse /> },
+          { key: "bulk", label: "Bulk Deals", icon: <Icon.list /> },
+          { key: "block", label: "Block Deals", icon: <Icon.list /> },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            className={"bn-tab" + (view === tab.key ? " bn-active" : "")}
+            onClick={() => go(tab.key)}
+            aria-label={tab.label}
+          >
+            <span className="bn-icon">{tab.icon}</span>
+            <span className="bn-label">{tab.label}</span>
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }

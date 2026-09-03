@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { api, convLevel, convLabel } from "../api.js";
+import ChartModal from "../components/ChartModal.jsx";
+
 
 const PATTERN_LABELS = {
   pattern_cup_handle: "Cup and Handle",
@@ -14,6 +16,9 @@ export default function Scanner({ source, pattern, userId }) {
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [qty, setQty] = useState({});
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeChart, setActiveChart] = useState(null); // { id, symbol }
+
 
   const load = useCallback(() => {
     setLoading(true);
@@ -39,7 +44,7 @@ export default function Scanner({ source, pattern, userId }) {
       if (r.status === "already_running") {
         setMsg("A scan is already running — hang tight.");
       } else {
-        setMsg("Scan started. Signals will appear shortly — refreshing in 8s…");
+        setMsg("Scan started. Signals will appear shortly.");
         setTimeout(() => { setMsg(""); load(); }, 8000);
       }
     } catch (e) {
@@ -69,6 +74,14 @@ export default function Scanner({ source, pattern, userId }) {
         </div>
         <div className="row">
           {msg && <span className="msg">{msg}</span>}
+          <input
+            className="btn-sm"
+            type="text"
+            placeholder="Search symbol"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ minWidth: 150 }}
+          />
           <button className="btn-sm" onClick={runScan}>Run scan now</button>
           <button className="btn-sm" onClick={load}>Refresh</button>
         </div>
@@ -78,22 +91,28 @@ export default function Scanner({ source, pattern, userId }) {
         <div className="empty">No signals in the last 7 days.</div>
       ) : (
         <div className="panel">
-          <table>
+          <table className="scanner-table">
             <thead>
               <tr>
                 <th>Symbol</th><th>Signal</th><th>Timeframe</th>
                 {(source === "weekly" || source === "patterns") && <th>Conviction</th>}
-                <th>Scanner(s)</th><th>Candle date</th><th>Buy</th>
+                <th style={{ textAlign: "right" }}>Price</th>
+                <th>Scanner(s)</th><th>Candle date</th><th>Action</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((s) => (
+              {rows.filter((s) => (s.symbol || "").toLowerCase().includes(searchQuery.toLowerCase())).map((s) => (
                 <tr key={s.id}>
-                  <td>{s.symbol}</td>
-                  <td><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
-                  <td>{s.timeframe}</td>
+                  <td data-label="">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {s.symbol}
+                      <button className="btn-sm btn-ghost" style={{ padding: '2px 6px', fontSize: '11px' }} onClick={() => setActiveChart({ id: s.instrument_id, symbol: s.symbol, tf: s.timeframe })}>Chart</button>
+                    </div>
+                  </td>
+                  <td data-label="Signal"><span className={s.direction === "BUY" ? "tag tag-buy" : "tag tag-sell"}>{s.direction}</span></td>
+                  <td data-label="Timeframe">{s.timeframe}</td>
                   {(source === "weekly" || source === "patterns") && (
-                    <td>
+                    <td data-label="Conviction">
                       {convLevel(source, s.confidence) ? (
                         <span className={"conv conv-" + convLevel(source, s.confidence)}>
                           {convLabel(source, s.confidence)}
@@ -101,9 +120,12 @@ export default function Scanner({ source, pattern, userId }) {
                       ) : "—"}
                     </td>
                   )}
-                  <td className="muted">{PATTERN_LABELS[s.scanner_name] || s.scanner_name}</td>
-                  <td className="muted">{s.candle_date?.slice(0, 10)}</td>
-                  <td>
+                  <td data-label="Price" className="muted" style={{ textAlign: "right" }}>
+                    {s.price != null ? `₹${s.price.toFixed(2)}` : "—"}
+                  </td>
+                  <td data-label="Scanner(s)" className="muted">{PATTERN_LABELS[s.scanner_name] || s.scanner_name}</td>
+                  <td data-label="Candle date" className="muted">{s.candle_date?.slice(0, 10)}</td>
+                  <td data-label="Action">
                     {s.direction === "BUY" ? (
                       <div className="row" style={{ justifyContent: "flex-end" }}>
                         <input
@@ -121,6 +143,15 @@ export default function Scanner({ source, pattern, userId }) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {activeChart && (
+        <ChartModal
+          instrumentId={activeChart.id}
+          symbol={activeChart.symbol}
+          tf={activeChart.tf}
+          onClose={() => setActiveChart(null)}
+        />
       )}
     </div>
   );

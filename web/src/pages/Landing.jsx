@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
+import { Icon } from "../icons";
+import { publicLivePricesURL } from "../api.js";
 
 const inr = (n) => (n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -17,8 +19,9 @@ function useLiveStocks() {
     let ws = null;
     let retry = null;
 
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${proto}//${window.location.host}/v1/public/live-prices`;
+    // Must respect VITE_API_BASE_URL — the backend is a separate deployment
+    // from this static frontend (e.g. a Cloudflare tunnel), not the same host.
+    const url = publicLivePricesURL();
 
     const connect = () => {
       if (stopped) return;
@@ -30,7 +33,10 @@ function useLiveStocks() {
         if (!msg) return;
 
         if (msg.type === "snapshot") {
-          const list = (msg.rows || []).slice(0, 8).map((p) => {
+          // No client-side cap here — the backend already caps at
+          // instruments.MaxFeatured (10) when serving the admin-curated
+          // featured list; slicing again here would silently hide some.
+          const list = (msg.rows || []).map((p) => {
             prevClose.current[p.symbol] = p.prev_close || p.last_close || p.price || 0;
             return { sym: p.symbol, px: p.price || 0, chg: p.pct_change || 0, rsi: p.rsi14 || 0, dir: 0 };
           });
@@ -69,7 +75,7 @@ function signalFor(chg, rsi) {
   return "—";
 }
 
-export default function Landing({ onGetStarted }) {
+export default function Landing({ onGetStarted, theme, onToggleTheme }) {
   const { rows, live } = useLiveStocks();
   const [scrolled, setScrolled] = useState(false);
   const dashRef = useRef(null);
@@ -95,8 +101,14 @@ export default function Landing({ onGetStarted }) {
             <a onClick={() => scrollTo(dashRef)}>Live scanner</a>
             <a href="#features">Features</a>
             <a href="#how">How it works</a>
+            <a href="/ipo">IPO Tracker</a>
+            <a href="/promoter-trades">Promoter Buying</a>
+            <a href="/bulk-deals">Bulk Deals</a>
           </nav>
           <div className="lp-nav-cta">
+            <button className="icon-btn" title="Toggle theme" onClick={onToggleTheme}>
+              {theme === "dark" ? <Icon.sun /> : <Icon.moon />}
+            </button>
             <button className="lp-ghost" onClick={onGetStarted}>Log in</button>
             <button className="lp-primary" onClick={onGetStarted}>Get started</button>
           </div>
@@ -109,7 +121,7 @@ export default function Landing({ onGetStarted }) {
         <div className="lp-hero-grid">
           <div className="lp-hero-copy">
             <span className="lp-kicker">// NSE + BSE · REAL-TIME SCANNER</span>
-            <h1 className="lp-title">Catch the move<br />before the <span className="grad">crowd does.</span></h1>
+            <h1 className="lp-title">Catch the move<br />before the <span className="grad">crowd</span> does.</h1>
             <p className="lp-lead">
               TradeNexus scans every NSE &amp; BSE stock across daily, weekly and monthly timeframes —
               Chase-Momentum Pine logic, four weekly confluence scanners, and confirmed chart-pattern
@@ -170,6 +182,27 @@ export default function Landing({ onGetStarted }) {
         )}
       </section>
 
+      {/* FREE TOOLS — no login required, this is the whole point: a visitor
+          with no account and no URL needs an obvious, clicked-not-typed path
+          to these pages, right below the fold. */}
+      <section className="lp-sec">
+        <div className="lp-sec-head">
+          <span className="lp-kicker">// FREE · NO SIGNUP</span>
+          <h2>Browse these live, no account needed.</h2>
+          <p>Public data, updated in real time — click straight in.</p>
+        </div>
+        <div className="lp-feat-grid lp-free-grid">
+          {FREE_TOOLS.map((t) => (
+            <a className="lp-feat" href={t.href} key={t.href}>
+              <div className="lp-feat-ic">{t.icon}</div>
+              <h3>{t.title}</h3>
+              <p>{t.desc}</p>
+              <span className="lp-free-go">Open free →</span>
+            </a>
+          ))}
+        </div>
+      </section>
+
       {/* LIVE DASHBOARD PREVIEW */}
       <section className="lp-sec" ref={dashRef}>
         <div className="lp-sec-head">
@@ -180,7 +213,6 @@ export default function Landing({ onGetStarted }) {
         <div className="lp-dash">
           <div className="lp-dash-top">
             <span className="lp-live"><i /> {live ? "LIVE" : "CONNECTING"}</span>
-            <span className="lp-dash-sub">NSE top movers · same live feed as the dashboard</span>
           </div>
           <table className="lp-dash-table">
             <thead>
@@ -266,11 +298,18 @@ export default function Landing({ onGetStarted }) {
   );
 }
 
+const FREE_TOOLS = [
+  { href: "/ipo", icon: <Icon.rocket />, title: "IPO Tracker", desc: "Live GMP, subscription numbers and listing dates for every open & upcoming IPO." },
+  { href: "/promoter-trades", icon: <Icon.trending />, title: "Promoter Buying", desc: "Which promoters are buying their own stock, and by how much — updated live." },
+  { href: "/bulk-deals", icon: <Icon.list />, title: "Bulk Deals", desc: "Every bulk deal reported on the NSE, as it's filed." },
+  { href: "/block-deals", icon: <Icon.list />, title: "Block Deals", desc: "Every block deal reported on the NSE, as it's filed." },
+];
+
 const FEATURES = [
-  { icon: "◈", title: "Pine Chase Momentum", desc: "The full Chase-Momentum Pro strategy replayed on daily, weekly & monthly bars — trend stack, fresh breakout, volume spike and strong-candle confirmation." },
-  { icon: "▤", title: "4 weekly confluence scanners", desc: "52-week breakouts, EMA-stack continuation and price-action structure. Confidence is N-of-4, so you see how many independent signals agree." },
-  { icon: "◭", title: "Confirmed pattern breakouts", desc: "Cup & handle, rectangle box and downtrend breakouts — only fired on a closed, confirmed breakout candle, not a forming one." },
-  { icon: "✈", title: "Telegram alerts", desc: "Rich alerts with conviction, RSI, relative volume and CMP — deduped per stock, timeframe and day, delivered within a 7-day freshness window." },
-  { icon: "◐", title: "Paper trading", desc: "Buy any signal on paper, track booked & unbooked P&L, and see which scanners actually make you money before risking real capital." },
-  { icon: "🚀", title: "IPO GMP tracker", desc: "Live grey-market premium for every open & upcoming IPO, with an automatic apply signal on the closing day when the premium justifies it." },
+  { icon: <Icon.trending />, title: "Pine Chase Momentum", desc: "The full Chase-Momentum Pro strategy replayed on daily, weekly & monthly bars — trend stack, fresh breakout, volume spike and strong-candle confirmation." },
+  { icon: <Icon.list />, title: "4 weekly confluence scanners", desc: "52-week breakouts, EMA-stack continuation and price-action structure. Confidence is N-of-4, so you see how many independent signals agree." },
+  { icon: <Icon.chart />, title: "Confirmed pattern breakouts", desc: "Cup & handle, rectangle box and downtrend breakouts — only fired on a closed, confirmed breakout candle, not a forming one." },
+  { icon: <Icon.fire />, title: "Telegram alerts", desc: "Rich alerts with conviction, RSI, relative volume and CMP — deduped per stock, timeframe and day, delivered within a 7-day freshness window." },
+  { icon: <Icon.wallet />, title: "Paper trading", desc: "Buy any signal on paper, track booked & unbooked P&L, and see which scanners actually make you money before risking real capital." },
+  { icon: <Icon.rocket />, title: "IPO GMP tracker", desc: "Live grey-market premium for every open & upcoming IPO, with an automatic apply signal on the closing day when the premium justifies it." },
 ];

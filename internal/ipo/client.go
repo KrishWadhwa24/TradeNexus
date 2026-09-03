@@ -234,7 +234,7 @@ var (
 	reBold      = regexp.MustCompile(`<b>(.*?)</b>`)
 	reBoard     = regexp.MustCompile(`bg-secondary[^>]*>([^<]+)</span>`)
 	reFire      = regexp.MustCompile(`&#128293;`)
-	reStatusLet = regexp.MustCompile(`ms-2">([UOC])</span>`)
+	reStatusLet = regexp.MustCompile(`ms-2">(CT|[UOC])</span>`)
 )
 
 func cleanRow(m map[string]any) IPO {
@@ -264,7 +264,9 @@ func cleanRow(m map[string]any) IPO {
 }
 
 // statusFromName derives lifecycle from the badges in the Name HTML.
-// Listed rows show "L@<price>"; otherwise a single-letter badge U/O/C.
+// Listed rows show "L@<price>"; otherwise a badge U/O/C/CT. "CT" (closing
+// today) is InvestorGain's marker for an IPO on its last bidding day — still
+// open, so it maps to "open" rather than "closed".
 func statusFromName(nameHTML string) string {
 	if strings.Contains(nameHTML, "L@") {
 		return "listed"
@@ -273,7 +275,7 @@ func statusFromName(nameHTML string) string {
 		switch m[1] {
 		case "U":
 			return "upcoming"
-		case "O":
+		case "O", "CT":
 			return "open"
 		case "C":
 			return "closed"

@@ -2,6 +2,9 @@ import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../api.js";
 import { Icon } from "../icons.jsx";
+import { SkeletonGrid } from "../Skeleton.jsx";
+import ShareButton from "../components/ShareButton.jsx";
+import { shareIpoCard } from "../shareCard.js";
 
 function gmpLevel(pct) {
   if (pct >= 20) return "high";
@@ -47,6 +50,11 @@ function SubscriptionModal({ ipo, onClose }) {
     ["NII", ipo.nii],
     ["RII", ipo.rii],
   ];
+
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
   // Rendered via a portal straight onto <body> — modals must never inherit
   // an ancestor's layout (a page with tall scrollable content can otherwise
   // throw off a plain `position: fixed` centering, depending on the browser).
@@ -95,13 +103,35 @@ function SubscriptionModal({ ipo, onClose }) {
   );
 }
 
-export default function IPO({ isAdmin = false }) {
+export default function IPO({ isAdmin = false, initialName = null }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  function openModal(x) {
+    setSelected(x);
+    window.history.pushState({ view: "ipo", modal: "details" }, "");
+  }
+
+  function closeModal() {
+    // Going back will trigger the popstate listener to clear `selected`
+    window.history.back();
+  }
+
+  // Handle browser back button to close modal without leaving the page
+  useEffect(() => {
+    const onPop = () => {
+      if (selected) {
+        setSelected(null);
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [selected]);
 
   function load() {
     setLoading(true);
@@ -114,6 +144,15 @@ export default function IPO({ isAdmin = false }) {
   }
 
   useEffect(load, []);
+
+  // Deep link support (e.g. /ipo/Tempsens%20Instruments): open straight to
+  // the matching IPO's detail once the list has loaded.
+  useEffect(() => {
+    if (!initialName || !rows.length) return;
+    const match = rows.find((r) => r.name.toLowerCase() === initialName.toLowerCase());
+    if (match) openModal(match);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialName, rows]);
 
   async function refresh() {
     setMsg("Refreshing feed…");
@@ -160,27 +199,43 @@ export default function IPO({ isAdmin = false }) {
         <div className="section-title" style={{ margin: 0 }}>Open &amp; upcoming IPOs — live GMP</div>
         <div className="row">
           {msg && <span className="msg">{msg}</span>}
+          <input
+            className="btn-sm"
+            type="text"
+            placeholder="Search IPO"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ minWidth: 150 }}
+          />
           {isAdmin && <button className="btn-sm" onClick={refresh}>Refresh feed</button>}
           <button className="btn-sm" onClick={load}>Reload</button>
         </div>
       </div>
 
       {loading ? (
-        <div className="spinner">Loading IPOs…</div>
+        <SkeletonGrid count={6} lines={5} />
       ) : err ? (
         <div className="err">{err}</div>
       ) : !rows.length ? (
         <div className="empty">No open or upcoming IPOs right now.</div>
       ) : (
         <div className="ipo-grid">
-          {rows.map((x) => {
+          {rows.filter((x) => (x.name || "").toLowerCase().includes(searchQuery.toLowerCase())).map((x) => {
             const profit = estProfit(x);
             const hasGmp = x.gmp > 0 || x.gmp_percent > 0;
             return (
-              <div className={"ipo-card" + (x.status === "open" ? " is-open" : "")} key={x.id}>
+              <div
+                className="ipo-card clickable"
+                key={x.id}
+                onClick={() => openModal(x)}
+              >
+                <div className="ipo-share-corner" onClick={(e) => e.stopPropagation()}>
+                  <ShareButton share={() => shareIpoCard(x)} title="Share this IPO's card" />
+                </div>
+
                 <div className="ipo-card-top">
                   <div className="ipo-id">
-                    <button className="ipo-name ipo-name-btn" onClick={() => setSelected(x)}>{x.name}</button>
+                    <span className="ipo-name">{x.name}</span>
                     <div className="ipo-badges">
                       <span className="chip">{x.board || x.category}</span>
                       <span className={"chip " + (x.status === "open" ? "chip-open" : "chip-soon")}>{x.status}</span>
@@ -224,37 +279,37 @@ export default function IPO({ isAdmin = false }) {
                   <span><b>Lists</b> {fmtDate(x.listing_date)}</span>
                 </div>
 
-                {(x.signal_tier || isAdmin) && (
-                  <div className="ipo-foot">
-                    {x.signal_tier && (
-                      <span className={"conv conv-" + gmpLevel(x.gmp_percent)}>
-                        {TIER_LABEL[x.signal_tier] || x.signal_tier}
-                        {isAdmin && (
-                          <button
-                            className="conv-x"
-                            title="Remove this signal for all users (does not touch Telegram)"
-                            disabled={busy === x.id}
-                            onClick={() => clearSignal(x)}
-                          >
-                            ×
-                          </button>
-                        )}
-                      </span>
-                    )}
-                    {isAdmin && (
-                      <button className="btn-sm btn-primary" disabled={busy === x.id} onClick={() => apply(x)}>
-                        {busy === x.id ? "Sending…" : "Send Apply"}
-                      </button>
-                    )}
-                  </div>
-                )}
+                <div className="ipo-foot" onClick={(e) => e.stopPropagation()}>
+                  <button className="btn-sm" onClick={() => openModal(x)}>Details</button>
+
+                  {x.signal_tier && (
+                    <span className={"conv conv-" + gmpLevel(x.gmp_percent)} style={{ marginLeft: "auto" }}>
+                      {TIER_LABEL[x.signal_tier] || x.signal_tier}
+                      {isAdmin && (
+                        <button
+                          className="conv-x"
+                          title="Remove this signal for all users (does not touch Telegram)"
+                          disabled={busy === x.id}
+                          onClick={() => clearSignal(x)}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </span>
+                  )}
+                  {isAdmin && (
+                    <button className="btn-sm btn-primary" disabled={busy === x.id} onClick={() => apply(x)}>
+                      {busy === x.id ? "Sending…" : "Send Apply"}
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
         </div>
       )}
 
-      {selected && <SubscriptionModal ipo={selected} onClose={() => setSelected(null)} />}
+      {selected && <SubscriptionModal ipo={selected} onClose={closeModal} />}
     </div>
   );
 }

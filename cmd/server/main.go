@@ -19,9 +19,13 @@ import (
 	"tradenexus/internal/calendar"
 	"tradenexus/internal/candles"
 	"tradenexus/internal/config"
+	"tradenexus/internal/deals"
 	"tradenexus/internal/engine"
+	"tradenexus/internal/fiidii"
+	"tradenexus/internal/insights"
 	"tradenexus/internal/instruments"
 	"tradenexus/internal/intraday"
+	"tradenexus/internal/investors"
 	"tradenexus/internal/ipo"
 	"tradenexus/internal/live"
 	"tradenexus/internal/logger"
@@ -119,6 +123,7 @@ func main() {
 			pg.Pool, notify.NewTelegram(cfg.TelegramBaseURL), cfg.NotifyWindowDays,
 			cfg.TelegramDefaultBotToken, cfg.TelegramDefaultChatID,
 			cfg.TelegramStockSignalsThreadID, cfg.TelegramIPOAlertsThreadID, cfg.TelegramPromoterThreadID,
+			cfg.TelegramBulkDealsThreadID, cfg.TelegramBlockDealsThreadID,
 			log,
 		)
 	}
@@ -174,14 +179,54 @@ func main() {
 		promoterSvc.StartPolling(ctx)
 	}
 
+	// Big-investor portfolio tracker (NSE quarterly shareholding-pattern feed).
+	var investorsSvc *investors.Service
+	if cfg.InvestorsEnabled {
+		investorsSvc = investors.New(investors.NewClient(), investors.NewRepo(pg.Pool), log)
+		investorsSvc.StartPolling(ctx)
+	}
+
+	// Bulk & block deals tracker (NSE historical bulk-block CSV feed).
+	var dealsSvc *deals.Service
+	if cfg.DealsEnabled {
+		var bulkBC, blockBC deals.Broadcaster // true-nil interfaces if notify is off
+		if dispatcher != nil {
+			bulkBC = notify.BulkDealsBroadcaster{D: dispatcher}
+			blockBC = notify.BlockDealsBroadcaster{D: dispatcher}
+		}
+		dealsSvc = deals.New(deals.NewClient(), deals.NewRepo(pg.Pool), bulkBC, blockBC,
+			cfg.DealsRetentionDays, cfg.DealsAlertWindowDays, cfg.BulkDealMinNetValue, cfg.DealsAlertCron, log)
+		dealsSvc.StartPolling(ctx)
+	}
+
+	// Insights: read-only cross-signal analytics (scanner performance,
+	// confluence board, market breadth) + a daily signal-outcome recorder.
+	insightsSvc := insights.New(pg.Pool, cfg.BulkDealMinNetValue, log)
+	insightsSvc.StartRecorder(ctx)
+
+	// FII/DII daily cash-market activity (NSE feed). Only the latest snapshot
+	// is kept in memory; the per-date alert ledger is in Postgres so a
+	// restart never re-sends an alert already sent for that date.
+	var fiidiiSvc *fiidii.Service
+	if cfg.FiiDiiEnabled {
+		var fiidiiBC fiidii.Broadcaster // keep a true-nil interface if notify is off
+		if dispatcher != nil {
+			fiidiiBC = notify.StockBroadcaster{D: dispatcher}
+		}
+		fiidiiSvc = fiidii.New(fiidii.NewClient(), fiidiiBC, calSvc.Cal(), cfg.MarketCloseBufferMin, fiidii.NewRepo(pg.Pool), log)
+		fiidiiSvc.StartPolling(ctx)
+	}
+
 	// 8) Scheduler (daily scan + cleanup + startup reconciliation + fill).
-	sched := scheduler.New(engineSvc, paperSvc, intradayCache, scheduler.Config{
-		Enabled:            cfg.SchedulerEnabled,
-		DailyScanCron:      cfg.DailyScanCron,
-		CleanupCron:        cfg.CleanupCron,
-		FillScheduledCron:  cfg.FillScheduledCron,
-		IntradayInterval:   cfg.IntradayCacheInterval,
-		RunReconcileOnBoot: cfg.ReconcileOnStartup,
+	sched := scheduler.New(engineSvc, paperSvc, intradayCache, fiidiiSvc, scheduler.Config{
+		Enabled:                cfg.SchedulerEnabled,
+		DailyScanCron:          cfg.DailyScanCron,
+		CleanupCron:            cfg.CleanupCron,
+		FillScheduledCron:      cfg.FillScheduledCron,
+		SquareOffIntradayCron:  cfg.SquareOffIntradayCron,
+		PaperFillRetryInterval: cfg.PaperFillRetryInterval,
+		IntradayInterval:       cfg.IntradayCacheInterval,
+		RunReconcileOnBoot:     cfg.ReconcileOnStartup,
 	}, log)
 	if err := sched.Start(ctx); err != nil {
 		log.Fatal().Err(err).Msg("start scheduler")
@@ -192,24 +237,29 @@ func main() {
 	srv := &http.Server{
 		Addr: ":" + cfg.HTTPPort,
 		Handler: api.NewServer(api.Deps{
-			Log:         log,
-			PG:          pg,
-			RDB:         rdb,
-			Limiter:     angelLimiter,
-			Angel:       angelClient,
-			Instruments: instRepo,
-			Candles:     candleRepo,
-			Engine:      engineSvc,
-			Signals:     signalRepo,
-			Calendar:    calSvc,
-			Users:       userRepo,
-			Notifier:    dispatcher,
-			Analytics:   analyticsSvc,
-			Paper:       paperSvc,
-			Live:        liveHub,
-			IPO:         ipoSvc,
-			Promoter:    promoterSvc,
-			JWTSecret:   cfg.JWTSecret,
+			Log:            log,
+			PG:             pg,
+			RDB:            rdb,
+			Limiter:        angelLimiter,
+			Angel:          angelClient,
+			Instruments:    instRepo,
+			Candles:        candleRepo,
+			Engine:         engineSvc,
+			Signals:        signalRepo,
+			Calendar:       calSvc,
+			Users:          userRepo,
+			Notifier:       dispatcher,
+			Analytics:      analyticsSvc,
+			Paper:          paperSvc,
+			Live:           liveHub,
+			IPO:            ipoSvc,
+			Promoter:       promoterSvc,
+			Deals:          dealsSvc,
+			Investors:      investorsSvc,
+			Insights:       insightsSvc,
+			FiiDii:         fiidiiSvc,
+			JWTSecret:      cfg.JWTSecret,
+			GoogleClientID: cfg.GoogleClientID,
 		}).Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -239,3 +289,5 @@ func main() {
 	}
 	log.Info().Msg("bye")
 }
+
+//end

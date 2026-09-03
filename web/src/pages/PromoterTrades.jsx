@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api.js";
+import { SkeletonGrid } from "../Skeleton.jsx";
 
 const DAY_OPTIONS = [7, 15, 30, 60];
 
@@ -36,7 +37,7 @@ function isBuy(eventType) {
   return eventType.endsWith("_buy");
 }
 
-export default function PromoterTrades({ isAdmin = false }) {
+export default function PromoterTrades({ isAdmin = false, initialSymbol = null, publicView = false }) {
   const [days, setDays] = useState(30);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -45,6 +46,7 @@ export default function PromoterTrades({ isAdmin = false }) {
   const [busy, setBusy] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [filter, setFilter] = useState("all"); // all | buy | sell
+  const [searchQuery, setSearchQuery] = useState(initialSymbol || "");
 
   function load(d = days) {
     setLoading(true);
@@ -86,9 +88,13 @@ export default function PromoterTrades({ isAdmin = false }) {
     }
   }
 
-  const visible = rows.filter((x) => filter === "all" || (filter === "buy") === isBuy(x.event_type));
-  const buyCount = rows.filter((x) => isBuy(x.event_type)).length;
-  const sellCount = rows.length - buyCount;
+  const filteredBySearch = rows.filter((x) => 
+    (x.symbol || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (x.company_name || "").toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  const visible = filteredBySearch.filter((x) => filter === "all" || (filter === "buy") === isBuy(x.event_type));
+  const buyCount = filteredBySearch.filter((x) => isBuy(x.event_type)).length;
+  const sellCount = filteredBySearch.length - buyCount;
 
   return (
     <div>
@@ -96,12 +102,22 @@ export default function PromoterTrades({ isAdmin = false }) {
         <div className="section-title" style={{ margin: 0 }}>Promoter &amp; Director/KMP market buys and sells — NSE PIT feed</div>
         <div className="row">
           {msg && <span className="msg">{msg}</span>}
+          <input
+            className="btn-sm"
+            type="text"
+            placeholder="Search symbol/company"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ minWidth: 150 }}
+          />
           <select className="btn-sm" value={days} onChange={(e) => setDays(Number(e.target.value))}>
             {DAY_OPTIONS.map((d) => <option key={d} value={d}>{d} days</option>)}
           </select>
-          <button className="btn-sm btn-primary" disabled={scanning} onClick={scanNow}>
-            {scanning ? "Scanning…" : "Scan now"}
-          </button>
+          {!publicView && (
+            <button className="btn-sm btn-primary" disabled={scanning} onClick={scanNow}>
+              {scanning ? "Scanning…" : "Scan now"}
+            </button>
+          )}
           <button className="btn-sm" onClick={() => load()}>Reload</button>
         </div>
       </div>
@@ -121,7 +137,7 @@ export default function PromoterTrades({ isAdmin = false }) {
       )}
 
       {loading ? (
-        <div className="spinner">Loading promoter trades…</div>
+        <SkeletonGrid count={6} lines={5} />
       ) : err ? (
         <div className="err">{err}</div>
       ) : !visible.length ? (
@@ -132,7 +148,7 @@ export default function PromoterTrades({ isAdmin = false }) {
             const buy = isBuy(x.event_type);
             const qtyDelta = (x.qty_after || 0) - (x.qty_before || 0);
             return (
-              <div className={"promoter-card" + (buy ? " is-buy" : " is-sell")} key={x.id}>
+              <div className="promoter-card" key={x.id}>
                 <div className="promoter-card-top">
                   <div>
                     <span className="promoter-symbol">{x.symbol}</span>

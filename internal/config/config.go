@@ -57,18 +57,34 @@ type Config struct {
 
 	// Auth
 	JWTSecret string `env:"JWT_SECRET" envDefault:"dev-change-me-please"`
+	// GoogleClientID is the OAuth client ID for "Sign in with Google" — public
+	// value (safe to also expose to the frontend), used to check the "aud"
+	// claim on a Google ID token so we only accept tokens issued for this app.
+	GoogleClientID string `env:"GOOGLE_CLIENT_ID" envDefault:""`
 
 	// Admin bootstrap: if both are set, an admin account is upserted on boot.
 	AdminEmail    string `env:"ADMIN_EMAIL" envDefault:""`
 	AdminPassword string `env:"ADMIN_PASSWORD" envDefault:""`
 
 	// Scanner / scheduler
-	SchedulerEnabled   bool   `env:"SCHEDULER_ENABLED" envDefault:"true"`
-	DailyScanCron      string `env:"DAILY_SCAN_CRON" envDefault:"0 16 * * 1-5"`
-	CleanupCron        string `env:"CLEANUP_CRON" envDefault:"0 1 * * *"`
-	FillScheduledCron  string `env:"FILL_SCHEDULED_CRON" envDefault:"16 9 * * 1-5"`
-	RetentionDays      int    `env:"RETENTION_DAYS" envDefault:"30"`
-	ReconcileOnStartup bool   `env:"RECONCILE_ON_STARTUP" envDefault:"true"`
+	SchedulerEnabled  bool   `env:"SCHEDULER_ENABLED" envDefault:"true"`
+	DailyScanCron     string `env:"DAILY_SCAN_CRON" envDefault:"0 16 * * 1-5"`
+	CleanupCron       string `env:"CLEANUP_CRON" envDefault:"0 1 * * *"`
+	FillScheduledCron string `env:"FILL_SCHEDULED_CRON" envDefault:"16 9 * * 1-5"`
+	// SquareOffIntradayCron force-closes any still-OPEN intraday paper
+	// position (long or short) at 3:20pm IST — matches real brokers' MIS
+	// auto square-off time. See internal/paper/intraday.go.
+	SquareOffIntradayCron string `env:"SQUARE_OFF_INTRADAY_CRON" envDefault:"20 15 * * 1-5"`
+	// PaperFillRetryInterval re-runs the scheduled-fill jobs (FillScheduled,
+	// FillScheduledCloses) on this cadence throughout market hours — a
+	// backstop for FillScheduledCron: if that single 9:16am tick fails (a
+	// transient price-lookup error, a DB hiccup) or a per-row fill fails
+	// silently, nothing else retries it until the next trading day's cron.
+	// This closes that gap. Both fill functions are idempotent (they only
+	// ever act on rows still SCHEDULED/pending), so a no-op retry is cheap.
+	PaperFillRetryInterval time.Duration `env:"PAPER_FILL_RETRY_INTERVAL" envDefault:"5m"`
+	RetentionDays          int           `env:"RETENTION_DAYS" envDefault:"100"`
+	ReconcileOnStartup     bool          `env:"RECONCILE_ON_STARTUP" envDefault:"true"`
 
 	// Intraday cache (today's forming candle in Redis, market hours only)
 	IntradayCacheEnabled  bool          `env:"INTRADAY_CACHE_ENABLED" envDefault:"true"`
@@ -87,6 +103,9 @@ type Config struct {
 	PromoterAlertWindowDays int           `env:"PROMOTER_ALERT_WINDOW_DAYS" envDefault:"15"`
 	PromoterRetentionDays   int           `env:"PROMOTER_RETENTION_DAYS" envDefault:"60"`
 
+	// Big-investor portfolio tracker (NSE quarterly shareholding-pattern feed)
+	InvestorsEnabled bool `env:"INVESTORS_ENABLED" envDefault:"true"`
+
 	// Notifications (Module 7)
 	NotifyEnabled    bool   `env:"NOTIFY_ENABLED" envDefault:"true"`
 	NotifyWindowDays int    `env:"NOTIFY_WINDOW_DAYS" envDefault:"7"`
@@ -102,6 +121,20 @@ type Config struct {
 	TelegramStockSignalsThreadID int `env:"TELEGRAM_STOCK_SIGNALS_THREAD_ID" envDefault:"0"`
 	TelegramIPOAlertsThreadID    int `env:"TELEGRAM_IPO_ALERTS_THREAD_ID" envDefault:"0"`
 	TelegramPromoterThreadID     int `env:"TELEGRAM_PROMOTER_THREAD_ID" envDefault:"0"`
+	TelegramBulkDealsThreadID    int `env:"TELEGRAM_BULK_DEALS_THREAD_ID" envDefault:"0"`
+	TelegramBlockDealsThreadID   int `env:"TELEGRAM_BLOCK_DEALS_THREAD_ID" envDefault:"0"`
+
+	// Bulk & block deals tracker (NSE historical bulk-block CSV feed).
+	DealsEnabled         bool    `env:"DEALS_ENABLED" envDefault:"true"`
+	DealsRetentionDays   int     `env:"DEALS_RETENTION_DAYS" envDefault:"30"`
+	DealsAlertWindowDays int     `env:"DEALS_ALERT_WINDOW_DAYS" envDefault:"7"`        // alert stocks dealt within N days
+	DealsAlertCron       string  `env:"DEALS_ALERT_CRON" envDefault:"0 19 * * *"`      // 19:00 IST daily
+	BulkDealMinNetValue  float64 `env:"BULK_DEAL_MIN_NET_VALUE" envDefault:"50000000"` // ₹5cr net-value filter
+
+	// FII/DII daily cash-market activity (NSE fiidiiTradeReact feed). No history
+	// is kept — only the latest snapshot — and no interval/cron is configurable:
+	// it only ever polls after 4pm IST on a trading day, hourly until published.
+	FiiDiiEnabled bool `env:"FIIDII_ENABLED" envDefault:"true"`
 }
 
 // IsLocal reports whether we're running in the local dev profile.
