@@ -60,6 +60,30 @@ export default function Admin() {
     finally { setPbBusy(false); }
   }
 
+  // Big investor holdings: unlike the two backfills above (which aggregate
+  // from already-ingested local data, so they finish within the request),
+  // this polls NSE's shareholding-pattern feed live — cooldown-guarded and
+  // runs in the background (see internal/investors.Service.RefreshNow), so
+  // the response just confirms it started, not that it's done.
+  const [invBusy, setInvBusy] = useState(false);
+  const [invMsg, setInvMsg] = useState("");
+  const [invErr, setInvErr] = useState("");
+
+  async function refreshInvestors() {
+    setInvBusy(true); setInvMsg(""); setInvErr("");
+    try {
+      await api.post("/v1/admin/big-investors/refresh", {});
+      setInvMsg("Refresh started — this polls NSE live and runs in the background, check the Big Investor Portfolios page in a bit.");
+    } catch (e) { setInvErr(e.message); }
+    finally { setInvBusy(false); }
+  }
+
+  useEffect(() => {
+    if (!invMsg) return;
+    const t = setTimeout(() => setInvMsg(""), 6000);
+    return () => clearTimeout(t);
+  }, [invMsg]);
+
   async function searchFeatured(e) {
     const v = e.target.value;
     setFq(v);
@@ -232,6 +256,19 @@ export default function Admin() {
         </button>
         {pbMsg && <div className="msg" style={{ marginTop: 12 }}>{pbMsg}</div>}
         {pbErr && <div className="err" style={{ marginTop: 12 }}>{pbErr}</div>}
+      </div>
+
+      <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+        <div className="section-title" style={{ margin: "0 0 6px" }}>Big investor holdings</div>
+        <div className="subtle" style={{ marginBottom: 14 }}>
+          Polls NSE's quarterly shareholding-pattern feed for the last 30 days, cooldown-guarded
+          (max once every 2 minutes) — runs in the background, so this just confirms it started.
+        </div>
+        <button className="btn-sm btn-primary" onClick={refreshInvestors} disabled={invBusy}>
+          {invBusy ? "Starting…" : "Refresh big investor holdings"}
+        </button>
+        {invMsg && <div className="msg" style={{ marginTop: 12 }}>{invMsg}</div>}
+        {invErr && <div className="err" style={{ marginTop: 12 }}>{invErr}</div>}
       </div>
 
       <div className="panel" style={{ padding: 20, marginBottom: 20 }}>

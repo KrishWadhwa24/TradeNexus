@@ -93,20 +93,28 @@ function drawStockCharts(ctx, byValue, byIncrease, { x, y, w, h, holeColor, mute
   ctx.fillStyle = holeColor;
   ctx.fill();
 
-  const barX = pieCx + pieR + 34;
+  const barAreaLeft = pieCx + pieR + 34;
+  const barAreaRight = x + w;
   const barTop = y + 6;
   const barBottom = y + h - 55;
   const zeroY = (barTop + barBottom) / 2;
   const maxAbs = Math.max(1, ...byIncrease.map((p) => Math.abs(p.point_increase)));
   const n = byIncrease.length;
   const gap = 8;
-  const bw = Math.max(6, (x + w - barX - gap * (n - 1)) / n);
+  // Capped, not stretched to fill the row — with only 1-2 people, dividing
+  // the full available width by n produced giant slab-like bars instead of
+  // a normal-looking chart. Cap the width and center the (now narrower)
+  // group in the same area instead.
+  const maxBarWidth = 56;
+  const bw = Math.min(maxBarWidth, Math.max(6, (barAreaRight - barAreaLeft - gap * (n - 1)) / n));
+  const groupWidth = n * bw + (n - 1) * gap;
+  const barX = barAreaLeft + Math.max(0, (barAreaRight - barAreaLeft - groupWidth) / 2);
   ctx.save();
   ctx.globalAlpha = 0.4;
   ctx.strokeStyle = mutedColor;
   ctx.beginPath();
-  ctx.moveTo(barX, zeroY);
-  ctx.lineTo(x + w, zeroY);
+  ctx.moveTo(barAreaLeft, zeroY);
+  ctx.lineTo(barAreaRight, zeroY);
   ctx.stroke();
   ctx.restore();
   byIncrease.forEach((p, i) => {
