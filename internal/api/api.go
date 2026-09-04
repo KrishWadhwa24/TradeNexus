@@ -309,6 +309,10 @@ func (s *Server) Router() http.Handler {
 				// Phase 2 live-verification for option chain + strike selection.
 				r.Get("/admin/optionsalgo/option-chain", s.handleOptionsAlgoOptionChain)
 
+				// Phase 3 live-verification for the full direction -> chain
+				// -> select -> entry pipeline.
+				r.Get("/admin/optionsalgo/entry", s.handleOptionsAlgoEntry)
+
 				// Phase 0 live-verification for the two new Angel
 				// integrations (quote-full, option greeks) — manual testing
 				// only, no real callers, same purpose as /admin/angel/historical.

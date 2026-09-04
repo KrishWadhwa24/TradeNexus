@@ -14,6 +14,21 @@ func mkCandle(t time.Time, o, h, l, c float64, vol int64) market.Candle {
 
 func closeEnough(a, b float64) bool { return math.Abs(a-b) < 0.01 }
 
+// testConfig returns the script's exact default values — used wherever a
+// test needs an AlgoConfig but isn't specifically testing configurability.
+func testConfig() AlgoConfig {
+	return AlgoConfig{
+		RiskPerTradePercent: 1.0, MaxDailyLossPercent: 2.0, MaxWeeklyLossPercent: 5.0,
+		InitialStopLossPercent: 20.0, BreakevenTriggerPercent: 25.0,
+		TrailingTriggerPercent: 40.0, TrailingDistancePercent: 25.0,
+		DeltaTarget: 0.60, DeltaMin: 0.55, DeltaMax: 0.70,
+		MaxSpreadPercent: 1.0, MinVolumeMultiplier: 1.2,
+		EMAFastPeriod: 20, EMASlowPeriod: 50, ATRPeriod: 14, ATRAvgSpan: 20,
+		ORStartHour: 9, ORStartMin: 15, OREndHour: 9, OREndMin: 45, ORMinRangePercent: 0.15,
+		MaxDistanceFromVWAPATR: 1.5, StrikesEachSide: 5, MaxTradesPerDay: 1,
+	}
+}
+
 func TestAggregate15Min(t *testing.T) {
 	base := time.Date(2026, 9, 4, 9, 15, 0, 0, market.IST)
 	var oneMin []market.Candle
@@ -150,7 +165,7 @@ func TestBuildOpeningRange(t *testing.T) {
 		mk(9, 45, 200, 200), // window is [09:15,09:45) - this bar excluded
 		mk(9, 50, 300, 300), // after window - excluded
 	}
-	or := BuildOpeningRange(cs, day)
+	or := BuildOpeningRange(cs, day, testConfig())
 	if or.High != 110 {
 		t.Errorf("High = %v, want 110", or.High)
 	}
@@ -167,15 +182,15 @@ func TestBuildOpeningRange_TooTight(t *testing.T) {
 	day := time.Date(2026, 9, 4, 0, 0, 0, 0, market.IST)
 	ts := time.Date(2026, 9, 4, 9, 20, 0, 0, market.IST)
 	cs := []market.Candle{mkCandle(ts, 100, 100.05, 99.98, 100, 1)} // ~0.07% range
-	or := BuildOpeningRange(cs, day)
+	or := BuildOpeningRange(cs, day, testConfig())
 	if or.Valid {
-		t.Errorf("expected Valid=false for a %.3f%% range (< %.2f%% minimum)", or.RangePercent, orMinRangePercent)
+		t.Errorf("expected Valid=false for a %.3f%% range (< %.2f%% minimum)", or.RangePercent, testConfig().ORMinRangePercent)
 	}
 }
 
 func TestBuildOpeningRange_NoData(t *testing.T) {
 	day := time.Date(2026, 9, 4, 0, 0, 0, 0, market.IST)
-	or := BuildOpeningRange(nil, day)
+	or := BuildOpeningRange(nil, day, testConfig())
 	if or.Valid || or.High != 0 {
 		t.Errorf("expected zero-value invalid OpeningRange for no data, got %+v", or)
 	}

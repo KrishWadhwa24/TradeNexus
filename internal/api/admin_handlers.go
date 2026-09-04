@@ -82,7 +82,7 @@ func (s *Server) handleOptionsAlgoOptionChain(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "chain: " + err.Error()})
 		return
 	}
-	selected, reason, ok := s.optionsAlgoSvc.SelectContract(direction.Direction, chain)
+	selected, reason, ok := s.optionsAlgoSvc.SelectContract(r.Context(), direction.Direction, chain)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"direction":   direction.Direction,
 		"spot":        inputs.Spot,
@@ -90,6 +90,44 @@ func (s *Server) handleOptionsAlgoOptionChain(w http.ResponseWriter, r *http.Req
 		"selected":    selected,
 		"selected_ok": ok,
 		"reason":      reason,
+	})
+}
+
+// GET /v1/admin/optionsalgo/entry — live-verification for Phase 3's full
+// direction -> chain -> select -> entry pipeline. Read-only, no trade is
+// placed or affected. Admin only.
+func (s *Server) handleOptionsAlgoEntry(w http.ResponseWriter, r *http.Request) {
+	direction, inputs, err := s.optionsAlgoSvc.EvaluateDirection(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "direction: " + err.Error()})
+		return
+	}
+	chain, err := s.optionsAlgoSvc.BuildOptionChain(r.Context(), inputs.Spot)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "chain: " + err.Error()})
+		return
+	}
+	selected, selectionReason, ok := s.optionsAlgoSvc.SelectContract(r.Context(), direction.Direction, chain)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"direction":        direction.Direction,
+			"direction_reason": direction.Reason,
+			"selection_reason": selectionReason,
+			"entry":            nil,
+		})
+		return
+	}
+	entry, err := s.optionsAlgoSvc.EvaluateEntryForSelected(r.Context(), direction.Direction, inputs, selected)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "entry: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"direction":        direction.Direction,
+		"direction_reason": direction.Reason,
+		"selected":         selected,
+		"selection_reason": selectionReason,
+		"entry":            entry,
 	})
 }
 

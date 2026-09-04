@@ -17,22 +17,6 @@ const (
 	NoneDir Direction = "NONE"
 )
 
-// orStart/orEnd bound the opening range in IST wall-clock time, per the
-// script (09:15-09:45).
-const (
-	orStartHour, orStartMin = 9, 15
-	orEndHour, orEndMin     = 9, 45
-	// orMinRangePercent is the minimum (OR_HIGH-OR_LOW)/OR_LOW*100 for the
-	// range to be considered tradeable — too tight a range is noise, not a
-	// real level, per the script.
-	orMinRangePercent = 0.15
-
-	emaFast    = 20
-	emaSlow    = 50
-	atrPeriod  = 14
-	atrAvgSpan = 20
-)
-
 // Aggregate15Min buckets 1-minute candles into 15-minute bars — reuses the
 // same rollup logic already used for weekly/monthly equity candles
 // (candles.Aggregate), just with a 15-minute IST bucket key instead of a
@@ -155,16 +139,18 @@ func SessionVWAP(oneMin []market.Candle) []float64 {
 type OpeningRange struct {
 	High, Low    float64
 	RangePercent float64
-	Valid        bool // false if the range is too tight to be a real level (< orMinRangePercent)
+	Valid        bool // false if the range is too tight to be a real level (< cfg.ORMinRangePercent)
 }
 
-// BuildOpeningRange computes the 09:15-09:45 IST high/low from one day's
-// 1-minute spot candles. day identifies which calendar date (IST) to use —
-// oneMin may span many days, only that day's bars are considered.
-func BuildOpeningRange(oneMin []market.Candle, day time.Time) OpeningRange {
+// BuildOpeningRange computes the opening-range high/low (window and minimum
+// valid range % both from cfg, not hardcoded — script defaults are 09:15-
+// 09:45 / 0.15%, frontend-editable) from one day's 1-minute spot candles.
+// day identifies which calendar date (IST) to use — oneMin may span many
+// days, only that day's bars are considered.
+func BuildOpeningRange(oneMin []market.Candle, day time.Time, cfg AlgoConfig) OpeningRange {
 	day = day.In(market.IST)
-	start := time.Date(day.Year(), day.Month(), day.Day(), orStartHour, orStartMin, 0, 0, market.IST)
-	end := time.Date(day.Year(), day.Month(), day.Day(), orEndHour, orEndMin, 0, 0, market.IST)
+	start := time.Date(day.Year(), day.Month(), day.Day(), cfg.ORStartHour, cfg.ORStartMin, 0, 0, market.IST)
+	end := time.Date(day.Year(), day.Month(), day.Day(), cfg.OREndHour, cfg.OREndMin, 0, 0, market.IST)
 
 	var high, low float64
 	found := false
@@ -189,7 +175,7 @@ func BuildOpeningRange(oneMin []market.Candle, day time.Time) OpeningRange {
 		return OpeningRange{}
 	}
 	rangePct := (high - low) / low * 100
-	return OpeningRange{High: high, Low: low, RangePercent: rangePct, Valid: rangePct >= orMinRangePercent}
+	return OpeningRange{High: high, Low: low, RangePercent: rangePct, Valid: rangePct >= cfg.ORMinRangePercent}
 }
 
 // DirectionInputs bundles the latest indicator readings DetermineDirection
@@ -204,6 +190,10 @@ type DirectionInputs struct {
 	EMASlow float64
 	ATR     float64
 	ATRAvg  float64
+	// MinRangePercent is cfg.ORMinRangePercent at evaluation time — carried
+	// here only so DetermineDirection's "too tight" message can cite the
+	// actual threshold that was used, without needing the full AlgoConfig.
+	MinRangePercent float64
 }
 
 // DirectionResult carries both the classification and the values that
@@ -220,7 +210,7 @@ type DirectionResult struct {
 // always a reason, even on no-signal, since every evaluation gets logged.
 func DetermineDirection(in DirectionInputs) DirectionResult {
 	if !in.OR.Valid {
-		return DirectionResult{NoneDir, fmt.Sprintf("opening range too tight (%.3f%% < %.2f%% minimum)", in.OR.RangePercent, orMinRangePercent)}
+		return DirectionResult{NoneDir, fmt.Sprintf("opening range too tight (%.3f%% < %.2f%% minimum)", in.OR.RangePercent, in.MinRangePercent)}
 	}
 
 	bullish := in.Spot > in.OR.High && in.Spot > in.VWAP && in.EMAFast > in.EMASlow && in.ATR > in.ATRAvg

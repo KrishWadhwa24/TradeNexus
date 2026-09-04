@@ -126,3 +126,41 @@ func TestLatestCandleTime_NoRows(t *testing.T) {
 		t.Errorf("expected an epoch/zero-ish time with no rows, got %v", latest)
 	}
 }
+
+func TestGetConfig_SeededDefaultsMatchScript(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+
+	cfg, err := r.GetConfig(ctx)
+	if err != nil {
+		t.Fatalf("GetConfig: %v", err)
+	}
+	if cfg.RiskPerTradePercent != 1.0 || cfg.DeltaTarget != 0.60 || cfg.MaxTradesPerDay != 1 {
+		t.Errorf("seeded defaults don't match the script: %+v", cfg)
+	}
+}
+
+func TestUpdateConfig_RoundTrips(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	original, err := r.GetConfig(ctx)
+	if err != nil {
+		t.Fatalf("GetConfig: %v", err)
+	}
+	t.Cleanup(func() { r.UpdateConfig(ctx, original) })
+
+	updated := original
+	updated.RiskPerTradePercent = 3.0
+	updated.DeltaTarget = 0.65
+	if err := r.UpdateConfig(ctx, updated); err != nil {
+		t.Fatalf("UpdateConfig: %v", err)
+	}
+
+	got, err := r.GetConfig(ctx)
+	if err != nil {
+		t.Fatalf("GetConfig after update: %v", err)
+	}
+	if got.RiskPerTradePercent != 3.0 || got.DeltaTarget != 0.65 {
+		t.Errorf("update didn't round-trip: %+v", got)
+	}
+}

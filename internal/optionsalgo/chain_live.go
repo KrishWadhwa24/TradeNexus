@@ -23,6 +23,10 @@ const niftyUnderlying = "NIFTY"
 // whole expiry) rather than per-contract, since Angel already supports that
 // and it's far cheaper against the rate limiter.
 func (s *Service) BuildOptionChain(ctx context.Context, spot float64) ([]OptionQuote, error) {
+	cfg, err := s.repo.GetConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
 	expiry, err := s.repo.NearestOptionExpiry(ctx, niftyUnderlying)
 	if err != nil {
 		return nil, err
@@ -31,7 +35,7 @@ func (s *Service) BuildOptionChain(ctx context.Context, spot float64) ([]OptionQ
 	if err != nil {
 		return nil, err
 	}
-	picked := NearestATMStrikes(strikes, spot, strikesEachSide)
+	picked := NearestATMStrikes(strikes, spot, cfg.StrikesEachSide)
 	if len(picked) == 0 {
 		return nil, fmt.Errorf("no strikes available for %s expiry %s", niftyUnderlying, expiry.Format("2006-01-02"))
 	}
@@ -95,7 +99,12 @@ func (s *Service) BuildOptionChain(ctx context.Context, spot float64) ([]OptionQ
 // bearish per the script — this is direction-gated, never both), applies the
 // delta-band selection, then the liquidity filter. reason explains the
 // outcome either way, for the decision log (Phase 5).
-func (s *Service) SelectContract(direction Direction, chain []OptionQuote) (OptionQuote, string, bool) {
+func (s *Service) SelectContract(ctx context.Context, direction Direction, chain []OptionQuote) (OptionQuote, string, bool) {
+	cfg, err := s.repo.GetConfig(ctx)
+	if err != nil {
+		return OptionQuote{}, "config: " + err.Error(), false
+	}
+
 	var side string
 	switch direction {
 	case Bullish:
@@ -116,17 +125,17 @@ func (s *Service) SelectContract(direction Direction, chain []OptionQuote) (Opti
 		return OptionQuote{}, fmt.Sprintf("no %s contracts in the built chain", side), false
 	}
 
-	selected, ok := SelectByDelta(sideQuotes)
+	selected, ok := SelectByDelta(sideQuotes, cfg.DeltaTarget, cfg.DeltaMin, cfg.DeltaMax)
 	if !ok {
-		return OptionQuote{}, fmt.Sprintf("no %s strike with delta in [%.2f,%.2f]", side, deltaMin, deltaMax), false
+		return OptionQuote{}, fmt.Sprintf("no %s strike with delta in [%.2f,%.2f]", side, cfg.DeltaMin, cfg.DeltaMax), false
 	}
 
 	avgVol := AverageVolume(sideQuotes)
-	if liquid, why := LiquidityCheck(selected, avgVol); !liquid {
+	if liquid, why := LiquidityCheck(selected, avgVol, cfg.MaxSpreadPercent, cfg.MinVolumeMultiplier); !liquid {
 		return OptionQuote{}, fmt.Sprintf("%s rejected: %s", selected.TradingSymbol, why), false
 	}
 
-	return selected, fmt.Sprintf("%s selected: delta=%.3f closest to target %.2f, spread=%.2f%%", selected.TradingSymbol, selected.Delta, deltaTarget, selected.SpreadPercent()), true
+	return selected, fmt.Sprintf("%s selected: delta=%.3f closest to target %.2f, spread=%.2f%%", selected.TradingSymbol, selected.Delta, cfg.DeltaTarget, selected.SpreadPercent()), true
 }
 
 // angelExpiryFormat matches GetOptionGreeks' expected "02Jan2006"-style

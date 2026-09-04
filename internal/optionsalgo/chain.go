@@ -2,21 +2,6 @@ package optionsalgo
 
 import "sort"
 
-// Delta band + target, spread, and volume thresholds — exact values from the
-// script's config. deltaTarget is the ideal; deltaMin/deltaMax bound the
-// acceptable band (checked against |delta| so the same band works for CE's
-// positive delta and PE's negative delta).
-const (
-	deltaTarget = 0.60
-	deltaMin    = 0.55
-	deltaMax    = 0.70
-
-	strikesEachSide = 5
-
-	maxSpreadPercent    = 1.0
-	minVolumeMultiplier = 1.2
-)
-
 // OptionQuote is one contract's live snapshot — quote (LTP/bid/ask/volume/OI)
 // merged with its Greeks, keyed to the instrument that priced it.
 type OptionQuote struct {
@@ -85,9 +70,13 @@ func NearestATMStrikes(strikes []float64, spot float64, each int) []float64 {
 }
 
 // SelectByDelta filters candidates whose |delta| falls in [deltaMin,
-// deltaMax] and returns the one closest to deltaTarget. ok is false if no
-// candidate qualifies (e.g. the whole chain is too far in- or out-of-the-money).
-func SelectByDelta(candidates []OptionQuote) (OptionQuote, bool) {
+// deltaMax] (checked against |delta| so the same band works for CE's
+// positive delta and PE's negative delta) and returns the one closest to
+// deltaTarget. ok is false if no candidate qualifies (e.g. the whole chain
+// is too far in- or out-of-the-money). Thresholds come from AlgoConfig
+// (frontend-editable), not hardcoded — script defaults are target 0.60,
+// band 0.55-0.70.
+func SelectByDelta(candidates []OptionQuote, deltaTarget, deltaMin, deltaMax float64) (OptionQuote, bool) {
 	var best OptionQuote
 	bestDist := -1.0
 	for _, c := range candidates {
@@ -109,8 +98,9 @@ func SelectByDelta(candidates []OptionQuote) (OptionQuote, bool) {
 // cross-sectional peer comparison — per-contract historical intraday volume
 // isn't tracked yet, so "average" here means "average across today's chain,"
 // not "average over past sessions"; revisit if a time-series comparison
-// turns out to matter more).
-func LiquidityCheck(q OptionQuote, avgVolume float64) (ok bool, reason string) {
+// turns out to matter more). maxSpreadPercent/minVolumeMultiplier come from
+// AlgoConfig — script defaults are 1% spread, 1.2x volume.
+func LiquidityCheck(q OptionQuote, avgVolume, maxSpreadPercent, minVolumeMultiplier float64) (ok bool, reason string) {
 	if spread := q.SpreadPercent(); spread > maxSpreadPercent {
 		return false, "spread too wide"
 	}

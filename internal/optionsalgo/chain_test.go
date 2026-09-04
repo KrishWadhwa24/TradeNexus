@@ -55,7 +55,7 @@ func TestSelectByDelta_PicksClosestToTarget(t *testing.T) {
 		{TradingSymbol: "in-band-high", Delta: 0.69},
 		{TradingSymbol: "far-itm", Delta: 0.95},
 	}
-	got, ok := SelectByDelta(candidates)
+	got, ok := SelectByDelta(candidates, 0.60, 0.55, 0.70)
 	if !ok {
 		t.Fatal("expected a selection")
 	}
@@ -69,7 +69,7 @@ func TestSelectByDelta_PE_NegativeDelta(t *testing.T) {
 		{TradingSymbol: "pe-a", Delta: -0.61},
 		{TradingSymbol: "pe-b", Delta: -0.20},
 	}
-	got, ok := SelectByDelta(candidates)
+	got, ok := SelectByDelta(candidates, 0.60, 0.55, 0.70)
 	if !ok || got.TradingSymbol != "pe-a" {
 		t.Errorf("got %+v, ok=%v, want pe-a selected via abs(delta)", got, ok)
 	}
@@ -77,7 +77,7 @@ func TestSelectByDelta_PE_NegativeDelta(t *testing.T) {
 
 func TestSelectByDelta_NoneQualify(t *testing.T) {
 	candidates := []OptionQuote{{Delta: 0.10}, {Delta: 0.95}}
-	_, ok := SelectByDelta(candidates)
+	_, ok := SelectByDelta(candidates, 0.60, 0.55, 0.70)
 	if ok {
 		t.Error("expected no selection when nothing is in the delta band")
 	}
@@ -85,7 +85,7 @@ func TestSelectByDelta_NoneQualify(t *testing.T) {
 
 func TestLiquidityCheck_WideSpreadRejected(t *testing.T) {
 	q := OptionQuote{Bid: 100, Ask: 110, Volume: 1000} // spread ~9.5%
-	ok, reason := LiquidityCheck(q, 500)
+	ok, reason := LiquidityCheck(q, 500, 1.0, 1.2)
 	if ok {
 		t.Error("expected rejection for wide spread")
 	}
@@ -96,7 +96,7 @@ func TestLiquidityCheck_WideSpreadRejected(t *testing.T) {
 
 func TestLiquidityCheck_LowVolumeRejected(t *testing.T) {
 	q := OptionQuote{Bid: 100, Ask: 100.5, Volume: 100} // tight spread, low volume
-	ok, reason := LiquidityCheck(q, 1000)               // needs >= 1200
+	ok, reason := LiquidityCheck(q, 1000, 1.0, 1.2)     // needs >= 1200
 	if ok {
 		t.Error("expected rejection for low volume")
 	}
@@ -107,7 +107,7 @@ func TestLiquidityCheck_LowVolumeRejected(t *testing.T) {
 
 func TestLiquidityCheck_Passes(t *testing.T) {
 	q := OptionQuote{Bid: 100, Ask: 100.5, Volume: 2000}
-	ok, reason := LiquidityCheck(q, 1000)
+	ok, reason := LiquidityCheck(q, 1000, 1.0, 1.2)
 	if !ok {
 		t.Errorf("expected pass, got reason %q", reason)
 	}

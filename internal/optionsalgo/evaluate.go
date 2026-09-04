@@ -20,6 +20,10 @@ const evalHistoryBars = 5000
 // not place or affect any trade. Phase 4's execution bridge will call this
 // same method; for now it's exercised via the admin verification endpoint.
 func (s *Service) EvaluateDirection(ctx context.Context) (DirectionResult, DirectionInputs, error) {
+	cfg, err := s.repo.GetConfig(ctx)
+	if err != nil {
+		return DirectionResult{}, DirectionInputs{}, err
+	}
 	underlyings, err := s.repo.TrackedUnderlyings(ctx)
 	if err != nil {
 		return DirectionResult{}, DirectionInputs{}, err
@@ -58,23 +62,24 @@ func (s *Service) EvaluateDirection(ctx context.Context) (DirectionResult, Direc
 	}
 
 	fifteenMin := Aggregate15Min(spotBars)
-	emaFastSeries := EMA(fifteenMin, emaFast)
-	emaSlowSeries := EMA(fifteenMin, emaSlow)
-	atrSeries := ATR(fifteenMin, atrPeriod)
-	atrAvgSeries := ATRAverage(atrSeries, atrAvgSpan)
+	emaFastSeries := EMA(fifteenMin, cfg.EMAFastPeriod)
+	emaSlowSeries := EMA(fifteenMin, cfg.EMASlowPeriod)
+	atrSeries := ATR(fifteenMin, cfg.ATRPeriod)
+	atrAvgSeries := ATRAverage(atrSeries, cfg.ATRAvgSpan)
 	vwapSeries := SessionVWAP(futBars)
 
 	now := time.Now().In(market.IST)
-	or := BuildOpeningRange(spotBars, now)
+	or := BuildOpeningRange(spotBars, now, cfg)
 
 	in := DirectionInputs{
-		Spot:    spotBars[len(spotBars)-1].Close,
-		OR:      or,
-		VWAP:    vwapSeries[len(vwapSeries)-1],
-		EMAFast: emaFastSeries[len(emaFastSeries)-1],
-		EMASlow: emaSlowSeries[len(emaSlowSeries)-1],
-		ATR:     atrSeries[len(atrSeries)-1],
-		ATRAvg:  atrAvgSeries[len(atrAvgSeries)-1],
+		Spot:            spotBars[len(spotBars)-1].Close,
+		OR:              or,
+		VWAP:            vwapSeries[len(vwapSeries)-1],
+		EMAFast:         emaFastSeries[len(emaFastSeries)-1],
+		EMASlow:         emaSlowSeries[len(emaSlowSeries)-1],
+		ATR:             atrSeries[len(atrSeries)-1],
+		ATRAvg:          atrAvgSeries[len(atrAvgSeries)-1],
+		MinRangePercent: cfg.ORMinRangePercent,
 	}
 	return DetermineDirection(in), in, nil
 }
