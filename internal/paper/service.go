@@ -50,21 +50,28 @@ type Account struct {
 
 // Trade is one paper trade.
 type Trade struct {
-	ID             int64      `json:"id"`
-	userID         string     // internal owner id (not serialized)
-	reservedMargin float64    // internal; cash reserved for a SCHEDULED order, refunded on cancel or trued-up at fill (not serialized)
-	InstrumentID   int64      `json:"instrument_id"`
-	Symbol         string     `json:"symbol"`
-	SignalID       *int64     `json:"signal_id,omitempty"`
-	Side           string     `json:"side"`
-	ProductType    string     `json:"product_type"` // DELIVERY | INTRADAY
-	Quantity       int        `json:"quantity"`
-	EntryPrice     float64    `json:"entry_price"`
-	EntryTime      *time.Time `json:"entry_time,omitempty"`
-	ExitPrice      *float64   `json:"exit_price,omitempty"`
-	ExitTime       *time.Time `json:"exit_time,omitempty"`
-	Status         string     `json:"status"`
-	PnL            float64    `json:"pnl"`
+	ID             int64   `json:"id"`
+	userID         string  // internal owner id (not serialized)
+	reservedMargin float64 // internal; cash reserved for a SCHEDULED order, refunded on cancel or trued-up at fill (not serialized)
+	InstrumentID   int64   `json:"instrument_id"`
+	Symbol         string  `json:"symbol"`
+	// OptionType is "" for equities, "CE"/"PE" for an options contract —
+	// carried on Trade (not just looked up from Instrument on demand) so
+	// every function that already has a Trade in hand — settleAmounts,
+	// ConvertToDelivery, FillScheduled, Summary — can price it correctly
+	// without a second instrument lookup. See marginFraction: an option
+	// always margins at 100% of premium, never the equity leverage fraction.
+	OptionType  string     `json:"option_type,omitempty"`
+	SignalID    *int64     `json:"signal_id,omitempty"`
+	Side        string     `json:"side"`
+	ProductType string     `json:"product_type"` // DELIVERY | INTRADAY
+	Quantity    int        `json:"quantity"`
+	EntryPrice  float64    `json:"entry_price"`
+	EntryTime   *time.Time `json:"entry_time,omitempty"`
+	ExitPrice   *float64   `json:"exit_price,omitempty"`
+	ExitTime    *time.Time `json:"exit_time,omitempty"`
+	Status      string     `json:"status"`
+	PnL         float64    `json:"pnl"`
 	// CurrentPrice/Unrealized are pointers, not plain float64 — omitempty on
 	// a plain float64 drops the field when it's exactly 0, which is a
 	// completely legitimate value here (a position bought seconds ago,
@@ -333,7 +340,7 @@ func (s *Service) FillScheduled(ctx context.Context) (int, error) {
 		// Reserved margin was already debited at schedule time (at
 		// tonight's price); only the difference against the actual fill
 		// price needs to move now, positive or negative.
-		cost := marginFraction(t.ProductType) * px * float64(t.Quantity)
+		cost := marginFraction(t.ProductType, t.OptionType != "") * px * float64(t.Quantity)
 		delta := cost - t.reservedMargin
 		tx, err := s.pool.Begin(ctx)
 		if err != nil {
@@ -486,7 +493,7 @@ func (s *Service) CancelPending(ctx context.Context, tradeID int64) (Trade, erro
 // open positions.
 func (s *Service) Trades(ctx context.Context, userID string) ([]Trade, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT t.id, t.instrument_id, i.trading_symbol, t.signal_id, t.side, t.product_type, t.quantity,
+		SELECT t.id, t.instrument_id, i.trading_symbol, COALESCE(i.option_type, ''), t.signal_id, t.side, t.product_type, t.quantity,
 		       t.entry_price, t.entry_time, t.exit_price, t.exit_time, t.status, t.pnl, t.pending_close_qty
 		FROM paper_trades t JOIN instruments i ON i.id = t.instrument_id
 		WHERE t.user_id = $1::uuid ORDER BY t.created_at DESC`, userID)
@@ -497,7 +504,7 @@ func (s *Service) Trades(ctx context.Context, userID string) ([]Trade, error) {
 	var out []Trade
 	for rows.Next() {
 		var t Trade
-		if err := rows.Scan(&t.ID, &t.InstrumentID, &t.Symbol, &t.SignalID, &t.Side, &t.ProductType, &t.Quantity,
+		if err := rows.Scan(&t.ID, &t.InstrumentID, &t.Symbol, &t.OptionType, &t.SignalID, &t.Side, &t.ProductType, &t.Quantity,
 			&t.EntryPrice, &t.EntryTime, &t.ExitPrice, &t.ExitTime, &t.Status, &t.PnL, &t.PendingCloseQty); err != nil {
 			return nil, err
 		}
@@ -561,7 +568,7 @@ func (s *Service) Summary(ctx context.Context, userID string) (PnLSummary, error
 			// Unrealized) — this generalizes the pre-margin formula
 			// exactly: for a DELIVERY long it reduces to today's original
 			// EntryPrice*qty / CurrentPrice*qty.
-			invested := marginFraction(t.ProductType) * t.EntryPrice * float64(t.Quantity)
+			invested := marginFraction(t.ProductType, t.OptionType != "") * t.EntryPrice * float64(t.Quantity)
 			sum.Invested += invested
 			var unrealized float64
 			if t.Unrealized != nil {
@@ -587,12 +594,12 @@ func (s *Service) Summary(ctx context.Context, userID string) (PnLSummary, error
 func (s *Service) getTrade(ctx context.Context, id int64) (Trade, error) {
 	var t Trade
 	err := s.pool.QueryRow(ctx, `
-		SELECT t.id, t.user_id::text, t.instrument_id, i.trading_symbol, t.signal_id, t.side, t.product_type,
+		SELECT t.id, t.user_id::text, t.instrument_id, i.trading_symbol, COALESCE(i.option_type, ''), t.signal_id, t.side, t.product_type,
 		       t.quantity, t.entry_price, t.entry_time, t.exit_price, t.exit_time, t.status, t.pnl,
 		       t.pending_close_qty, t.reserved_margin
 		FROM paper_trades t JOIN instruments i ON i.id = t.instrument_id
 		WHERE t.id = $1`, id).
-		Scan(&t.ID, &t.userID, &t.InstrumentID, &t.Symbol, &t.SignalID, &t.Side, &t.ProductType,
+		Scan(&t.ID, &t.userID, &t.InstrumentID, &t.Symbol, &t.OptionType, &t.SignalID, &t.Side, &t.ProductType,
 			&t.Quantity, &t.EntryPrice, &t.EntryTime, &t.ExitPrice, &t.ExitTime, &t.Status, &t.PnL,
 			&t.PendingCloseQty, &t.reservedMargin)
 	if errors.Is(err, pgx.ErrNoRows) {

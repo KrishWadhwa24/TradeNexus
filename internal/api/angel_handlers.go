@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"tradenexus/internal/angel"
 	"tradenexus/internal/instruments"
 	"tradenexus/internal/market"
 )
@@ -77,15 +78,18 @@ func (s *Server) handleDerivativesSync(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /v1/angel/historical — raw daily-candle passthrough for testing.
-// Body: {"exchange":"NSE","symbol_token":"3045","from":"2024-01-01","to":"2024-03-01"}
-// from/to optional (default: last 30 days).
+// POST /v1/angel/historical — raw candle passthrough for testing.
+// Body: {"exchange":"NSE","symbol_token":"3045","from":"2024-01-01","to":"2024-03-01","interval":"ONE_MINUTE"}
+// from/to optional (default: last 30 days); interval optional (default: ONE_DAY,
+// unchanged from before this field existed — this is a manual/Postman testing
+// endpoint with no real caller, so adding it is zero-risk to anything else).
 func (s *Server) handleAngelHistorical(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Exchange    string `json:"exchange"`
 		SymbolToken string `json:"symbol_token"`
 		From        string `json:"from"`
 		To          string `json:"to"`
+		Interval    string `json:"interval"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
@@ -110,7 +114,13 @@ func (s *Server) handleAngelHistorical(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cs, err := s.angel.GetDailyCandles(r.Context(), req.Exchange, req.SymbolToken, from, to)
+	var cs []market.Candle
+	var err error
+	if req.Interval == "" || req.Interval == angel.IntervalOneDay {
+		cs, err = s.angel.GetDailyCandles(r.Context(), req.Exchange, req.SymbolToken, from, to)
+	} else {
+		cs, err = s.angel.GetIntradayCandles(r.Context(), req.Exchange, req.SymbolToken, req.Interval, from, to)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return

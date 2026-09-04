@@ -34,6 +34,7 @@ import (
 	"tradenexus/internal/logger"
 	"tradenexus/internal/market"
 	"tradenexus/internal/notify"
+	"tradenexus/internal/optionsalgo"
 	"tradenexus/internal/paper"
 	"tradenexus/internal/promoter"
 	"tradenexus/internal/ratelimit"
@@ -188,6 +189,14 @@ func main() {
 	if cfg.InvestorsEnabled {
 		investorsSvc = investors.New(investors.NewClient(), investors.NewRepo(pg.Pool), log)
 		investorsSvc.StartPolling(ctx)
+	}
+
+	// Options-algo underlying candle feed (Nifty/Sensex 1-minute bars) — a
+	// separate service from the equity engine/candles pipeline above; nothing
+	// here is read by, or writes to, anything the equity flow touches.
+	if cfg.OptionsAlgoEnabled {
+		optionsAlgoSvc := optionsalgo.New(angelClient, optionsalgo.NewRepo(pg.Pool), calSvc, log)
+		optionsAlgoSvc.StartPolling(ctx)
 	}
 
 	// Bulk & block deals tracker (NSE historical bulk-block CSV feed).

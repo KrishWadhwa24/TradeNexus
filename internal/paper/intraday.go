@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"tradenexus/internal/calendar"
+	"tradenexus/internal/instruments"
 	"tradenexus/internal/market"
 )
 
@@ -33,11 +34,36 @@ const (
 	intradayCutoffMin  = 20
 )
 
-func marginFraction(productType string) float64 {
+// marginFraction is the fraction of notional (price*qty) charged as margin.
+// isOption always forces 1.0 regardless of productType: buying an option
+// costs its full premium upfront, always — there's no leverage/margin-
+// financing concept for a long option the way there is for equity intraday
+// trading. The equity 20%/100% intraday/delivery split below is unaffected;
+// this only adds a new case in front of it.
+func marginFraction(productType string, isOption bool) float64 {
+	if isOption {
+		return 1.0
+	}
 	if productType == ProductIntraday {
 		return intradayMarginFraction
 	}
 	return 1.0
+}
+
+// validateOptionLotSize rejects an order whose quantity isn't a whole
+// multiple of the contract's lot size — real options can only ever
+// transact in whole lots, unlike equities where any share count is valid.
+// A no-op for non-option instruments (OptionType == ""). Pulled out as a
+// pure function, same convention as weightedAvgEntry/settleAmounts, so it's
+// unit-testable without a DB transaction.
+func validateOptionLotSize(inst instruments.Instrument, qty int) error {
+	if inst.OptionType == "" {
+		return nil
+	}
+	if inst.LotSize <= 0 || qty%inst.LotSize != 0 {
+		return fmt.Errorf("quantity must be a multiple of the lot size (%d) for this contract", inst.LotSize)
+	}
+	return nil
 }
 
 // intradayWindowOpen reports whether new intraday/short positions may be
@@ -91,6 +117,9 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 	if err != nil {
 		return Trade{}, err
 	}
+	if err := validateOptionLotSize(inst, qty); err != nil {
+		return Trade{}, err
+	}
 	acct, err := s.GetAccount(ctx, userID)
 	if err != nil {
 		return Trade{}, err
@@ -114,7 +143,7 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 		if err != nil {
 			return Trade{}, err
 		}
-		margin := marginFraction(productType) * schedPx * float64(qty)
+		margin := marginFraction(productType, inst.OptionType != "") * schedPx * float64(qty)
 		if margin > acct.CashBalance {
 			return Trade{}, fmt.Errorf("insufficient cash: need %.2f margin, have %.2f", margin, acct.CashBalance)
 		}
@@ -148,7 +177,7 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 	if err != nil {
 		return Trade{}, err
 	}
-	margin := marginFraction(productType) * px * float64(qty)
+	margin := marginFraction(productType, inst.OptionType != "") * px * float64(qty)
 	if margin > acct.CashBalance {
 		return Trade{}, fmt.Errorf("insufficient cash: need %.2f margin, have %.2f", margin, acct.CashBalance)
 	}
@@ -235,7 +264,7 @@ func mergeOrOpen(ctx context.Context, tx pgx.Tx, userID string, instrumentID int
 // transaction — see intraday_test.go.
 func settleAmounts(t Trade, exitPrice float64) (pnl, settlement float64) {
 	pnl = unrealizedPnL(t.Side, t.EntryPrice, exitPrice, t.Quantity)
-	settlement = marginFraction(t.ProductType)*t.EntryPrice*float64(t.Quantity) + pnl
+	settlement = marginFraction(t.ProductType, t.OptionType != "")*t.EntryPrice*float64(t.Quantity) + pnl
 	return pnl, settlement
 }
 
@@ -319,7 +348,7 @@ func (s *Service) ConvertToDelivery(ctx context.Context, tradeID int64) (Trade, 
 		return Trade{}, errors.New("short positions can't be converted to delivery")
 	}
 
-	remaining := (1 - marginFraction(ProductIntraday)) * t.EntryPrice * float64(t.Quantity)
+	remaining := (1 - marginFraction(ProductIntraday, t.OptionType != "")) * t.EntryPrice * float64(t.Quantity)
 	acct, err := s.GetAccount(ctx, t.userID)
 	if err != nil {
 		return Trade{}, err

@@ -50,6 +50,33 @@ func TestParseCandles_NumericStrings(t *testing.T) {
 	}
 }
 
+// TestParseIntradayCandles_PreservesTimeOfDay is the regression test for the
+// exact bug parseCandles would cause if reused for minute data: two bars in
+// the same trading day would collapse onto the same midnight timestamp and
+// silently overwrite each other. parseIntradayCandles must keep them distinct.
+func TestParseIntradayCandles_PreservesTimeOfDay(t *testing.T) {
+	rows := [][]interface{}{
+		{"2024-01-01T09:15:00+05:30", 100.0, 101.0, 99.0, 100.5, 1000.0},
+		{"2024-01-01T09:16:00+05:30", 100.5, 102.0, 100.0, 101.5, 1500.0},
+	}
+	cs, err := parseIntradayCandles(rows)
+	if err != nil {
+		t.Fatalf("parseIntradayCandles: %v", err)
+	}
+	if len(cs) != 2 {
+		t.Fatalf("expected 2 distinct candles, got %d", len(cs))
+	}
+	if cs[0].Time.Equal(cs[1].Time) {
+		t.Fatalf("both bars collapsed onto the same timestamp: %v == %v", cs[0].Time, cs[1].Time)
+	}
+	if cs[0].Time.Hour() != 9 || cs[0].Time.Minute() != 15 {
+		t.Errorf("row 0 time-of-day not preserved: %v", cs[0].Time)
+	}
+	if cs[1].Time.Hour() != 9 || cs[1].Time.Minute() != 16 {
+		t.Errorf("row 1 time-of-day not preserved: %v", cs[1].Time)
+	}
+}
+
 func TestGetDailyCandles_HTTP(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") == "" {

@@ -106,6 +106,11 @@ type Config struct {
 	// Big-investor portfolio tracker (NSE quarterly shareholding-pattern feed)
 	InvestorsEnabled bool `env:"INVESTORS_ENABLED" envDefault:"true"`
 
+	// Options-algo underlying candle feed (Nifty/Sensex 1-minute bars) —
+	// entirely separate from equity scanning; toggling this off has zero
+	// effect on the daily equity candle/scan pipeline.
+	OptionsAlgoEnabled bool `env:"OPTIONS_ALGO_ENABLED" envDefault:"true"`
+
 	// Notifications (Module 7)
 	NotifyEnabled    bool   `env:"NOTIFY_ENABLED" envDefault:"true"`
 	NotifyWindowDays int    `env:"NOTIFY_WINDOW_DAYS" envDefault:"7"`

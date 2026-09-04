@@ -1,12 +1,17 @@
 package paper
 
-import "testing"
+import (
+	"testing"
+
+	"tradenexus/internal/instruments"
+)
 
 func TestSettleAmounts(t *testing.T) {
 	cases := []struct {
 		name           string
 		side           string
 		productType    string
+		optionType     string
 		entry, exit    float64
 		qty            int
 		wantPnL        float64
@@ -45,10 +50,28 @@ func TestSettleAmounts(t *testing.T) {
 			entry: 100, exit: 110, qty: 10,
 			wantPnL: -100, wantSettlement: 100, // 200 margin - 100 loss
 		},
+		{
+			// Regression case: an option bought as "INTRADAY" must still
+			// settle at full premium (fraction 1.0), NOT the equity 20%
+			// intraday margin — a long option has no leverage concept.
+			// Without OptionType set, this would wrongly compute
+			// settlement=400 (the equity-intraday case above); with it,
+			// it must match the delivery-long numbers exactly (fraction 1.0).
+			name: "option (CE) intraday, profit — must margin at 100%, not 20%",
+			side: SideBuy, productType: ProductIntraday, optionType: "CE",
+			entry: 100, exit: 120, qty: 10,
+			wantPnL: 200, wantSettlement: 1200, // = exit*qty, same as delivery
+		},
+		{
+			name: "option (PE) intraday, loss — must margin at 100%, not 20%",
+			side: SideBuy, productType: ProductIntraday, optionType: "PE",
+			entry: 100, exit: 90, qty: 10,
+			wantPnL: -100, wantSettlement: 900, // = exit*qty
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			trade := Trade{Side: c.side, ProductType: c.productType, EntryPrice: c.entry, Quantity: c.qty}
+			trade := Trade{Side: c.side, ProductType: c.productType, OptionType: c.optionType, EntryPrice: c.entry, Quantity: c.qty}
 			pnl, settlement := settleAmounts(trade, c.exit)
 			if pnl != c.wantPnL {
 				t.Errorf("pnl = %v, want %v", pnl, c.wantPnL)
@@ -88,10 +111,45 @@ func TestWeightedAvgEntry(t *testing.T) {
 }
 
 func TestMarginFraction(t *testing.T) {
-	if marginFraction(ProductDelivery) != 1.0 {
-		t.Error("delivery must require full (1.0) margin")
+	if marginFraction(ProductDelivery, false) != 1.0 {
+		t.Error("equity delivery must require full (1.0) margin")
 	}
-	if marginFraction(ProductIntraday) != intradayMarginFraction {
-		t.Errorf("intraday margin fraction = %v, want %v", marginFraction(ProductIntraday), intradayMarginFraction)
+	if marginFraction(ProductIntraday, false) != intradayMarginFraction {
+		t.Errorf("equity intraday margin fraction = %v, want %v", marginFraction(ProductIntraday, false), intradayMarginFraction)
+	}
+	// An option always costs its full premium upfront — no leverage/margin
+	// concept for a long option — regardless of product type.
+	if marginFraction(ProductIntraday, true) != 1.0 {
+		t.Error("option intraday must still require full (1.0) margin — no leverage on a long option")
+	}
+	if marginFraction(ProductDelivery, true) != 1.0 {
+		t.Error("option delivery must require full (1.0) margin")
+	}
+}
+
+func TestValidateOptionLotSize(t *testing.T) {
+	equity := instruments.Instrument{OptionType: "", LotSize: 1}
+	niftyOption := instruments.Instrument{OptionType: "CE", LotSize: 75}
+
+	cases := []struct {
+		name    string
+		inst    instruments.Instrument
+		qty     int
+		wantErr bool
+	}{
+		{"equity, any quantity is valid", equity, 7, false},
+		{"equity, lot size doesn't even apply", equity, 1, false},
+		{"option, exact one lot", niftyOption, 75, false},
+		{"option, exact multiple of lot size", niftyOption, 225, false},
+		{"option, not a multiple of lot size", niftyOption, 50, true},
+		{"option, less than one lot", niftyOption, 10, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := validateOptionLotSize(c.inst, c.qty)
+			if (err != nil) != c.wantErr {
+				t.Errorf("validateOptionLotSize(qty=%d) error = %v, wantErr %v", c.qty, err, c.wantErr)
+			}
+		})
 	}
 }

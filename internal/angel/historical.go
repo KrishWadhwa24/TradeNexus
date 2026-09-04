@@ -20,8 +20,13 @@ import (
 // transient rate-limit error (its server-side cap is stricter than our bucket).
 const maxHistAttempts = 5
 
-// Interval constants (only ONE_DAY is used — higher TFs are derived locally).
-const IntervalOneDay = "ONE_DAY"
+// Interval constants. ONE_DAY backs the existing equity/index daily pipeline
+// (higher TFs are derived locally from it) — untouched by ONE_MINUTE, which
+// exists solely for the options-algo underlying feed (see internal/optionsalgo).
+const (
+	IntervalOneDay    = "ONE_DAY"
+	IntervalOneMinute = "ONE_MINUTE"
+)
 
 const angelDateLayout = "2006-01-02 15:04"
 
@@ -29,7 +34,38 @@ const angelDateLayout = "2006-01-02 15:04"
 // rate limiter first so concurrent callers never exceed Angel's budget.
 //
 // Angel caps ONE_DAY at ~2000 candles per request; keep ranges within that.
+//
+// This is the exact same request/retry logic as before this function was
+// split into fetchCandleRows — the refactor (done to let GetIntradayCandles
+// reuse it without duplicating ~90 lines of retry/rate-limit handling) only
+// moved code, it changed no behavior here.
 func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken string, from, to time.Time) ([]market.Candle, error) {
+	rows, err := c.fetchCandleRows(ctx, exchange, symbolToken, IntervalOneDay, from, to)
+	if err != nil {
+		return nil, err
+	}
+	return parseCandles(rows)
+}
+
+// GetIntradayCandles fetches sub-daily OHLCV (e.g. ONE_MINUTE) for [from,
+// to]. Used only by the options-algo underlying feed — never called from
+// the equity scan/reconcile pipeline, which stays on GetDailyCandles.
+// Angel's real lookback/row-cap limits for intraday intervals haven't been
+// characterized yet; keep [from, to] narrow (a few days at a time) until
+// verified live.
+func (c *Client) GetIntradayCandles(ctx context.Context, exchange, symbolToken, interval string, from, to time.Time) ([]market.Candle, error) {
+	rows, err := c.fetchCandleRows(ctx, exchange, symbolToken, interval, from, to)
+	if err != nil {
+		return nil, err
+	}
+	return parseIntradayCandles(rows)
+}
+
+// fetchCandleRows performs the request/retry/rate-limit/auth-refresh dance
+// shared by every interval, returning Angel's raw [ts,o,h,l,c,v] rows
+// unparsed — parseCandles (daily, collapses to midnight) and
+// parseIntradayCandles (keeps the full timestamp) diverge only after this.
+func (c *Client) fetchCandleRows(ctx context.Context, exchange, symbolToken, interval string, from, to time.Time) ([][]interface{}, error) {
 	if err := c.ensureLogin(ctx); err != nil {
 		return nil, err
 	}
@@ -37,7 +73,7 @@ func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken stri
 	reqBody, _ := json.Marshal(histRequest{
 		Exchange:    exchange,
 		SymbolToken: symbolToken,
-		Interval:    IntervalOneDay,
+		Interval:    interval,
 		FromDate:    from.In(market.IST).Format(angelDateLayout),
 		ToDate:      to.In(market.IST).Format(angelDateLayout),
 	})
@@ -111,7 +147,7 @@ func (c *Client) GetDailyCandles(ctx context.Context, exchange, symbolToken stri
 		if err != nil {
 			return nil, fmt.Errorf("angel historical failed: %s", err)
 		}
-		return parseCandles(rows)
+		return rows, nil
 	}
 	if lastErr != nil {
 		return nil, lastErr
@@ -264,6 +300,38 @@ func parseCandles(rows [][]interface{}) ([]market.Candle, error) {
 
 		out = append(out, market.Candle{
 			Time:   day,
+			Open:   toFloat(r[1]),
+			High:   toFloat(r[2]),
+			Low:    toFloat(r[3]),
+			Close:  toFloat(r[4]),
+			Volume: int64(toFloat(r[5])),
+		})
+	}
+	return out, nil
+}
+
+// parseIntradayCandles mirrors parseCandles exactly except it keeps the full
+// timestamp Angel returns — parseCandles deliberately collapses to midnight
+// (correct for one-bar-per-day data; would silently corrupt minute bars by
+// merging an entire day's candles onto the same key).
+func parseIntradayCandles(rows [][]interface{}) ([]market.Candle, error) {
+	out := make([]market.Candle, 0, len(rows))
+	for i, r := range rows {
+		if len(r) < 6 {
+			return nil, fmt.Errorf("candle row %d malformed: %v", i, r)
+		}
+		tsStr, ok := r[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("candle row %d: bad timestamp %v", i, r[0])
+		}
+		t, err := time.Parse(time.RFC3339, tsStr)
+		if err != nil {
+			return nil, fmt.Errorf("candle row %d: parse time %q: %w", i, tsStr, err)
+		}
+		t = t.In(market.IST)
+
+		out = append(out, market.Candle{
+			Time:   t,
 			Open:   toFloat(r[1]),
 			High:   toFloat(r[2]),
 			Low:    toFloat(r[3]),
