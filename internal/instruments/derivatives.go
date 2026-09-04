@@ -15,6 +15,7 @@ type DerivativesSyncResult struct {
 	Upserted    int
 	Options     int
 	IndexSpots  int
+	Futures     int
 	Deactivated int64
 }
 
@@ -54,7 +55,8 @@ func SyncDerivatives(ctx context.Context, client *angel.Client, repo *Repo) (Der
 			LotSize:          lot,
 			UnderlyingSymbol: sc.Name,
 		}
-		if sc.InstrumentType == "OPTIDX" {
+		switch sc.InstrumentType {
+		case "OPTIDX":
 			if strike, err := strconv.ParseFloat(sc.Strike, 64); err == nil {
 				strike = strike / 100 // Angel stores option strikes ×100 (paise) — verified live
 				it.StrikePrice = &strike
@@ -64,7 +66,15 @@ func SyncDerivatives(ctx context.Context, client *angel.Client, repo *Repo) (Der
 			}
 			it.OptionType = optionTypeSuffix(sc.Symbol)
 			res.Options++
-		} else {
+		case "FUTIDX":
+			// No strike/option_type — a future isn't an option. ExpiryDate is
+			// what optionsalgo.TrackedFutures uses to tell it apart from the
+			// underlying's own index-spot row (which has no expiry).
+			if expiry, err := time.Parse("02Jan2006", sc.Expiry); err == nil {
+				it.ExpiryDate = &expiry
+			}
+			res.Futures++
+		default:
 			res.IndexSpots++
 		}
 		items = append(items, it)

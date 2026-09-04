@@ -25,6 +25,7 @@ import (
 	"tradenexus/internal/ipo"
 	"tradenexus/internal/live"
 	"tradenexus/internal/notify"
+	"tradenexus/internal/optionsalgo"
 	"tradenexus/internal/paper"
 	"tradenexus/internal/promoter"
 	"tradenexus/internal/ratelimit"
@@ -61,6 +62,8 @@ type Deps struct {
 	Investors      *investors.Service
 	Insights       *insights.Service
 	FiiDii         *fiidii.Service
+	OptionsAlgo    *optionsalgo.Repo
+	OptionsAlgoSvc *optionsalgo.Service
 	JWTSecret      string
 	GoogleClientID string
 }
@@ -88,6 +91,8 @@ type Server struct {
 	investors      *investors.Service
 	insights       *insights.Service
 	fiidii         *fiidii.Service
+	optionsAlgo    *optionsalgo.Repo
+	optionsAlgoSvc *optionsalgo.Service
 	jwtSecret      string
 	googleClientID string
 
@@ -130,6 +135,8 @@ func NewServer(d Deps) *Server {
 		investors:      d.Investors,
 		insights:       d.Insights,
 		fiidii:         d.FiiDii,
+		optionsAlgo:    d.OptionsAlgo,
+		optionsAlgoSvc: d.OptionsAlgoSvc,
 		jwtSecret:      d.JWTSecret,
 		googleClientID: d.GoogleClientID,
 	}
@@ -290,6 +297,23 @@ func (s *Server) Router() http.Handler {
 				// Featured stocks: the admin-curated list shown on the landing page.
 				r.Post("/admin/featured-stocks", s.handleAddFeaturedStock)
 				r.Delete("/admin/featured-stocks/{id}", s.handleRemoveFeaturedStock)
+
+				// Options-algo verification: read-only view of the 1-minute
+				// candle feed (see internal/optionsalgo) — proves the
+				// backfill/live-refresh loop is actually running.
+				r.Get("/admin/optionsalgo/candles", s.handleOptionsAlgoCandles)
+
+				// Phase 1 live-verification for the market-direction engine.
+				r.Get("/admin/optionsalgo/direction", s.handleOptionsAlgoDirection)
+
+				// Phase 2 live-verification for option chain + strike selection.
+				r.Get("/admin/optionsalgo/option-chain", s.handleOptionsAlgoOptionChain)
+
+				// Phase 0 live-verification for the two new Angel
+				// integrations (quote-full, option greeks) — manual testing
+				// only, no real callers, same purpose as /admin/angel/historical.
+				r.Get("/admin/angel/quote-full", s.handleAngelQuoteFullTest)
+				r.Get("/admin/angel/option-greeks", s.handleAngelOptionGreeksTest)
 			})
 
 			// Users, watchlists, prefs, telegram (Module 7)

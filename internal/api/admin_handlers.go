@@ -4,10 +4,132 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"tradenexus/internal/market"
 )
+
+// GET /v1/admin/angel/quote-full?exchange=NFO&tokens=42635,42636 — manual
+// live-verification for the new GetOptionQuoteFull integration (bid/ask/
+// volume/OI). No real callers — same "manual testing, admin-only" purpose as
+// handleAngelHistorical. Admin only.
+func (s *Server) handleAngelQuoteFullTest(w http.ResponseWriter, r *http.Request) {
+	exchange := r.URL.Query().Get("exchange")
+	tokensParam := r.URL.Query().Get("tokens")
+	if exchange == "" || tokensParam == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "exchange and tokens query params required"})
+		return
+	}
+	tokens := strings.Split(tokensParam, ",")
+	quotes, err := s.angel.GetOptionQuoteFull(r.Context(), exchange, tokens)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"quotes": quotes})
+}
+
+// GET /v1/admin/angel/option-greeks?name=NIFTY&expiry=08SEP2026 — manual
+// live-verification for the new GetOptionGreeks integration. Admin only.
+func (s *Server) handleAngelOptionGreeksTest(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	expiry := r.URL.Query().Get("expiry")
+	if name == "" || expiry == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and expiry query params required"})
+		return
+	}
+	greeks, err := s.angel.GetOptionGreeks(r.Context(), name, expiry)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"greeks": greeks})
+}
+
+// GET /v1/admin/optionsalgo/direction — live-verification for Phase 1's
+// market-direction engine (internal/optionsalgo/direction.go): runs
+// EvaluateDirection against real stored candles and returns both the
+// classification and the raw indicator values that produced it. Read-only,
+// no trade is placed or affected. Admin only.
+func (s *Server) handleOptionsAlgoDirection(w http.ResponseWriter, r *http.Request) {
+	result, inputs, err := s.optionsAlgoSvc.EvaluateDirection(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"direction": result.Direction,
+		"reason":    result.Reason,
+		"inputs":    inputs,
+	})
+}
+
+// GET /v1/admin/optionsalgo/option-chain — live-verification for Phase 2's
+// option chain + strike selection (internal/optionsalgo/chain.go,
+// chain_live.go): builds the real ATM+/-5 NIFTY chain (live bid/ask/volume/
+// OI/Greeks), runs the direction engine to decide which side to look at, and
+// applies delta+liquidity selection. Read-only, no trade is placed or
+// affected. Admin only.
+func (s *Server) handleOptionsAlgoOptionChain(w http.ResponseWriter, r *http.Request) {
+	direction, inputs, err := s.optionsAlgoSvc.EvaluateDirection(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "direction: " + err.Error()})
+		return
+	}
+	chain, err := s.optionsAlgoSvc.BuildOptionChain(r.Context(), inputs.Spot)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "chain: " + err.Error()})
+		return
+	}
+	selected, reason, ok := s.optionsAlgoSvc.SelectContract(direction.Direction, chain)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"direction":   direction.Direction,
+		"spot":        inputs.Spot,
+		"chain":       chain,
+		"selected":    selected,
+		"selected_ok": ok,
+		"reason":      reason,
+	})
+}
+
+// GET /v1/admin/optionsalgo/candles — the 1-minute candle history stored for
+// each tracked options-algo underlying (Nifty 50, SENSEX): latest bar time,
+// total bar count, and the most recent bars. Proves the backfill/live-refresh
+// loop (internal/optionsalgo) is actually populating data. Admin only.
+func (s *Server) handleOptionsAlgoCandles(w http.ResponseWriter, r *http.Request) {
+	underlyings, err := s.optionsAlgo.TrackedUnderlyings(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	type underlyingCandles struct {
+		Symbol           string          `json:"symbol"`
+		LatestCandleTime time.Time       `json:"latest_candle_time"`
+		Count            int             `json:"count"`
+		RecentBars       []market.Candle `json:"recent_bars"`
+	}
+	out := make([]underlyingCandles, 0, len(underlyings))
+	for _, u := range underlyings {
+		count, latest, err := s.optionsAlgo.Stats(r.Context(), u.ID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		bars, err := s.optionsAlgo.GetMinuteCandles(r.Context(), u.ID, 15)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		out = append(out, underlyingCandles{
+			Symbol:           u.TradingSymbol,
+			LatestCandleTime: latest,
+			Count:            count,
+			RecentBars:       bars,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"underlyings": out})
+}
 
 // parseAdminDate reads the required ?date=YYYY-MM-DD query param (IST).
 func parseAdminDate(w http.ResponseWriter, r *http.Request) (time.Time, bool) {
@@ -88,8 +210,8 @@ func (s *Server) handleRefetchCandlesByDate(w http.ResponseWriter, r *http.Reque
 		s.log.Info().Str("date", res.Date).Int("updated", res.Updated).Msg("admin refetch done")
 	}()
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"status": "started",
-		"date":   d.Format("2006-01-02"),
+		"status":  "started",
+		"date":    d.Format("2006-01-02"),
 		"message": "refetch started in background",
 	})
 }

@@ -93,7 +93,7 @@ func (c *Client) FetchIndexDerivatives(ctx context.Context) ([]Scrip, error) {
 	now := time.Now()
 	cutoff := now.Add(nearDatedWindow)
 	out := make([]Scrip, 0, 500)
-	var options, spots int
+	var options, spots, futures int
 	for _, s := range all {
 		switch {
 		case (s.ExchSeg == "NFO" || s.ExchSeg == "BFO") && s.InstrumentType == "OPTIDX" && indexUnderlyings[s.Name]:
@@ -106,9 +106,20 @@ func (c *Client) FetchIndexDerivatives(ctx context.Context) ([]Scrip, error) {
 		case s.InstrumentType == "AMXIDX" && indexSpotTokens[[2]string{s.ExchSeg, s.Name}]:
 			out = append(out, s)
 			spots++
+		// NIFTY futures — tracked only as a real-volume proxy for VWAP (the
+		// spot index itself always reports 0 volume, confirmed live), not for
+		// trading. NIFTY-only for now (see optionsalgo plan); SENSEX futures
+		// can be added the same way later if SENSEX rejoins the algo's scope.
+		case s.ExchSeg == "NFO" && s.InstrumentType == "FUTIDX" && s.Name == "NIFTY":
+			expiry, err := time.Parse("02Jan2006", s.Expiry)
+			if err != nil || expiry.Before(now) || expiry.After(cutoff) {
+				continue
+			}
+			out = append(out, s)
+			futures++
 		}
 	}
-	c.log.Info().Int("total", len(all)).Int("options", options).Int("index_spots", spots).Msg("angel: index derivatives loaded")
+	c.log.Info().Int("total", len(all)).Int("options", options).Int("index_spots", spots).Int("futures", futures).Msg("angel: index derivatives loaded")
 	return out, nil
 }
 

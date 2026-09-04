@@ -20,7 +20,7 @@ const RequiredDailyBars = 1300
 
 // Weekly aggregates daily candles into ISO-week candles.
 func Weekly(daily []market.Candle) []market.AggCandle {
-	return aggregate(daily, func(c market.Candle) string {
+	return Aggregate(daily, func(c market.Candle) string {
 		y, w := c.Time.In(market.IST).ISOWeek()
 		return fmt.Sprintf("%04d-W%02d", y, w)
 	})
@@ -28,17 +28,20 @@ func Weekly(daily []market.Candle) []market.AggCandle {
 
 // Monthly aggregates daily candles into calendar-month candles.
 func Monthly(daily []market.Candle) []market.AggCandle {
-	return aggregate(daily, func(c market.Candle) string {
+	return Aggregate(daily, func(c market.Candle) string {
 		t := c.Time.In(market.IST)
 		return fmt.Sprintf("%04d-%02d", t.Year(), int(t.Month()))
 	})
 }
 
-// aggregate groups consecutive daily candles by key() and rolls up OHLCV.
-// open = first day's open, close = last day's close, high/low = extremes,
-// volume = sum. Every group is confirmed except the most recent one, which is
-// still forming (weekly/monthly scanners are allowed to run on it anyway).
-func aggregate(daily []market.Candle, key func(market.Candle) string) []market.AggCandle {
+// Aggregate groups consecutive candles by key() and rolls up OHLCV. open =
+// first bar's open, close = last bar's close, high/low = extremes, volume =
+// sum. Every group is confirmed except the most recent one, which is still
+// forming. Exported (not just Weekly/Monthly's private implementation
+// detail) because the grouping logic is timeframe-agnostic — same rollup
+// math buckets daily candles into weeks/months here, and 1-minute candles
+// into 15-minute bars in internal/optionsalgo's direction engine.
+func Aggregate(daily []market.Candle, key func(market.Candle) string) []market.AggCandle {
 	if len(daily) == 0 {
 		return nil
 	}

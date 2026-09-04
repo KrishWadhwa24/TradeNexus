@@ -193,9 +193,13 @@ func main() {
 
 	// Options-algo underlying candle feed (Nifty/Sensex 1-minute bars) — a
 	// separate service from the equity engine/candles pipeline above; nothing
-	// here is read by, or writes to, anything the equity flow touches.
+	// here is read by, or writes to, anything the equity flow touches. Both
+	// the repo and the service are built unconditionally (cheap, no polling)
+	// so admin verification endpoints (candles, direction) still work even if
+	// polling is disabled.
+	optionsAlgoRepo := optionsalgo.NewRepo(pg.Pool)
+	optionsAlgoSvc := optionsalgo.New(angelClient, optionsAlgoRepo, calSvc, log)
 	if cfg.OptionsAlgoEnabled {
-		optionsAlgoSvc := optionsalgo.New(angelClient, optionsalgo.NewRepo(pg.Pool), calSvc, log)
 		optionsAlgoSvc.StartPolling(ctx)
 	}
 
@@ -294,6 +298,8 @@ func main() {
 			Investors:      investorsSvc,
 			Insights:       insightsSvc,
 			FiiDii:         fiidiiSvc,
+			OptionsAlgo:    optionsAlgoRepo,
+			OptionsAlgoSvc: optionsAlgoSvc,
 			JWTSecret:      cfg.JWTSecret,
 			GoogleClientID: cfg.GoogleClientID,
 		}).Router(),

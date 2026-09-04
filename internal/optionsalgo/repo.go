@@ -95,3 +95,12 @@ func (r *Repo) LatestCandleTime(ctx context.Context, instrumentID int64) (time.T
 		instrumentID).Scan(&t)
 	return t, err
 }
+
+// Stats returns the total stored bar count and latest bar time for one
+// instrument in a single query — used by the admin verification view.
+func (r *Repo) Stats(ctx context.Context, instrumentID int64) (count int, latest time.Time, err error) {
+	err = r.pool.QueryRow(ctx,
+		`SELECT COUNT(*), COALESCE(MAX(candle_time), 'epoch'::timestamptz) FROM minute_candles WHERE instrument_id = $1`,
+		instrumentID).Scan(&count, &latest)
+	return count, latest, err
+}

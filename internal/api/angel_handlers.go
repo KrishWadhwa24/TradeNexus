@@ -74,7 +74,8 @@ func (s *Server) handleDerivativesSync(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"fetched": res.Fetched, "upserted": res.Upserted,
-		"options": res.Options, "index_spots": res.IndexSpots, "deactivated": res.Deactivated,
+		"options": res.Options, "index_spots": res.IndexSpots, "futures": res.Futures,
+		"deactivated": res.Deactivated,
 	})
 }
 

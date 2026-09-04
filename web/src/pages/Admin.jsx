@@ -113,6 +113,23 @@ export default function Admin() {
     finally { setFBusy(false); }
   }
 
+  // Options-algo minute candles: verification view for the Nifty/Sensex
+  // 1-minute backfill+live-refresh loop (internal/optionsalgo).
+  const [oaData, setOaData] = useState(null);
+  const [oaErr, setOaErr] = useState("");
+  const [oaBusy, setOaBusy] = useState(false);
+
+  const loadOptionsAlgo = React.useCallback(async () => {
+    setOaBusy(true); setOaErr("");
+    try {
+      const r = await api.get("/v1/admin/optionsalgo/candles");
+      setOaData(r.underlyings || []);
+    } catch (e) { setOaErr(e.message); }
+    finally { setOaBusy(false); }
+  }, []);
+
+  useEffect(() => { loadOptionsAlgo(); }, [loadOptionsAlgo]);
+
   // Stock universe sync
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncResult, setSyncResult] = useState(null);
@@ -269,6 +286,58 @@ export default function Admin() {
         </button>
         {invMsg && <div className="msg" style={{ marginTop: 12 }}>{invMsg}</div>}
         {invErr && <div className="err" style={{ marginTop: 12 }}>{invErr}</div>}
+      </div>
+
+      <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+        <div className="section-title" style={{ margin: "0 0 6px" }}>Options-algo minute candles</div>
+        <div className="subtle" style={{ marginBottom: 14 }}>
+          Live verification for the Nifty/Sensex 1-minute backfill + refresh loop — confirms real
+          bars are being stored and updating, not just that the job runs without erroring.
+        </div>
+        <button className="btn-sm" onClick={loadOptionsAlgo} disabled={oaBusy}>
+          {oaBusy ? "Loading…" : "Refresh"}
+        </button>
+        {oaErr && <div className="err" style={{ marginTop: 12 }}>{oaErr}</div>}
+        {oaData && oaData.length === 0 && (
+          <div className="subtle" style={{ marginTop: 12 }}>
+            No tracked underlyings found (Nifty 50 / SENSEX not in the instruments table yet).
+          </div>
+        )}
+        {oaData && oaData.map((u) => (
+          <div key={u.symbol} style={{ marginTop: 16 }}>
+            <div className="cards">
+              <div className="card">
+                <div className="label">{u.symbol}</div>
+                <div className="value" style={{ fontSize: 20 }}>{u.count} bars</div>
+              </div>
+              <div className="card">
+                <div className="label">Latest bar</div>
+                <div className="value" style={{ fontSize: 14 }}>
+                  {u.count > 0 ? new Date(u.latest_candle_time).toLocaleString() : "—"}
+                </div>
+              </div>
+            </div>
+            {u.recent_bars && u.recent_bars.length > 0 && (
+              <table style={{ marginTop: 10 }}>
+                <thead>
+                  <tr><th>Time</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr>
+                </thead>
+                <tbody>
+                  {[...u.recent_bars].reverse().map((b) => (
+                    <tr key={b.time}>
+                      <td>{new Date(b.time).toLocaleTimeString()}</td>
+                      <td>{b.open}</td>
+                      <td>{b.high}</td>
+                      <td>{b.low}</td>
+                      <td>{b.close}</td>
+                      <td>{b.volume}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        ))}
       </div>
 
       <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
