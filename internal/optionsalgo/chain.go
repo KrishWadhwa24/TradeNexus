@@ -1,6 +1,10 @@
 package optionsalgo
 
-import "sort"
+import (
+	"sort"
+
+	"tradenexus/internal/market"
+)
 
 // OptionQuote is one contract's live snapshot — quote (LTP/bid/ask/volume/OI)
 // merged with its Greeks, keyed to the instrument that priced it.
@@ -35,6 +39,15 @@ func (q OptionQuote) SpreadPercent() float64 {
 		return 0
 	}
 	return (q.Ask - q.Bid) / mid * 100
+}
+
+// EffectivePrice prefers the live bid-ask midpoint over LTP — see
+// market.EffectivePrice's doc comment for why (a thinly-traded contract's
+// LTP can be a stale print sitting outside the live bid/ask entirely).
+// Used everywhere "the current fair price" matters: entry premium checks
+// and position sizing.
+func (q OptionQuote) EffectivePrice() float64 {
+	return market.EffectivePrice(q.LTP, q.Bid, q.Ask)
 }
 
 // NearestATMStrikes picks the strike from `strikes` closest to spot, then

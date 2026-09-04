@@ -135,7 +135,8 @@ func (s *Service) EvaluateAndMaybeEnter(ctx context.Context, algoUserID string) 
 		return out, nil
 	}
 
-	qty := PositionSize(acct.AlgoCashBalance, cfg.RiskPerTradePercent, selected.LTP, cfg.InitialStopLossPercent, selected.LotSize)
+	// EffectivePrice, not raw LTP — see OptionQuote.EffectivePrice.
+	qty := PositionSize(acct.AlgoCashBalance, cfg.RiskPerTradePercent, selected.EffectivePrice(), cfg.InitialStopLossPercent, selected.LotSize)
 	out.Sized = qty
 	if qty <= 0 {
 		d.Action = "SIZED_ZERO"
@@ -308,9 +309,11 @@ func (s *Service) savePositionState(ctx context.Context, tradeID int64, mgmt Man
 	}
 }
 
-// currentOptionPrice fetches a fresh LTP for one held contract via the
+// currentOptionPrice fetches a fresh price for one held contract via the
 // verified Quote-FULL integration — see GetInstrumentExchangeToken's doc
 // comment for why this is used instead of paper.Trades' CurrentPrice.
+// Returns EffectivePrice (bid-ask midpoint over a possibly-stale LTP), the
+// number actually used for stop-loss/trailing decisions.
 func (s *Service) currentOptionPrice(ctx context.Context, instrumentID int64) (float64, error) {
 	exchange, token, err := s.repo.GetInstrumentExchangeToken(ctx, instrumentID)
 	if err != nil {
@@ -323,7 +326,7 @@ func (s *Service) currentOptionPrice(ctx context.Context, instrumentID int64) (f
 	if len(quotes) == 0 || quotes[0].LTP <= 0 {
 		return 0, fmt.Errorf("no live quote available for instrument %d", instrumentID)
 	}
-	return quotes[0].LTP, nil
+	return quotes[0].EffectivePrice(), nil
 }
 
 // underlyingLostStructure reports whether NIFTY has moved against the side

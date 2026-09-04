@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"tradenexus/internal/market"
 )
 
 const pathQuoteFull = "/rest/secure/angelbroking/market/v1/quote/"
@@ -48,6 +50,12 @@ func (q QuoteFull) Bid() float64 {
 		return 0
 	}
 	return q.Depth.Buy[0].Price
+}
+
+// EffectivePrice prefers the live bid-ask midpoint over LTP — see
+// market.EffectivePrice's doc comment for why.
+func (q QuoteFull) EffectivePrice() float64 {
+	return market.EffectivePrice(q.LTP, q.Bid(), q.Ask())
 }
 
 // Ask returns the best (top-of-book) sell price, or 0 if depth is empty.

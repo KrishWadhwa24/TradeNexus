@@ -118,8 +118,13 @@ func (s *Server) instrumentParams(r *http.Request, id int64) (analytics.Params, 
 		if inst.OptionType != "" {
 			if tick, ok := s.live.GetLastTick(inst.Exchange, inst.SymbolToken); ok && tick.Price > 0 {
 				p.Price, p.LastClose, p.HasData = tick.Price, tick.Price, true
-			} else if ltp, err := s.angel.GetLTP(r.Context(), inst.Exchange, inst.TradingSymbol, inst.SymbolToken); err == nil && ltp > 0 {
-				p.Price, p.LastClose, p.HasData = ltp, ltp, true
+			} else if quotes, err := s.angel.GetOptionQuoteFull(r.Context(), inst.Exchange, []string{inst.SymbolToken}); err == nil && len(quotes) > 0 && quotes[0].LTP > 0 {
+				// EffectivePrice, not raw LTP — a thinly-traded option's LTP
+				// can be a stale print sitting entirely outside its own live
+				// bid/ask (confirmed live: NIFTY15SEP2622350CE showed LTP
+				// 2265.3 against a real 1370.7/1792.5 book).
+				px := quotes[0].EffectivePrice()
+				p.Price, p.LastClose, p.HasData = px, px, true
 			}
 		}
 		return p, nil

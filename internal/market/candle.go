@@ -14,6 +14,23 @@ func SameISTDate(a, b time.Time) bool {
 	return a.Year() == b.Year() && a.YearDay() == b.YearDay()
 }
 
+// EffectivePrice prefers the live bid-ask midpoint over a last-traded-price
+// (LTP) field when a valid quote exists, falling back to LTP only when
+// there's no live two-sided quote at all (an empty order book). LTP is
+// mechanically a lagging number — it only ever reports a trade that already
+// happened, and for a contract with thin/no recent trading (confirmed live:
+// a deep-in-the-money NIFTY option showed LTP far outside its own live bid/
+// ask), that trade can be stale while the live quote has moved on. Shared
+// across internal/angel, internal/paper, and internal/optionsalgo — the one
+// place this "what's the real current price" decision is made, rather than
+// duplicated per package.
+func EffectivePrice(ltp, bid, ask float64) float64 {
+	if bid > 0 && ask > 0 && bid <= ask {
+		return (bid + ask) / 2
+	}
+	return ltp
+}
+
 // Timeframe identifiers.
 const (
 	TF1D = "1D"

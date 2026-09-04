@@ -217,9 +217,19 @@ func (s *Service) displayPrice(ctx context.Context, inst instruments.Instrument)
 	return daily[len(daily)-1].Close, nil
 }
 
-// price resolves the current price: live LTP if available, else last daily close.
+// price resolves the current price: live LTP if available, else last daily
+// close. For an option specifically, uses the bid-ask-aware Quote-FULL path
+// instead of plain GetLTP — confirmed live that a thinly-traded option's LTP
+// can be a stale print sitting entirely outside its own live bid/ask (see
+// angel.QuoteFull.EffectivePrice), which GetLTP alone has no way to detect
+// (it returns only LTP, no depth). Equity behavior is completely unchanged —
+// this only adds a new branch in front of it for OptionType != "".
 func (s *Service) price(ctx context.Context, inst instruments.Instrument) (float64, error) {
-	if ltp, err := s.angel.GetLTP(ctx, inst.Exchange, inst.TradingSymbol, inst.SymbolToken); err == nil && ltp > 0 {
+	if inst.OptionType != "" {
+		if quotes, err := s.angel.GetOptionQuoteFull(ctx, inst.Exchange, []string{inst.SymbolToken}); err == nil && len(quotes) > 0 && quotes[0].LTP > 0 {
+			return quotes[0].EffectivePrice(), nil
+		}
+	} else if ltp, err := s.angel.GetLTP(ctx, inst.Exchange, inst.TradingSymbol, inst.SymbolToken); err == nil && ltp > 0 {
 		return ltp, nil
 	}
 	daily, err := s.candles.GetDaily(ctx, inst.ID)

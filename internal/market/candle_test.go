@@ -77,3 +77,39 @@ func TestIST(t *testing.T) {
 		t.Errorf("IST offset = %d seconds, want 19800", offset)
 	}
 }
+
+func TestEffectivePrice_PrefersLiveMidOverStaleLTP(t *testing.T) {
+	// The real case that surfaced this: NIFTY15SEP2622350CE showed LTP
+	// 2265.3 while the live book was bid 1370.7 / ask 1792.5 — the LTP sat
+	// entirely outside the spread (a stale print), and the real market
+	// value (confirmed against Groww: 1588) was close to the midpoint.
+	got := EffectivePrice(2265.3, 1370.7, 1792.5)
+	want := (1370.7 + 1792.5) / 2
+	if got != want {
+		t.Errorf("EffectivePrice = %v, want %v (midpoint)", got, want)
+	}
+}
+
+func TestEffectivePrice_FallsBackToLTPWithNoQuote(t *testing.T) {
+	if got := EffectivePrice(119.6, 0, 0); got != 119.6 {
+		t.Errorf("EffectivePrice with no bid/ask = %v, want 119.6 (LTP fallback)", got)
+	}
+}
+
+func TestEffectivePrice_FallsBackOnInvertedSpread(t *testing.T) {
+	// bid > ask should never happen for a real quote, but must not produce
+	// a nonsensical "midpoint" if it somehow does.
+	if got := EffectivePrice(100, 110, 90); got != 100 {
+		t.Errorf("EffectivePrice with bid>ask = %v, want 100 (LTP fallback)", got)
+	}
+}
+
+func TestEffectivePrice_ActiveContract_LTPAndMidAgree(t *testing.T) {
+	// The common case: an actively-traded contract where LTP sits right
+	// inside a tight live spread — the fix is a no-op here.
+	got := EffectivePrice(119.6, 119.65, 120.35)
+	want := (119.65 + 120.35) / 2
+	if got != want {
+		t.Errorf("EffectivePrice = %v, want %v", got, want)
+	}
+}

@@ -42,11 +42,12 @@ func (s *Service) EvaluateEntryForSelected(ctx context.Context, direction Direct
 	currentVol := float64(bars[len(bars)-1].Volume)
 
 	in := EntryInputs{
-		Direction:              direction,
-		Spot:                   niftyInputs.Spot,
-		VWAP:                   niftyInputs.VWAP,
-		ATR:                    niftyInputs.ATR,
-		OptionLTP:              selected.LTP,
+		Direction: direction,
+		Spot:      niftyInputs.Spot,
+		VWAP:      niftyInputs.VWAP,
+		ATR:       niftyInputs.ATR,
+		// EffectivePrice, not raw LTP — see OptionQuote.EffectivePrice.
+		OptionLTP:              selected.EffectivePrice(),
 		OptionOR:               or,
 		OptionVolume:           currentVol,
 		OptionAvgVolume:        avgVol,
