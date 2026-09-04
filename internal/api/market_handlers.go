@@ -109,6 +109,19 @@ func (s *Server) instrumentParams(r *http.Request, id int64) (analytics.Params, 
 	p.InstrumentID = id
 	p.Symbol = inst.TradingSymbol
 	if !p.HasData {
+		// Individual option contracts never have daily candles stored (only
+		// the equity/index daily pipeline populates those) — without this,
+		// every option would show a permanently blank price on the generic
+		// Trade screen, even with a real live tick or LTP available. This
+		// path is unreachable for any non-option instrument (OptionType is
+		// always "" for equities), so existing equity behavior is untouched.
+		if inst.OptionType != "" {
+			if tick, ok := s.live.GetLastTick(inst.Exchange, inst.SymbolToken); ok && tick.Price > 0 {
+				p.Price, p.LastClose, p.HasData = tick.Price, tick.Price, true
+			} else if ltp, err := s.angel.GetLTP(r.Context(), inst.Exchange, inst.TradingSymbol, inst.SymbolToken); err == nil && ltp > 0 {
+				p.Price, p.LastClose, p.HasData = ltp, ltp, true
+			}
+		}
 		return p, nil
 	}
 
@@ -142,4 +155,3 @@ func (s *Server) instrumentParams(r *http.Request, id int64) (analytics.Params, 
 	}
 	return p, nil
 }
-

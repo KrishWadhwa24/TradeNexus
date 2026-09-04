@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"tradenexus/internal/market"
+	"tradenexus/internal/optionsalgo"
 )
 
 // GET /v1/admin/angel/quote-full?exchange=NFO&tokens=42635,42636 — manual
@@ -129,6 +131,85 @@ func (s *Server) handleOptionsAlgoEntry(w http.ResponseWriter, r *http.Request) 
 		"selection_reason": selectionReason,
 		"entry":            entry,
 	})
+}
+
+// POST /v1/admin/optionsalgo/enter?user_id=... — manually fire one
+// evaluate-and-maybe-enter pass for Phase 4b's execution bridge. Places a
+// REAL paper trade under the given user's algo balance if every check
+// clears — this is the actual execution path, not a read-only preview like
+// the other optionsalgo debug endpoints. Admin only, used to verify the
+// pipeline live before it's wired into the automatic per-minute loop.
+func (s *Server) handleOptionsAlgoEnter(w http.ResponseWriter, r *http.Request) {
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id query param required"})
+		return
+	}
+	out, err := s.optionsAlgoSvc.EvaluateAndMaybeEnter(r.Context(), userID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// POST /v1/admin/optionsalgo/manage?user_id=... — manually fire one
+// management tick over the given user's open algo positions. Admin only.
+func (s *Server) handleOptionsAlgoManage(w http.ResponseWriter, r *http.Request) {
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id query param required"})
+		return
+	}
+	out, err := s.optionsAlgoSvc.ManageOpenPositions(r.Context(), userID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"outcomes": out})
+}
+
+// GET /v1/admin/optionsalgo/config — every tunable script value (risk%, stop/
+// breakeven/trailing %, delta band, spread/volume filters, EMA/ATR periods,
+// OR window, VWAP distance limit, strikes-each-side, max trades/day). Admin
+// only.
+func (s *Server) handleGetAlgoConfig(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.optionsAlgo.GetConfig(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+// PUT /v1/admin/optionsalgo/config — overwrites the single config row. The
+// frontend settings form sends the full config back (mirroring what
+// handleGetAlgoConfig returned), avoiding partial-update ambiguity. Admin
+// only.
+func (s *Server) handleUpdateAlgoConfig(w http.ResponseWriter, r *http.Request) {
+	var cfg optionsalgo.AlgoConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if err := s.optionsAlgo.UpdateConfig(r.Context(), cfg); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+// GET /v1/admin/optionsalgo/decisions?limit=50 — the algo's full decision/
+// audit log, newest first: every evaluation tick (traded or not) and every
+// exit, with the full context that produced it. Admin only.
+func (s *Server) handleOptionsAlgoDecisions(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	decisions, err := s.optionsAlgo.RecentDecisions(r.Context(), limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"decisions": decisions})
 }
 
 // GET /v1/admin/optionsalgo/candles — the 1-minute candle history stored for

@@ -74,6 +74,11 @@ export default function Trade({ userId }) {
     setQ("");
     setErr("");
     setMsg("");
+    // Reset to 1 (lot, for an option; share, for an equity) — a leftover
+    // value from a previously-selected instrument would be interpreted
+    // under the wrong unit otherwise (e.g. "65 shares" carrying over as
+    // "65 lots" after switching to an option).
+    setQty(1);
     // Short is only valid intraday — if a prior selection had it set,
     // reset to a safe default rather than silently submitting an invalid
     // combination.
@@ -101,6 +106,13 @@ export default function Trade({ userId }) {
     if (pt === "DELIVERY" && side === "SELL") setSide("BUY");
   }
 
+  const isOption = selected?.option_type === "CE" || selected?.option_type === "PE";
+  const lotSize = isOption ? (selected?.lot_size || 1) : 1;
+  // qty is always "how many of the input unit" — lots for an option, plain
+  // shares for an equity. actualQuantity is what the backend needs (real
+  // units), and what validateOptionLotSize (Step 1) checks server-side.
+  const actualQuantity = Number(qty || 0) * lotSize;
+
   async function submit() {
     if (!selected || !userId) return;
     setBusy(true);
@@ -109,7 +121,7 @@ export default function Trade({ userId }) {
     try {
       const trade = await api.post(`/v1/users/${userId}/paper/trades/open`, {
         instrument_id: selected.id,
-        quantity: Number(qty),
+        quantity: actualQuantity,
         side,
         product_type: productType,
       });
@@ -124,7 +136,12 @@ export default function Trade({ userId }) {
     }
   }
 
-  const margin = price != null ? MARGIN_FRACTION[productType] * price * (Number(qty) || 0) : null;
+  // An option always costs its full premium — no leverage/margin-financing
+  // concept exists for a long option purchase, unlike equity intraday (20%)
+  // vs delivery (100%). Mirrors internal/paper/intraday.go's marginFraction
+  // (isOption forces 1.0 regardless of productType).
+  const marginFraction = isOption ? 1 : MARGIN_FRACTION[productType];
+  const margin = price != null ? marginFraction * price * actualQuantity : null;
   const intraOpen = intradayWindowOpen();
   const canShort = productType === "INTRADAY" && intraOpen;
   const canSubmit = selected && price != null && Number(qty) > 0 && !busy && (productType !== "INTRADAY" || intraOpen);
@@ -179,8 +196,9 @@ export default function Trade({ userId }) {
 
           <div className="row" style={{ gap: 20, flexWrap: "wrap", marginBottom: 16 }}>
             <label style={{ display: "grid", gap: 6 }}>
-              <span className="subtle">Quantity</span>
-              <input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} style={{ width: 100 }} />
+              <span className="subtle">{isOption ? `Lots (× ${lotSize})` : "Quantity"}</span>
+              <input type="number" min="1" step="1" value={qty} onChange={(e) => setQty(e.target.value)} style={{ width: 100 }} />
+              {isOption && <span className="subtle" style={{ fontSize: 12 }}>= {actualQuantity} units</span>}
             </label>
 
             <div style={{ display: "grid", gap: 6 }}>

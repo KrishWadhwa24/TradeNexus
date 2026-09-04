@@ -6,6 +6,30 @@ import (
 	"tradenexus/internal/instruments"
 )
 
+func TestBalanceColumn(t *testing.T) {
+	if got := balanceColumn(SourceOptionsAlgo); got != "algo_cash_balance" {
+		t.Errorf("balanceColumn(%q) = %q, want algo_cash_balance", SourceOptionsAlgo, got)
+	}
+	for _, source := range []string{"web", "", "signal", "anything-else"} {
+		if got := balanceColumn(source); got != "cash_balance" {
+			t.Errorf("balanceColumn(%q) = %q, want cash_balance (only SourceOptionsAlgo should route elsewhere)", source, got)
+		}
+	}
+}
+
+func TestAccount_AvailableBalance(t *testing.T) {
+	acct := Account{CashBalance: 50000, AlgoCashBalance: 250000}
+	if got := acct.availableBalance(SourceOptionsAlgo); got != 250000 {
+		t.Errorf("availableBalance(options-algo) = %v, want 250000", got)
+	}
+	if got := acct.availableBalance("web"); got != 50000 {
+		t.Errorf("availableBalance(web) = %v, want 50000", got)
+	}
+	if got := acct.availableBalance(""); got != 50000 {
+		t.Errorf("availableBalance(\"\") = %v, want 50000 (default/manual source)", got)
+	}
+}
+
 func TestSettleAmounts(t *testing.T) {
 	cases := []struct {
 		name           string

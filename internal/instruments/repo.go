@@ -109,7 +109,7 @@ func (r *Repo) Search(ctx context.Context, q string, limit int) ([]Instrument, e
 		return []Instrument{}, nil
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, symbol_token, exchange, trading_symbol, name, lot_size
+		SELECT id, symbol_token, exchange, trading_symbol, name, lot_size, COALESCE(option_type, '')
 		FROM instruments
 		WHERE active = TRUE
 		  AND (lower(trading_symbol) LIKE $1 OR lower(name) LIKE $2)
@@ -124,7 +124,7 @@ func (r *Repo) Search(ctx context.Context, q string, limit int) ([]Instrument, e
 	var out []Instrument
 	for rows.Next() {
 		var it Instrument
-		if err := rows.Scan(&it.ID, &it.SymbolToken, &it.Exchange, &it.TradingSymbol, &it.Name, &it.LotSize); err != nil {
+		if err := rows.Scan(&it.ID, &it.SymbolToken, &it.Exchange, &it.TradingSymbol, &it.Name, &it.LotSize, &it.OptionType); err != nil {
 			return nil, err
 		}
 		out = append(out, it)

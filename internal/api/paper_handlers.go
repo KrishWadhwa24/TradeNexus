@@ -149,3 +149,48 @@ func (s *Server) handlePaperSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, sum)
 }
+
+// PUT /v1/users/{uid}/paper/algo-capital — mirrors handleSetCapital, scoped
+// to algo_cash_balance instead of cash_balance. Not admin-gated, same as
+// handleSetCapital: a user setting their own algo capital is no different
+// from setting their own regular capital.
+func (s *Server) handleSetAlgoCapital(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Capital float64 `json:"capital"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	acct, err := s.paper.SetAlgoCapital(r.Context(), chi.URLParam(r, "uid"), body.Capital)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, acct)
+}
+
+// GET /v1/users/{uid}/paper/algo-stats — win rate/expectancy/profit-factor
+// breakdown over CLOSED algo trades. Always computed, even below the
+// script's 30-trade "ready to tune" threshold — ReadyForTuning tells the
+// frontend whether to treat the numbers as meaningful yet.
+func (s *Server) handleAlgoStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.optionsAlgoSvc.Stats(r.Context(), chi.URLParam(r, "uid"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// GET /v1/users/{uid}/paper/algo-summary — the same rollup as
+// handlePaperSummary but for options-algo trades only, against
+// algo_cash_balance — powers the Algo Trades section of the Options page.
+func (s *Server) handleAlgoSummary(w http.ResponseWriter, r *http.Request) {
+	sum, err := s.paper.AlgoSummary(r.Context(), chi.URLParam(r, "uid"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, sum)
+}

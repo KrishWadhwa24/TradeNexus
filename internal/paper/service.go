@@ -41,11 +41,29 @@ func New(pool *pgxpool.Pool, ang *angel.Client, c *candles.Repo, inst *instrumen
 	return &Service{pool: pool, angel: ang, candles: c, inst: inst, signals: sig, cal: cal, live: liveHub, log: log}
 }
 
-// Account is a user's paper account.
+// Account is a user's paper account. AlgoCashBalance is a second, separate
+// balance for options-algo trades (source == SourceOptionsAlgo) — kept apart
+// from CashBalance so the algo's capital and P&L never mix with the user's
+// regular manual paper trading, per the user's explicit request to keep them
+// separate while still sharing one account/login.
 type Account struct {
 	UserID          string  `json:"user_id"`
 	StartingCapital float64 `json:"starting_capital"`
 	CashBalance     float64 `json:"cash_balance"`
+	AlgoCashBalance float64 `json:"algo_cash_balance"`
+}
+
+// availableBalance returns the balance a trade with this source draws
+// against — AlgoCashBalance for options-algo trades, CashBalance for
+// everything else. Centralizes the same source->balance decision the
+// debit/creditBalance helpers (intraday.go) use for the actual SQL, so the
+// insufficient-funds checks in OpenPosition/ConvertToDelivery can never
+// check a different balance than the one that actually gets debited.
+func (a Account) availableBalance(source string) float64 {
+	if source == SourceOptionsAlgo {
+		return a.AlgoCashBalance
+	}
+	return a.CashBalance
 }
 
 // Trade is one paper trade.
@@ -61,7 +79,15 @@ type Trade struct {
 	// ConvertToDelivery, FillScheduled, Summary — can price it correctly
 	// without a second instrument lookup. See marginFraction: an option
 	// always margins at 100% of premium, never the equity leverage fraction.
-	OptionType  string     `json:"option_type,omitempty"`
+	OptionType string `json:"option_type,omitempty"`
+	// Source is what originated this trade ("web" for manual buys,
+	// "options-algo" for the automated strategy) — carried on Trade for the
+	// same reason OptionType is: every function that already has a Trade in
+	// hand (closeAtPrice, closePartialAtPrice, ConvertToDelivery,
+	// FillScheduled, CancelPending) needs it to know which account balance
+	// (CashBalance vs AlgoCashBalance) to debit/credit, without a second
+	// lookup.
+	Source      string     `json:"source,omitempty"`
 	SignalID    *int64     `json:"signal_id,omitempty"`
 	Side        string     `json:"side"`
 	ProductType string     `json:"product_type"` // DELIVERY | INTRADAY
@@ -132,8 +158,8 @@ func (s *Service) GetAccount(ctx context.Context, userID string) (Account, error
 	var a Account
 	a.UserID = userID
 	err := s.pool.QueryRow(ctx,
-		`SELECT starting_capital, cash_balance FROM paper_accounts WHERE user_id=$1::uuid`, userID).
-		Scan(&a.StartingCapital, &a.CashBalance)
+		`SELECT starting_capital, cash_balance, algo_cash_balance FROM paper_accounts WHERE user_id=$1::uuid`, userID).
+		Scan(&a.StartingCapital, &a.CashBalance, &a.AlgoCashBalance)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return a, nil // zeroed account
 	}
@@ -348,7 +374,7 @@ func (s *Service) FillScheduled(ctx context.Context) (int, error) {
 			continue
 		}
 		_, e1 := tx.Exec(ctx, `UPDATE paper_trades SET status='OPEN', entry_price=$2, entry_time=now(), reserved_margin=0 WHERE id=$1`, id, px)
-		_, e2 := tx.Exec(ctx, `UPDATE paper_accounts SET cash_balance=cash_balance-$2, updated_at=now() WHERE user_id=$1::uuid`, t.userID, delta)
+		e2 := debitBalance(ctx, tx, t.userID, t.Source, delta)
 		if e1 != nil || e2 != nil {
 			_ = tx.Rollback(ctx)
 			s.log.Error().Err(errors.Join(e1, e2)).Int64("trade_id", id).Msg("fill scheduled: update failed")
@@ -471,9 +497,7 @@ func (s *Service) CancelPending(ctx context.Context, tradeID int64) (Trade, erro
 		if _, err := tx.Exec(ctx, `UPDATE paper_trades SET status='CANCELLED', reserved_margin=0 WHERE id=$1`, tradeID); err != nil {
 			return Trade{}, err
 		}
-		if _, err := tx.Exec(ctx,
-			`UPDATE paper_accounts SET cash_balance = cash_balance + $2, updated_at=now() WHERE user_id=$1::uuid`,
-			t.userID, t.reservedMargin); err != nil {
+		if err := creditBalance(ctx, tx, t.userID, t.Source, t.reservedMargin); err != nil {
 			return Trade{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -493,7 +517,7 @@ func (s *Service) CancelPending(ctx context.Context, tradeID int64) (Trade, erro
 // open positions.
 func (s *Service) Trades(ctx context.Context, userID string) ([]Trade, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT t.id, t.instrument_id, i.trading_symbol, COALESCE(i.option_type, ''), t.signal_id, t.side, t.product_type, t.quantity,
+		SELECT t.id, t.instrument_id, i.trading_symbol, COALESCE(i.option_type, ''), COALESCE(t.source, ''), t.signal_id, t.side, t.product_type, t.quantity,
 		       t.entry_price, t.entry_time, t.exit_price, t.exit_time, t.status, t.pnl, t.pending_close_qty
 		FROM paper_trades t JOIN instruments i ON i.id = t.instrument_id
 		WHERE t.user_id = $1::uuid ORDER BY t.created_at DESC`, userID)
@@ -504,7 +528,7 @@ func (s *Service) Trades(ctx context.Context, userID string) ([]Trade, error) {
 	var out []Trade
 	for rows.Next() {
 		var t Trade
-		if err := rows.Scan(&t.ID, &t.InstrumentID, &t.Symbol, &t.OptionType, &t.SignalID, &t.Side, &t.ProductType, &t.Quantity,
+		if err := rows.Scan(&t.ID, &t.InstrumentID, &t.Symbol, &t.OptionType, &t.Source, &t.SignalID, &t.Side, &t.ProductType, &t.Quantity,
 			&t.EntryPrice, &t.EntryTime, &t.ExitPrice, &t.ExitTime, &t.Status, &t.PnL, &t.PendingCloseQty); err != nil {
 			return nil, err
 		}
@@ -545,17 +569,12 @@ func (s *Service) OpenInstrumentIDs(ctx context.Context, userID string) ([]int64
 	return out, rows.Err()
 }
 
-// Summary computes the P&L rollup for the profile + paper analytics views.
-func (s *Service) Summary(ctx context.Context, userID string) (PnLSummary, error) {
-	acct, err := s.GetAccount(ctx, userID)
-	if err != nil {
-		return PnLSummary{}, err
-	}
-	trades, err := s.Trades(ctx, userID)
-	if err != nil {
-		return PnLSummary{}, err
-	}
-	sum := PnLSummary{StartingCapital: acct.StartingCapital, CashBalance: acct.CashBalance}
+// aggregateSummary is the shared P&L rollup math behind both Summary and
+// AlgoSummary — same aggregation, just over a different (pre-filtered)
+// trade slice and cash balance, so the two summaries can never compute this
+// differently.
+func aggregateSummary(startingCapital, cashBalance float64, trades []Trade) PnLSummary {
+	sum := PnLSummary{StartingCapital: startingCapital, CashBalance: cashBalance}
 	for _, t := range trades {
 		switch t.Status {
 		case "OPEN":
@@ -587,19 +606,92 @@ func (s *Service) Summary(ctx context.Context, userID string) (PnLSummary, error
 	}
 	sum.TotalPnL = sum.RealizedTotal + sum.Unrealized
 	sum.Equity = sum.CashBalance + sum.MarketValue
-	return sum, nil
+	return sum
+}
+
+// Summary computes the P&L rollup for the profile + paper analytics views —
+// manual/equity trading only. Explicitly excludes options-algo trades (which
+// share the same user_id but a separate balance, AlgoCashBalance) so the
+// regular dashboard is never polluted by algo P&L; see AlgoSummary for that.
+func (s *Service) Summary(ctx context.Context, userID string) (PnLSummary, error) {
+	acct, err := s.GetAccount(ctx, userID)
+	if err != nil {
+		return PnLSummary{}, err
+	}
+	trades, err := s.Trades(ctx, userID)
+	if err != nil {
+		return PnLSummary{}, err
+	}
+	nonAlgo := make([]Trade, 0, len(trades))
+	for _, t := range trades {
+		if t.Source != SourceOptionsAlgo {
+			nonAlgo = append(nonAlgo, t)
+		}
+	}
+	return aggregateSummary(acct.StartingCapital, acct.CashBalance, nonAlgo), nil
+}
+
+// AlgoSummary is Summary's counterpart for options-algo trades — same
+// aggregation, filtered to only source==SourceOptionsAlgo trades, against
+// AlgoCashBalance instead of CashBalance. Powers the algo-trading UI section.
+func (s *Service) AlgoSummary(ctx context.Context, userID string) (PnLSummary, error) {
+	acct, err := s.GetAccount(ctx, userID)
+	if err != nil {
+		return PnLSummary{}, err
+	}
+	trades, err := s.Trades(ctx, userID)
+	if err != nil {
+		return PnLSummary{}, err
+	}
+	algoTrades := make([]Trade, 0, len(trades))
+	for _, t := range trades {
+		if t.Source == SourceOptionsAlgo {
+			algoTrades = append(algoTrades, t)
+		}
+	}
+	return aggregateSummary(acct.StartingCapital, acct.AlgoCashBalance, algoTrades), nil
+}
+
+// SetAlgoCapital sets the algo account's capital and resets algo_cash_balance
+// to capital minus the cost of any currently-open algo positions — mirrors
+// SetCapital exactly, scoped to source=options-algo instead of all trades.
+func (s *Service) SetAlgoCapital(ctx context.Context, userID string, capital float64) (Account, error) {
+	if capital < 0 {
+		return Account{}, errors.New("capital must be >= 0")
+	}
+	var openCost float64
+	_ = s.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(entry_price*quantity),0) FROM paper_trades WHERE user_id=$1::uuid AND status='OPEN' AND source=$2`,
+		userID, SourceOptionsAlgo).Scan(&openCost)
+
+	algoCash := capital - openCost
+	// Upsert, not a plain UPDATE: a user who's never touched paper trading
+	// yet (no GetAccount/SetCapital call, so no paper_accounts row at all)
+	// would otherwise have this silently affect zero rows. starting_capital/
+	// cash_balance default to 0 for a brand-new row here — harmless, and
+	// self-corrects the moment the user's own SetCapital runs (its ON
+	// CONFLICT explicitly overwrites both).
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO paper_accounts (user_id, starting_capital, cash_balance, algo_cash_balance, updated_at)
+		VALUES ($1::uuid, 0, 0, $2, now())
+		ON CONFLICT (user_id) DO UPDATE SET algo_cash_balance = EXCLUDED.algo_cash_balance, updated_at = now()`,
+		userID, algoCash)
+	if err != nil {
+		return Account{}, err
+	}
+	return s.GetAccount(ctx, userID)
 }
 
 // getTrade loads one trade (with its owner user id, used internally).
 func (s *Service) getTrade(ctx context.Context, id int64) (Trade, error) {
 	var t Trade
 	err := s.pool.QueryRow(ctx, `
-		SELECT t.id, t.user_id::text, t.instrument_id, i.trading_symbol, COALESCE(i.option_type, ''), t.signal_id, t.side, t.product_type,
+		SELECT t.id, t.user_id::text, t.instrument_id, i.trading_symbol, COALESCE(i.option_type, ''), COALESCE(t.source, ''), t.signal_id, t.side, t.product_type,
 		       t.quantity, t.entry_price, t.entry_time, t.exit_price, t.exit_time, t.status, t.pnl,
 		       t.pending_close_qty, t.reserved_margin
 		FROM paper_trades t JOIN instruments i ON i.id = t.instrument_id
 		WHERE t.id = $1`, id).
-		Scan(&t.ID, &t.userID, &t.InstrumentID, &t.Symbol, &t.OptionType, &t.SignalID, &t.Side, &t.ProductType,
+		Scan(&t.ID, &t.userID, &t.InstrumentID, &t.Symbol, &t.OptionType, &t.Source, &t.SignalID, &t.Side, &t.ProductType,
 			&t.Quantity, &t.EntryPrice, &t.EntryTime, &t.ExitPrice, &t.ExitTime, &t.Status, &t.PnL,
 			&t.PendingCloseQty, &t.reservedMargin)
 	if errors.Is(err, pgx.ErrNoRows) {

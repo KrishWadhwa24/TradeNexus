@@ -79,3 +79,30 @@ func (r *Repo) OptionContractsForStrikes(ctx context.Context, underlying string,
 	}
 	return out, rows.Err()
 }
+
+// GetInstrumentExpiry returns one instrument's expiry date (nil for a
+// non-option instrument) — used by the management tick's expiry-day
+// force-exit check. Read-only borrow of the instruments table, same
+// convention as everything else in this file.
+func (r *Repo) GetInstrumentExpiry(ctx context.Context, instrumentID int64) (*time.Time, error) {
+	var expiry *time.Time
+	err := r.pool.QueryRow(ctx, `SELECT expiry_date FROM instruments WHERE id = $1`, instrumentID).Scan(&expiry)
+	return expiry, err
+}
+
+// GetInstrumentExchangeToken returns one instrument's exchange + symbol
+// token — used by the management tick to fetch a fresh live LTP
+// (GetOptionQuoteFull) for a held position. Deliberately NOT relying on
+// paper.Trades' CurrentPrice for this: that only resolves via the live-tick
+// cache (populated only for instruments some client has actively
+// subscribed, which nothing does for a purchased option contract) or daily
+// candles (never stored for individual option contracts) — so it would be
+// nil on essentially every tick for an algo position, silently disabling
+// stop/trailing management. A direct Quote-FULL poll (same call already
+// verified live in Phase 0) is cheap at the current "max 1 open position"
+// scale and doesn't depend on some other part of the app happening to have
+// the same contract open in a browser tab.
+func (r *Repo) GetInstrumentExchangeToken(ctx context.Context, instrumentID int64) (exchange, token string, err error) {
+	err = r.pool.QueryRow(ctx, `SELECT exchange, symbol_token FROM instruments WHERE id = $1`, instrumentID).Scan(&exchange, &token)
+	return exchange, token, err
+}

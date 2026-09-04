@@ -313,6 +313,22 @@ func (s *Server) Router() http.Handler {
 				// -> select -> entry pipeline.
 				r.Get("/admin/optionsalgo/entry", s.handleOptionsAlgoEntry)
 
+				// Phase 4b: the real execution bridge — places/manages
+				// actual paper trades. Admin only, for live verification
+				// before automatic wiring.
+				r.Post("/admin/optionsalgo/enter", s.handleOptionsAlgoEnter)
+				r.Post("/admin/optionsalgo/manage", s.handleOptionsAlgoManage)
+
+				// Phase 4b: settings — every script constant, frontend-
+				// editable. One shared row for the whole algo (not
+				// per-user), so this stays admin-gated like the rest of
+				// this group.
+				r.Get("/admin/optionsalgo/config", s.handleGetAlgoConfig)
+				r.Put("/admin/optionsalgo/config", s.handleUpdateAlgoConfig)
+
+				// Phase 5: full decision/audit log.
+				r.Get("/admin/optionsalgo/decisions", s.handleOptionsAlgoDecisions)
+
 				// Phase 0 live-verification for the two new Angel
 				// integrations (quote-full, option greeks) — manual testing
 				// only, no real callers, same purpose as /admin/angel/historical.
@@ -374,14 +390,23 @@ func (s *Server) Router() http.Handler {
 
 			// Paper trading (Module 9)
 			r.Put("/users/{uid}/paper/capital", s.handleSetCapital)
+			r.Put("/users/{uid}/paper/algo-capital", s.handleSetAlgoCapital)
 			r.Get("/users/{uid}/paper/account", s.handleGetAccount)
 			r.Post("/users/{uid}/paper/trades", s.handleBuy)
 			r.Post("/users/{uid}/paper/trades/open", s.handleOpenPosition)
 			r.Get("/users/{uid}/paper/trades", s.handleListTrades)
 			r.Get("/users/{uid}/paper/summary", s.handlePaperSummary)
+			r.Get("/users/{uid}/paper/algo-summary", s.handleAlgoSummary)
+			r.Get("/users/{uid}/paper/algo-stats", s.handleAlgoStats)
 			r.Post("/paper/trades/{tradeId}/close", s.handleCloseTrade)
 			r.Post("/paper/trades/{tradeId}/convert", s.handleConvertToDelivery)
 			r.Post("/paper/trades/{tradeId}/cancel", s.handleCancelScheduled)
+
+			// Options-algo: any logged-in user can view the live option
+			// chain and buy manually (via the existing generic
+			// /paper/trades/open above, under their own regular balance —
+			// this endpoint is read-only).
+			r.Get("/optionsalgo/chain", s.handleOptionChainPublic)
 		}) // end protected group
 	})
 

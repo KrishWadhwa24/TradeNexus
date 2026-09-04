@@ -11,6 +11,7 @@ import (
 	"tradenexus/internal/cronx"
 	"tradenexus/internal/instruments"
 	"tradenexus/internal/market"
+	"tradenexus/internal/paper"
 )
 
 // backfillWindow is intentionally wide — verified live against Angel that
@@ -35,12 +36,28 @@ type Service struct {
 	repo  *Repo
 	cal   *calendar.Service
 	log   zerolog.Logger
+	// paper is used only by the execution bridge (execute.go) — placing and
+	// managing the actual paper trades. Building/refreshing candles above
+	// never touches it. May be nil in tests that only exercise the candle
+	// pipeline.
+	paper *paper.Service
+	// algoUserID is the account StartPolling auto-trades under — empty
+	// means auto-trading is off (candle collection is unaffected either
+	// way). Set once at startup via SetAlgoUserID, after config.
+	// OptionsAlgoUserEmail is resolved to a real user ID.
+	algoUserID string
 }
 
 // New builds the service.
-func New(angelClient *angel.Client, repo *Repo, cal *calendar.Service, log zerolog.Logger) *Service {
-	return &Service{angel: angelClient, repo: repo, cal: cal, log: log}
+func New(angelClient *angel.Client, repo *Repo, cal *calendar.Service, paperSvc *paper.Service, log zerolog.Logger) *Service {
+	return &Service{angel: angelClient, repo: repo, cal: cal, paper: paperSvc, log: log}
 }
+
+// SetAlgoUserID sets which account StartPolling's automatic tick trades
+// under. Not a constructor param because resolving the configured email to
+// a user ID happens after this Service already needs to exist (main.go
+// wires optionsalgo before it has a resolved ID in hand).
+func (s *Service) SetAlgoUserID(userID string) { s.algoUserID = userID }
 
 // backfillOne pulls the full backfillWindow of 1-minute bars for one
 // instrument and upserts them. Shared by Backfill (underlyings) and
@@ -189,6 +206,19 @@ func (s *Service) StartPolling(ctx context.Context) {
 					}
 					if err := s.RefreshFuturesLatest(c); err != nil {
 						s.log.Error().Err(err).Msg("optionsalgo: futures refresh failed")
+					}
+					if s.algoUserID == "" {
+						return
+					}
+					// Manage existing positions before considering a new
+					// entry — an exit this same tick frees up the
+					// max-1-open-position slot for EvaluateAndMaybeEnter to
+					// use right away, instead of waiting a full extra minute.
+					if _, err := s.ManageOpenPositions(c, s.algoUserID); err != nil {
+						s.log.Error().Err(err).Msg("optionsalgo: manage positions failed")
+					}
+					if _, err := s.EvaluateAndMaybeEnter(c, s.algoUserID); err != nil {
+						s.log.Error().Err(err).Msg("optionsalgo: evaluate entry failed")
 					}
 				})
 			}

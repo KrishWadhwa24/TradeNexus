@@ -127,7 +127,13 @@ func TestLatestCandleTime_NoRows(t *testing.T) {
 	}
 }
 
-func TestGetConfig_SeededDefaultsMatchScript(t *testing.T) {
+// TestGetConfig_IsWellFormed checks structural sanity, not exact default
+// values — algo_config is a single, live-editable row (that's the entire
+// point of Phase 4a), so a prior live edit (a real admin changing risk% for
+// a day, or an earlier test run) legitimately leaves it holding non-default
+// values. Exact round-trip correctness is covered separately by
+// TestUpdateConfig_RoundTrips, which saves and restores the original row.
+func TestGetConfig_IsWellFormed(t *testing.T) {
 	r := testRepo(t)
 	ctx := context.Background()
 
@@ -135,8 +141,8 @@ func TestGetConfig_SeededDefaultsMatchScript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetConfig: %v", err)
 	}
-	if cfg.RiskPerTradePercent != 1.0 || cfg.DeltaTarget != 0.60 || cfg.MaxTradesPerDay != 1 {
-		t.Errorf("seeded defaults don't match the script: %+v", cfg)
+	if cfg.RiskPerTradePercent <= 0 || cfg.DeltaTarget <= 0 || cfg.DeltaTarget >= 1 || cfg.MaxTradesPerDay <= 0 {
+		t.Errorf("config has an implausible value: %+v", cfg)
 	}
 }
 
@@ -162,5 +168,51 @@ func TestUpdateConfig_RoundTrips(t *testing.T) {
 	}
 	if got.RiskPerTradePercent != 3.0 || got.DeltaTarget != 0.65 {
 		t.Errorf("update didn't round-trip: %+v", got)
+	}
+}
+
+func TestLogDecision_AndRecentDecisions(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+
+	tradeID := int64(123456789)
+	pnl, mfe, mae, exitPx := 500.0, 800.0, -100.0, 150.0
+	d := Decision{
+		EvaluatedAt: time.Now().In(market.IST),
+		NiftySpot:   23900, ORHigh: 23950, ORLow: 23800,
+		VWAP: 23920, EMAFast: 23910, EMASlow: 23890, ATR: 30, ATRAvg: 20,
+		Direction: "BULLISH", DirectionReason: "test reason",
+		SelectedSymbol: "NIFTY08SEP2623900CE", SelectedStrike: 23900,
+		SelectedDelta: 0.6, SelectedIV: 12.5, SelectedTheta: -15,
+		SelectionReason: "delta closest to target",
+		EntryOK:         true, EntryReason: "all conditions met",
+		Action: "EXIT", TradeID: &tradeID,
+		ExitPrice: &exitPx, ExitReason: "stop hit", PnL: &pnl, MFE: &mfe, MAE: &mae,
+		Detail: "test decision row",
+	}
+	if err := r.LogDecision(ctx, d); err != nil {
+		t.Fatalf("LogDecision: %v", err)
+	}
+	t.Cleanup(func() { r.pool.Exec(ctx, `DELETE FROM algo_decisions WHERE trade_id=$1`, tradeID) })
+
+	recent, err := r.RecentDecisions(ctx, 10)
+	if err != nil {
+		t.Fatalf("RecentDecisions: %v", err)
+	}
+	if len(recent) == 0 {
+		t.Fatal("expected at least one decision")
+	}
+	got := recent[0] // newest first
+	if got.Action != "EXIT" || got.TradeID == nil || *got.TradeID != tradeID {
+		t.Errorf("got action=%s tradeID=%v, want EXIT/%d", got.Action, got.TradeID, tradeID)
+	}
+	if got.PnL == nil || *got.PnL != 500.0 {
+		t.Errorf("PnL didn't round-trip: %v", got.PnL)
+	}
+	if got.MFE == nil || *got.MFE != 800.0 || got.MAE == nil || *got.MAE != -100.0 {
+		t.Errorf("MFE/MAE didn't round-trip: mfe=%v mae=%v", got.MFE, got.MAE)
+	}
+	if got.SelectedDelta != 0.6 || got.Direction != "BULLISH" {
+		t.Errorf("context fields didn't round-trip: %+v", got)
 	}
 }

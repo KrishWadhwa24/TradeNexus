@@ -15,6 +15,7 @@ import AnalyserHub from "./pages/AnalyserHub.jsx";
 import MarketsHub from "./pages/MarketsHub.jsx";
 import Audit from "./pages/Audit.jsx";
 import Paper from "./pages/Paper.jsx";
+import Options from "./pages/Options.jsx";
 import Trade from "./pages/Trade.jsx";
 import Profile from "./pages/Profile.jsx";
 import Admin from "./pages/Admin.jsx";
@@ -78,6 +79,7 @@ const NAV = [
     group: "paper", label: "Paper Trading", icon: "wallet", items: [
       { key: "trade", label: "Trade", icon: "search" },
       { key: "paper", label: "Positions", icon: "wallet" },
+      { key: "options", label: "Options", icon: "wallet" },
     ],
   },
   { key: "admin", label: "Admin", icon: "shield", admin: true },
@@ -107,6 +109,7 @@ const TITLES = {
   audit: "Signal Audit",
   trade: "Paper Trading — Trade",
   paper: "Paper Trading — Positions",
+  options: "Paper Trading — Options",
   profile: "Profile",
   admin: "Admin — Candle Tools",
 };
@@ -400,6 +403,7 @@ export default function App() {
       case "audit": return <Audit isAdmin={isAdmin} />;
       case "trade": return <Trade {...p} />;
       case "paper": return <Paper {...p} />;
+      case "options": return <Options {...p} isAdmin={isAdmin} />;
       case "profile": return <Profile {...p} onLogout={logout} />;
       case "admin": return isAdmin ? <Admin /> : <Home {...p} />;
       default: return null;

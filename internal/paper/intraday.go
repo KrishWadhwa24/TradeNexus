@@ -20,6 +20,13 @@ const (
 	ProductDelivery = "DELIVERY"
 	ProductIntraday = "INTRADAY"
 
+	// SourceOptionsAlgo tags every trade the options-algo strategy places
+	// automatically (see internal/optionsalgo) — the one source value that
+	// debits/credits AlgoCashBalance instead of CashBalance (see
+	// debitBalance/creditBalance below), keeping algo P&L completely
+	// separate from the user's own manual paper trading.
+	SourceOptionsAlgo = "options-algo"
+
 	// intradayMarginFraction is the paper-trading margin requirement for
 	// any INTRADAY position (long or short) — 20% of notional, i.e. 5x
 	// leverage, matching real brokers' typical MIS margin. DELIVERY always
@@ -33,6 +40,42 @@ const (
 	intradayCutoffHour = 15
 	intradayCutoffMin  = 20
 )
+
+// balanceColumn picks which paper_accounts column a trade's source debits/
+// credits — algo_cash_balance for options-algo trades, cash_balance for
+// everything else (manual buys, signal-driven buys, everything that existed
+// before this source value did). Restricted to exactly these two hardcoded
+// literals — never derived from external input — so interpolating it into
+// SQL below is safe; a real placeholder can't parameterize a column name.
+func balanceColumn(source string) string {
+	if source == SourceOptionsAlgo {
+		return "algo_cash_balance"
+	}
+	return "cash_balance"
+}
+
+// debitBalance and creditBalance are the single place every paper_trades
+// balance mutation goes through, replacing what used to be 7 separate raw
+// `UPDATE paper_accounts SET cash_balance = cash_balance ± $2` statements
+// scattered across this file and service.go. For any source other than
+// SourceOptionsAlgo this generates byte-identical SQL to what was there
+// before (same column, same shape) — the only behavior change is for the
+// new options-algo source, which now touches algo_cash_balance instead.
+func debitBalance(ctx context.Context, tx pgx.Tx, userID, source string, amount float64) error {
+	col := balanceColumn(source)
+	_, err := tx.Exec(ctx,
+		fmt.Sprintf(`UPDATE paper_accounts SET %s = %s - $2, updated_at=now() WHERE user_id=$1::uuid`, col, col),
+		userID, amount)
+	return err
+}
+
+func creditBalance(ctx context.Context, tx pgx.Tx, userID, source string, amount float64) error {
+	col := balanceColumn(source)
+	_, err := tx.Exec(ctx,
+		fmt.Sprintf(`UPDATE paper_accounts SET %s = %s + $2, updated_at=now() WHERE user_id=$1::uuid`, col, col),
+		userID, amount)
+	return err
+}
 
 // marginFraction is the fraction of notional (price*qty) charged as margin.
 // isOption always forces 1.0 regardless of productType: buying an option
@@ -144,8 +187,8 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 			return Trade{}, err
 		}
 		margin := marginFraction(productType, inst.OptionType != "") * schedPx * float64(qty)
-		if margin > acct.CashBalance {
-			return Trade{}, fmt.Errorf("insufficient cash: need %.2f margin, have %.2f", margin, acct.CashBalance)
+		if avail := acct.availableBalance(source); margin > avail {
+			return Trade{}, fmt.Errorf("insufficient cash: need %.2f margin, have %.2f", margin, avail)
 		}
 
 		tx, err := s.pool.Begin(ctx)
@@ -161,9 +204,7 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 			userID, inst.ID, signalID, side, productType, qty, margin, source).Scan(&id); err != nil {
 			return Trade{}, err
 		}
-		if _, err = tx.Exec(ctx,
-			`UPDATE paper_accounts SET cash_balance = cash_balance - $2, updated_at=now() WHERE user_id=$1::uuid`,
-			userID, margin); err != nil {
+		if err = debitBalance(ctx, tx, userID, source, margin); err != nil {
 			return Trade{}, err
 		}
 		if err = tx.Commit(ctx); err != nil {
@@ -178,8 +219,8 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 		return Trade{}, err
 	}
 	margin := marginFraction(productType, inst.OptionType != "") * px * float64(qty)
-	if margin > acct.CashBalance {
-		return Trade{}, fmt.Errorf("insufficient cash: need %.2f margin, have %.2f", margin, acct.CashBalance)
+	if avail := acct.availableBalance(source); margin > avail {
+		return Trade{}, fmt.Errorf("insufficient cash: need %.2f margin, have %.2f", margin, avail)
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -192,9 +233,7 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 	if err != nil {
 		return Trade{}, err
 	}
-	if _, err = tx.Exec(ctx,
-		`UPDATE paper_accounts SET cash_balance = cash_balance - $2, updated_at=now() WHERE user_id=$1::uuid`,
-		userID, margin); err != nil {
+	if err = debitBalance(ctx, tx, userID, source, margin); err != nil {
 		return Trade{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -234,11 +273,17 @@ func mergeOrOpen(ctx context.Context, tx pgx.Tx, userID string, instrumentID int
 	var existingID int64
 	var existingQty int
 	var existingPrice float64
+	// source is part of the match key: without it, a manual buy and an
+	// algo-sourced buy in the same instrument/side/product_type would merge
+	// into one row keyed to whichever source opened it first — and since
+	// SourceOptionsAlgo debits/credits a completely different balance
+	// (algo_cash_balance) than every other source, a merge across sources
+	// would debit one balance at entry and credit the other at exit.
 	err := tx.QueryRow(ctx, `
 		SELECT id, quantity, entry_price FROM paper_trades
-		WHERE user_id=$1::uuid AND instrument_id=$2 AND side=$3 AND product_type=$4 AND status='OPEN'
+		WHERE user_id=$1::uuid AND instrument_id=$2 AND side=$3 AND product_type=$4 AND source=$5 AND status='OPEN'
 		FOR UPDATE`,
-		userID, instrumentID, side, productType).Scan(&existingID, &existingQty, &existingPrice)
+		userID, instrumentID, side, productType, source).Scan(&existingID, &existingQty, &existingPrice)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		var id int64
@@ -286,9 +331,7 @@ func closeAtPrice(ctx context.Context, tx pgx.Tx, t Trade, exitPrice float64) (f
 		t.ID, exitPrice, pnl); err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE paper_accounts SET cash_balance = cash_balance + $2, updated_at=now() WHERE user_id=$1::uuid`,
-		t.userID, settlement); err != nil {
+	if err := creditBalance(ctx, tx, t.userID, t.Source, settlement); err != nil {
 		return 0, err
 	}
 	return pnl, nil
@@ -306,9 +349,9 @@ func closePartialAtPrice(ctx context.Context, tx pgx.Tx, t Trade, qty int, exitP
 	pnl, settlement := settleAmounts(lot, exitPrice)
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO paper_trades (user_id, instrument_id, signal_id, side, product_type, quantity, entry_price, entry_time, exit_price, exit_time, status, pnl)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, now(), 'CLOSED', $10)`,
-		t.userID, t.InstrumentID, t.SignalID, t.Side, t.ProductType, qty, t.EntryPrice, t.EntryTime, exitPrice, pnl); err != nil {
+		INSERT INTO paper_trades (user_id, instrument_id, signal_id, side, product_type, quantity, entry_price, entry_time, exit_price, exit_time, status, pnl, source)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, now(), 'CLOSED', $10, $11)`,
+		t.userID, t.InstrumentID, t.SignalID, t.Side, t.ProductType, qty, t.EntryPrice, t.EntryTime, exitPrice, pnl, t.Source); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx,
@@ -316,9 +359,7 @@ func closePartialAtPrice(ctx context.Context, tx pgx.Tx, t Trade, qty int, exitP
 		t.ID, qty); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE paper_accounts SET cash_balance = cash_balance + $2, updated_at=now() WHERE user_id=$1::uuid`,
-		t.userID, settlement); err != nil {
+	if err := creditBalance(ctx, tx, t.userID, t.Source, settlement); err != nil {
 		return err
 	}
 	return nil
@@ -353,8 +394,8 @@ func (s *Service) ConvertToDelivery(ctx context.Context, tradeID int64) (Trade, 
 	if err != nil {
 		return Trade{}, err
 	}
-	if remaining > acct.CashBalance {
-		return Trade{}, fmt.Errorf("insufficient cash to convert: need %.2f more, have %.2f", remaining, acct.CashBalance)
+	if avail := acct.availableBalance(t.Source); remaining > avail {
+		return Trade{}, fmt.Errorf("insufficient cash to convert: need %.2f more, have %.2f", remaining, avail)
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -363,9 +404,7 @@ func (s *Service) ConvertToDelivery(ctx context.Context, tradeID int64) (Trade, 
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	if _, err := tx.Exec(ctx,
-		`UPDATE paper_accounts SET cash_balance = cash_balance - $2, updated_at=now() WHERE user_id=$1::uuid`,
-		t.userID, remaining); err != nil {
+	if err := debitBalance(ctx, tx, t.userID, t.Source, remaining); err != nil {
 		return Trade{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE paper_trades SET product_type='DELIVERY' WHERE id=$1`, tradeID); err != nil {
