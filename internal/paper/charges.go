@@ -48,10 +48,15 @@ type Charges struct {
 // most brokers) which is NOT modelled here — callers must only apply this
 // to instruments where OptionType != "". See chargesFor.
 func OptionCharges(side string, premium float64, qty int) Charges {
-	turnover := premium * float64(qty)
-	if turnover <= 0 {
-		return Charges{}
+	if qty <= 0 || premium < 0 {
+		return Charges{} // not a real order at all
 	}
+	turnover := premium * float64(qty)
+	// A zero-premium exit IS a real executed order — squaring off a
+	// worthless long still costs brokerage + GST even though every
+	// turnover-based line is zero. Returning nothing here would have
+	// under-charged exactly the trades a stop-loss strategy produces most
+	// often, making losers look cheaper than they are.
 
 	c := Charges{
 		Brokerage:   brokeragePerOrder,

@@ -42,3 +42,24 @@ func TestWeeklyAlgoPnL(t *testing.T) {
 		t.Errorf("weeklyAlgoPnL = %v, want -700 (this week's two closes only)", got)
 	}
 }
+
+// TestDailyWeeklyAlgoPnL_NetOfCharges is the regression test for a real bug:
+// the loss circuit breakers summed GROSS t.PnL while the account balance had
+// charges deducted, so the daily/weekly kill switches tripped late by exactly
+// the accumulated charges — looser than the configured percentage.
+func TestDailyWeeklyAlgoPnL_NetOfCharges(t *testing.T) {
+	now := time.Date(2026, 9, 7, 14, 0, 0, 0, market.IST)
+	exit := now.Add(-1 * time.Hour)
+	trades := []paper.Trade{{
+		Source: paper.SourceOptionsAlgo, Status: "CLOSED", ExitTime: &exit,
+		PnL: -1000, EntryCharges: 30, ExitCharges: 50,
+	}}
+
+	// Gross would be -1000; the account is really down -1080.
+	if got := dailyAlgoPnL(trades, now); got != -1080 {
+		t.Errorf("dailyAlgoPnL = %v, want -1080 (gross -1000 less 80 of charges)", got)
+	}
+	if got := weeklyAlgoPnL(trades, now); got != -1080 {
+		t.Errorf("weeklyAlgoPnL = %v, want -1080", got)
+	}
+}

@@ -145,10 +145,15 @@ type OpeningRange struct {
 // BuildOpeningRange computes the opening-range high/low (window and minimum
 // valid range % both from cfg, not hardcoded — script defaults are 09:15-
 // 09:45 / 0.15%, frontend-editable) from one day's 1-minute spot candles.
-// day identifies which calendar date (IST) to use — oneMin may span many
-// days, only that day's bars are considered.
-func BuildOpeningRange(oneMin []market.Candle, day time.Time, cfg AlgoConfig) OpeningRange {
-	day = day.In(market.IST)
+//
+// `now` is the EVALUATION TIME, not just a calendar date — it selects which
+// IST day's bars to consider (oneMin may span many days) AND decides whether
+// that day's window has finished. Pass the real current time; passing
+// midnight yields an empty range, because at midnight the window has not
+// closed. Returns a zero OpeningRange (Valid false) until the window ends,
+// so no caller can act on a partially-formed range.
+func BuildOpeningRange(oneMin []market.Candle, now time.Time, cfg AlgoConfig) OpeningRange {
+	day := now.In(market.IST)
 	start := time.Date(day.Year(), day.Month(), day.Day(), cfg.ORStartHour, cfg.ORStartMin, 0, 0, market.IST)
 	end := time.Date(day.Year(), day.Month(), day.Day(), cfg.OREndHour, cfg.OREndMin, 0, 0, market.IST)
 
@@ -172,6 +177,17 @@ func BuildOpeningRange(oneMin []market.Candle, day time.Time, cfg AlgoConfig) Op
 		}
 	}
 	if !found || low <= 0 {
+		return OpeningRange{}
+	}
+	// The range is only meaningful once its window has actually CLOSED.
+	// Without this, at 09:16 a single volatile gap-open minute whose own
+	// high-low happens to clear ORMinRangePercent forms a complete-looking
+	// "opening range", spot immediately breaks its high, and the algo
+	// enters on one bar of data — the most likely way a first live trade is
+	// a garbage trade. Comparing against `day` is safe for both callers,
+	// which pass the current time; a historical/backtest caller passing a
+	// past timestamp is naturally past its own window and unaffected.
+	if day.Before(end) {
 		return OpeningRange{}
 	}
 	rangePct := (high - low) / low * 100

@@ -125,3 +125,47 @@ func TestAverageVolume_Empty(t *testing.T) {
 		t.Errorf("AverageVolume = %v, want 0", got)
 	}
 }
+
+// TestSelectByDelta_DeclinesWhenGreeksMissing pins the safety property that
+// makes non-fatal Greeks safe (see BuildOptionChain): when Angel's Greeks
+// endpoint is down, every quote carries delta 0, which is outside any sane
+// band — selection must decline rather than fall back to picking something
+// arbitrary and trading blind.
+func TestSelectByDelta_DeclinesWhenGreeksMissing(t *testing.T) {
+	noGreeks := []OptionQuote{
+		{TradingSymbol: "A", OptionType: "CE", LTP: 100}, // Delta left at 0
+		{TradingSymbol: "B", OptionType: "CE", LTP: 150},
+		{TradingSymbol: "C", OptionType: "CE", LTP: 200},
+	}
+	if got, ok := SelectByDelta(noGreeks, 0.60, 0.55, 0.70); ok {
+		t.Fatalf("expected no selection when every delta is 0 (greeks unavailable), got %q", got.TradingSymbol)
+	}
+}
+
+// TestLiquidityCheck_RejectsEmptyOrderBook is the regression test for a real
+// bug: SpreadPercent returns 0 when there's no two-sided quote, and 0
+// trivially satisfies "spread <= max", so a contract nobody was quoting
+// silently passed the spread gate as if it had a perfect zero spread.
+func TestLiquidityCheck_RejectsEmptyOrderBook(t *testing.T) {
+	cases := []struct {
+		name string
+		q    OptionQuote
+	}{
+		{"no quotes at all", OptionQuote{LTP: 120, Volume: 100000}},
+		{"bid only", OptionQuote{LTP: 120, Bid: 119, Volume: 100000}},
+		{"ask only", OptionQuote{LTP: 120, Ask: 121, Volume: 100000}},
+	}
+	for _, c := range cases {
+		// avgVolume 0 on purpose: the volume leg no-ops there, so the
+		// spread leg is the only thing standing between this contract and
+		// a real order.
+		if ok, _ := LiquidityCheck(c.q, 0, 1.0, 1.2); ok {
+			t.Errorf("%s: passed the liquidity gate — an empty order book is the most illiquid case there is", c.name)
+		}
+	}
+	// A genuinely liquid contract must still pass.
+	good := OptionQuote{LTP: 120, Bid: 119.9, Ask: 120.1, Volume: 100000}
+	if ok, why := LiquidityCheck(good, 50000, 1.0, 1.2); !ok {
+		t.Errorf("a tight-spread, high-volume contract must pass, got %q", why)
+	}
+}

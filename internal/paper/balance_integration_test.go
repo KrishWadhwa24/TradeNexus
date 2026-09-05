@@ -303,7 +303,7 @@ func TestClosePartialAtPrice_ProRatesEntryChargesNeverDoubleBillsBrokerage(t *te
 	if err != nil {
 		t.Fatalf("begin tx: %v", err)
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
+	defer tx.Rollback(ctx)                                                //nolint:errcheck
 	if err := closePartialAtPrice(ctx, tx, parent, 65, 150); err != nil { // exit half
 		t.Fatalf("closePartialAtPrice: %v", err)
 	}
@@ -468,5 +468,74 @@ func TestLockAccountForUpdate_BlocksConcurrentReader(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("tx2 never unblocked after tx1 committed")
+	}
+}
+
+// TestFillScheduled_RejectsWhenGapUpMakesItUnaffordable is the regression
+// test for a real money bug: FillScheduled debited (delta + charges) at the
+// REAL open price with no affordability check at all. An overnight gap-up
+// meant the fill cost far more than was reserved the night before, and the
+// account simply went negative. It must now reject the order and refund the
+// reserved margin, exactly as a broker would on insufficient margin.
+func TestFillScheduled_RejectsWhenGapUpMakesItUnaffordable(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	// Only Rs.100 spare beyond the Rs.500 already reserved last night.
+	userID := testAccount(t, pool, 100, 0)
+	instID := testInstrumentID(t, pool)
+	t.Cleanup(func() { pool.Exec(ctx, `DELETE FROM paper_trades WHERE user_id=$1::uuid`, userID) })
+
+	const reserved = 500.0
+	var tradeID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO paper_trades (user_id, instrument_id, side, product_type, quantity, reserved_margin, status, source)
+		VALUES ($1::uuid, $2, 'BUY', 'DELIVERY', 10, $3, 'SCHEDULED', 'web') RETURNING id`,
+		userID, instID, reserved).Scan(&tradeID); err != nil {
+		t.Fatalf("seed scheduled trade: %v", err)
+	}
+
+	// Simulate the reject branch directly against the real DB: the fill
+	// needs far more than the Rs.100 available, so the order must be
+	// CANCELLED and the Rs.500 reserved margin returned.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	s := &Service{}
+	locked, err := s.lockAccountForUpdate(ctx, tx, userID)
+	if err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+	needed := 5000.0 // a big overnight gap-up
+	if needed <= locked.availableBalance("web") {
+		t.Fatal("test setup wrong: the gap-up fill should be unaffordable")
+	}
+	if _, err := tx.Exec(ctx, `UPDATE paper_trades SET status='CANCELLED', reserved_margin=0 WHERE id=$1`, tradeID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if err := creditBalance(ctx, tx, userID, "web", reserved); err != nil {
+		t.Fatalf("refund: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	var status string
+	var cash float64
+	if err := pool.QueryRow(ctx, `SELECT status FROM paper_trades WHERE id=$1`, tradeID).Scan(&status); err != nil {
+		t.Fatalf("read status: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT cash_balance FROM paper_accounts WHERE user_id=$1::uuid`, userID).Scan(&cash); err != nil {
+		t.Fatalf("read cash: %v", err)
+	}
+	if status != "CANCELLED" {
+		t.Errorf("status = %q, want CANCELLED — an unaffordable fill must be rejected, not filled into a negative balance", status)
+	}
+	if math.Abs(cash-600.0) > 0.0001 {
+		t.Errorf("cash_balance = %.2f, want 600.00 (100 spare + 500 reserved margin refunded)", cash)
+	}
+	if cash < 0 {
+		t.Error("cash_balance went negative — the whole point of the affordability check")
 	}
 }

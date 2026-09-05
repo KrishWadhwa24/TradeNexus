@@ -104,13 +104,18 @@ func TestParseModeSnapQuoteParsesBidAskVolumeOI(t *testing.T) {
 	binary.LittleEndian.PutUint64(data[67:75], 9000)     // volume
 	binary.LittleEndian.PutUint64(data[131:139], 540000) // OI
 
-	// record 0: best buy (bid) at 1370.70
-	binary.LittleEndian.PutUint16(data[depthStart:depthStart+2], 0)
-	binary.LittleEndian.PutUint64(data[depthStart+10:depthStart+18], 137070)
-	// record 5: best sell (ask) at 1792.50
-	sellOff := depthStart + 5*depthRecSize
-	binary.LittleEndian.PutUint16(data[sellOff:sellOff+2], 1)
-	binary.LittleEndian.PutUint64(data[sellOff+10:sellOff+18], 179250)
+	// Depth block is 5 buy records then 5 sell records, best-first. Real
+	// numbers from a live NIFTY contract (REST Quote-FULL ground truth):
+	// best bid 321.60, best ask 325.15 — deliberately bid < ask so a
+	// buy/sell mix-up shows up as an impossible inverted spread.
+	for i, px := range []uint64{32160, 32020, 32015, 32005, 31880} { // buys, records 0-4
+		off := depthStart + i*depthRecSize
+		binary.LittleEndian.PutUint64(data[off+10:off+18], px)
+	}
+	for i, px := range []uint64{32515, 32520, 32555, 32605, 32630} { // sells, records 5-9
+		off := depthStart + (5+i)*depthRecSize
+		binary.LittleEndian.PutUint64(data[off+10:off+18], px)
+	}
 
 	tick, ok := h.parseTick(data)
 	if !ok {
@@ -119,8 +124,11 @@ func TestParseModeSnapQuoteParsesBidAskVolumeOI(t *testing.T) {
 	if tick.Price != 1581.60 {
 		t.Fatalf("expected LTP 1581.60, got %v", tick.Price)
 	}
-	if tick.Bid != 1370.70 || tick.Ask != 1792.50 {
-		t.Fatalf("expected bid/ask 1370.70/1792.50, got %v/%v", tick.Bid, tick.Ask)
+	if tick.Bid != 321.60 || tick.Ask != 325.15 {
+		t.Fatalf("expected bid/ask 321.60/325.15, got %v/%v — a swap here means the buy/sell halves of the depth block are being read the wrong way round", tick.Bid, tick.Ask)
+	}
+	if tick.Bid > tick.Ask {
+		t.Fatalf("bid %v > ask %v: an inverted spread is impossible in a real book and makes market.EffectivePrice silently fall back to raw LTP", tick.Bid, tick.Ask)
 	}
 	if tick.Volume != 9000 {
 		t.Fatalf("expected volume 9000, got %v", tick.Volume)

@@ -114,6 +114,15 @@ func SelectByDelta(candidates []OptionQuote, deltaTarget, deltaMin, deltaMax flo
 // turns out to matter more). maxSpreadPercent/minVolumeMultiplier come from
 // AlgoConfig — script defaults are 1% spread, 1.2x volume.
 func LiquidityCheck(q OptionQuote, avgVolume, maxSpreadPercent, minVolumeMultiplier float64) (ok bool, reason string) {
+	// No two-sided quote is the MOST illiquid case there is, and it has to
+	// be rejected explicitly: SpreadPercent returns 0 when bid or ask is
+	// missing, and 0 trivially satisfies "spread <= max", so without this
+	// an empty order book silently passed the spread gate as though it had
+	// a perfect zero spread. Buying a contract nobody is quoting means no
+	// realistic fill and no way out of the position.
+	if q.Bid <= 0 || q.Ask <= 0 {
+		return false, "no two-sided quote (empty order book)"
+	}
 	if spread := q.SpreadPercent(); spread > maxSpreadPercent {
 		return false, "spread too wide"
 	}

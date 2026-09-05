@@ -226,6 +226,12 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 		return Trade{}, err
 	}
 	margin := marginFraction(productType, inst.OptionType != "") * px * float64(qty)
+	// Charges are debited alongside margin below, so they must be part of
+	// the affordability check too — checking margin alone let an order pass
+	// with exactly enough cash for the premium and then overdraw the
+	// account by the charges.
+	entryCharges := chargesFor(inst.OptionType, side, px, qty)
+	needed := margin + entryCharges.Total
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -239,8 +245,8 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 	if err != nil {
 		return Trade{}, err
 	}
-	if avail := locked.availableBalance(source); margin > avail {
-		return Trade{}, fmt.Errorf("insufficient cash: need %.2f margin, have %.2f", margin, avail)
+	if avail := locked.availableBalance(source); needed > avail {
+		return Trade{}, fmt.Errorf("insufficient cash: need %.2f (%.2f margin + %.2f charges), have %.2f", needed, margin, entryCharges.Total, avail)
 	}
 
 	id, err := mergeOrOpen(ctx, tx, userID, inst.ID, side, productType, signalID, source, qty, px)
@@ -251,7 +257,6 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 	// account the moment the order executes, not at exit. Accumulated onto
 	// the row (+=) rather than assigned, so a merge into an existing
 	// position keeps both fills' costs (see mergeOrOpen).
-	entryCharges := chargesFor(inst.OptionType, side, px, qty)
 	if entryCharges.Total > 0 {
 		if _, err = tx.Exec(ctx,
 			`UPDATE paper_trades SET entry_charges = entry_charges + $2 WHERE id=$1`, id, entryCharges.Total); err != nil {

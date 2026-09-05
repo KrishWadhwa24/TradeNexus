@@ -568,21 +568,24 @@ func (h *Hub) parseModeSnapQuote(data []byte) (Tick, bool) {
 	volume := int64(binary.LittleEndian.Uint64(data[67:75]))
 	oi := float64(binary.LittleEndian.Uint64(data[131:139]))
 
-	var bid, ask float64
-	haveBid, haveAsk := false, false
-	for i := 0; i < depthRecords; i++ {
-		off := depthStart + i*depthRecSize
-		flag := binary.LittleEndian.Uint16(data[off : off+2])
-		price := float64(binary.LittleEndian.Uint64(data[off+10:off+18])) / 100
-		switch {
-		case flag == 0 && !haveBid: // buy side, best-first
-			bid = price
-			haveBid = true
-		case flag == 1 && !haveAsk: // sell side, best-first
-			ask = price
-			haveAsk = true
-		}
-	}
+	// Bid/ask come from the record's POSITION, not its flag field: the
+	// depth block is 5 buy records (indices 0-4) followed by 5 sell records
+	// (5-9), best-first within each half — the same fixed slicing Angel's
+	// own reference client uses.
+	//
+	// An earlier version of this keyed off the 2-byte flag assuming
+	// 0=buy/1=sell. That was backwards, and produced a silent bid/ask swap
+	// caught by comparing a live chain against the REST Quote-FULL depth for
+	// the same contract (REST: bid 321.60 / ask 325.15 — websocket returned
+	// them inverted). The swap was worse than cosmetic: it made bid > ask,
+	// which market.EffectivePrice rejects as an invalid quote, so it
+	// silently fell back to raw LTP and disabled the whole stale-LTP
+	// protection on the websocket path. Position-based parsing has no such
+	// ambiguity.
+	bestBidOffset := depthStart
+	bestAskOffset := depthStart + 5*depthRecSize
+	bid := float64(binary.LittleEndian.Uint64(data[bestBidOffset+10:bestBidOffset+18])) / 100
+	ask := float64(binary.LittleEndian.Uint64(data[bestAskOffset+10:bestAskOffset+18])) / 100
 
 	it, ok := h.instrumentFor(exType, token)
 	if !ok || ltp <= 0 {

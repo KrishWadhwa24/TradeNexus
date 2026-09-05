@@ -152,7 +152,10 @@ func TestSessionVWAP_ZeroVolume(t *testing.T) {
 }
 
 func TestBuildOpeningRange(t *testing.T) {
-	day := time.Date(2026, 9, 4, 0, 0, 0, 0, market.IST)
+	// Evaluated after the 09:15-09:45 window has closed — BuildOpeningRange
+	// takes the evaluation time, and deliberately returns nothing while the
+	// window is still open (see its doc comment).
+	day := time.Date(2026, 9, 4, 10, 0, 0, 0, market.IST)
 	mk := func(hh, mm int, h, l float64) market.Candle {
 		ts := time.Date(2026, 9, 4, hh, mm, 0, 0, market.IST)
 		return mkCandle(ts, h, h, l, h, 1)
@@ -259,5 +262,29 @@ func TestDetermineDirection_InvalidOR(t *testing.T) {
 	got := DetermineDirection(in)
 	if got.Direction != NoneDir {
 		t.Errorf("Direction = %v, want NONE (invalid OR)", got.Direction)
+	}
+}
+
+// TestBuildOpeningRange_RequiresWindowToHaveClosed is the regression test
+// for the bug most likely to have produced a garbage first live trade: at
+// 09:16 one volatile gap-open minute can clear ORMinRangePercent on its
+// own, forming a complete-looking opening range off a single bar.
+func TestBuildOpeningRange_RequiresWindowToHaveClosed(t *testing.T) {
+	cfg := testConfig()
+	day := time.Date(2026, 9, 7, 0, 0, 0, 0, market.IST)
+	bars := []market.Candle{
+		// One wide 09:15 bar: 0.4% range, comfortably over the 0.15% minimum.
+		{Time: day.Add(9*time.Hour + 15*time.Minute), High: 24100, Low: 24000, Close: 24090},
+	}
+
+	at0916 := day.Add(9*time.Hour + 16*time.Minute)
+	if or := BuildOpeningRange(bars, at0916, cfg); or.Valid {
+		t.Errorf("opening range reported valid at 09:16 off one bar (high %v low %v) — the 09:15-09:45 window has not closed yet", or.High, or.Low)
+	}
+
+	// Once the window has closed the very same bars form a real range.
+	at0946 := day.Add(9*time.Hour + 46*time.Minute)
+	if or := BuildOpeningRange(bars, at0946, cfg); !or.Valid {
+		t.Error("expected a valid opening range once the window has closed")
 	}
 }

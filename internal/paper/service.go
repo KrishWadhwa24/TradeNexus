@@ -504,8 +504,44 @@ func (s *Service) FillScheduled(ctx context.Context) (int, error) {
 			s.log.Error().Err(err).Int64("trade_id", id).Msg("fill scheduled: begin tx failed")
 			continue
 		}
+
+		// Affordability is re-checked HERE, against the real fill price, not
+		// the estimate made when the order was scheduled. An overnight
+		// gap-up means `delta` (plus charges) can be far more than was
+		// reserved last night — without this the debit went through
+		// unchecked and simply overdrew the account. Row-locked inside the
+		// transaction for the same reason OpenPosition is.
+		locked, lerr := s.lockAccountForUpdate(ctx, tx, t.userID)
+		if lerr != nil {
+			_ = tx.Rollback(ctx)
+			s.log.Error().Err(lerr).Int64("trade_id", id).Msg("fill scheduled: account lock failed")
+			continue
+		}
+		needed := delta + entryCharges.Total
+		if avail := locked.availableBalance(t.Source); needed > avail {
+			// Reject the order rather than fill it into a negative balance,
+			// exactly as a real broker would on insufficient margin at open.
+			// Cancelling refunds the margin reserved last night — same
+			// status and refund path as a user-initiated CancelPending.
+			_, ce := tx.Exec(ctx, `UPDATE paper_trades SET status='CANCELLED', reserved_margin=0 WHERE id=$1`, id)
+			re := creditBalance(ctx, tx, t.userID, t.Source, t.reservedMargin)
+			if ce != nil || re != nil {
+				_ = tx.Rollback(ctx)
+				s.log.Error().Err(errors.Join(ce, re)).Int64("trade_id", id).Msg("fill scheduled: reject-and-refund failed")
+				continue
+			}
+			if err := tx.Commit(ctx); err != nil {
+				s.log.Error().Err(err).Int64("trade_id", id).Msg("fill scheduled: reject commit failed")
+				continue
+			}
+			s.log.Warn().Int64("trade_id", id).Str("symbol", inst.TradingSymbol).
+				Float64("needed", needed).Float64("available", avail).Float64("fill_price", px).
+				Msg("fill scheduled: rejected — insufficient cash at the real open price, margin refunded")
+			continue
+		}
+
 		_, e1 := tx.Exec(ctx, `UPDATE paper_trades SET status='OPEN', entry_price=$2, entry_time=now(), reserved_margin=0, entry_charges=$3 WHERE id=$1`, id, px, entryCharges.Total)
-		e2 := debitBalance(ctx, tx, t.userID, t.Source, delta+entryCharges.Total)
+		e2 := debitBalance(ctx, tx, t.userID, t.Source, needed)
 		if e1 != nil || e2 != nil {
 			_ = tx.Rollback(ctx)
 			s.log.Error().Err(errors.Join(e1, e2)).Int64("trade_id", id).Msg("fill scheduled: update failed")
@@ -727,11 +763,19 @@ func aggregateSummary(startingCapital, cashBalance float64, trades []Trade) PnLS
 			sum.MarketValue += invested + unrealized
 			sum.Unrealized += unrealized
 		case "CLOSED":
-			sum.RealizedTotal += t.PnL
-			if t.PnL >= 0 {
-				sum.BookedProfit += t.PnL
+			// NET of charges, not gross. cash_balance already has charges
+			// deducted, so reporting gross P&L here made equity and
+			// reported P&L drift apart by exactly the accumulated charges
+			// — and visibly so, since the Statistics tab nets them while
+			// this card row didn't, showing two different P&L figures for
+			// the same trades on the same screen. Charges are 0 for equity
+			// and for trades predating them, so this is a no-op there.
+			net := t.PnL - t.EntryCharges - t.ExitCharges
+			sum.RealizedTotal += net
+			if net >= 0 {
+				sum.BookedProfit += net
 			} else {
-				sum.BookedLoss += t.PnL
+				sum.BookedLoss += net
 			}
 		}
 	}

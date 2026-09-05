@@ -155,6 +155,18 @@ func (s *Server) handleOptionsAlgoEnter(w http.ResponseWriter, r *http.Request) 
 
 // POST /v1/admin/optionsalgo/manage?user_id=... — manually fire one
 // management tick over the given user's open algo positions. Admin only.
+// POST /v1/admin/optionsalgo/archive-chain — fire one option-chain snapshot
+// on demand. The archiver normally runs off the per-minute polling tick,
+// which is gated on market hours, so this exists to verify capture outside
+// them. Same "admin-only manual testing, no real callers" pattern as the
+// other /admin/optionsalgo debug endpoints.
+func (s *Server) handleArchiveChainSnapshot(w http.ResponseWriter, r *http.Request) {
+	s.optionsAlgoSvc.ArchiveChainSnapshot(r.Context())
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "archive attempted — see option_chain_snapshots and the server log for the outcome",
+	})
+}
+
 func (s *Server) handleOptionsAlgoManage(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {

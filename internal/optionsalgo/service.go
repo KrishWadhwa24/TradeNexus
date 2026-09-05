@@ -208,6 +208,16 @@ func (s *Service) StartPolling(ctx context.Context) {
 					if err := s.RefreshFuturesLatest(c); err != nil {
 						s.log.Error().Err(err).Msg("optionsalgo: futures refresh failed")
 					}
+					// Archive the chain BEFORE the per-user loop and
+					// unconditionally — deliberately not gated on anyone
+					// having auto-trading enabled. Keying data collection
+					// off the trading toggle would silently stop capturing
+					// history the moment it's switched off, which is
+					// exactly when it's likely to stay off for weeks; the
+					// bid/ask/OI/Greeks lost in that window are
+					// unrecoverable at any price.
+					s.ArchiveChainSnapshot(c)
+
 					// Every account with algo_enabled=true (the frontend
 					// on/off toggle — see paper.Service.SetAlgoEnabled) gets
 					// its own independent evaluate-and-maybe-enter pass this

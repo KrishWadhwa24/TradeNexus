@@ -53,6 +53,57 @@ func (r *Repo) UpsertMinuteCandles(ctx context.Context, instrumentID int64, cs [
 	return len(cs), nil
 }
 
+// ChainSnapshot is one contract's quote at one minute — the row shape of
+// option_chain_snapshots. Greeks are pointers because Angel's Greeks
+// endpoint goes dark outside market hours, and NULL has to stay
+// distinguishable from a real 0 for anything reading this back later.
+type ChainSnapshot struct {
+	InstrumentID int64
+	SnapshotTime time.Time
+	LTP          float64
+	Bid          float64
+	Ask          float64
+	Volume       int64
+	OpenInterest float64
+	Delta        *float64
+	Gamma        *float64
+	Theta        *float64
+	Vega         *float64
+	IV           *float64
+}
+
+// InsertChainSnapshot persists one cycle's option-chain snapshot. Mirrors
+// UpsertMinuteCandles' batch/upsert shape exactly; the upsert makes
+// re-archiving the same minute idempotent, which matters because the
+// polling tick and any manual/debug trigger can land in the same minute.
+func (r *Repo) InsertChainSnapshot(ctx context.Context, rows []ChainSnapshot) (int, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	batch := &pgx.Batch{}
+	for _, s := range rows {
+		batch.Queue(`
+			INSERT INTO option_chain_snapshots
+				(instrument_id, snapshot_time, ltp, bid, ask, volume, open_interest, delta, gamma, theta, vega, iv)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			ON CONFLICT (instrument_id, snapshot_time) DO UPDATE
+			SET ltp=EXCLUDED.ltp, bid=EXCLUDED.bid, ask=EXCLUDED.ask,
+			    volume=EXCLUDED.volume, open_interest=EXCLUDED.open_interest,
+			    delta=EXCLUDED.delta, gamma=EXCLUDED.gamma, theta=EXCLUDED.theta,
+			    vega=EXCLUDED.vega, iv=EXCLUDED.iv`,
+			s.InstrumentID, s.SnapshotTime, s.LTP, s.Bid, s.Ask, s.Volume, s.OpenInterest,
+			s.Delta, s.Gamma, s.Theta, s.Vega, s.IV)
+	}
+	br := r.pool.SendBatch(ctx, batch)
+	defer br.Close()
+	for range rows {
+		if _, err := br.Exec(); err != nil {
+			return 0, fmt.Errorf("insert chain snapshot: %w", err)
+		}
+	}
+	return len(rows), nil
+}
+
 // GetMinuteCandles returns the most recent `limit` 1-minute bars for one
 // instrument, oldest first (the order an indicator calculation expects).
 func (r *Repo) GetMinuteCandles(ctx context.Context, instrumentID int64, limit int) ([]market.Candle, error) {

@@ -319,6 +319,7 @@ func (s *Server) Router() http.Handler {
 				// before automatic wiring.
 				r.Post("/admin/optionsalgo/enter", s.handleOptionsAlgoEnter)
 				r.Post("/admin/optionsalgo/manage", s.handleOptionsAlgoManage)
+				r.Post("/admin/optionsalgo/archive-chain", s.handleArchiveChainSnapshot)
 
 				// Phase 4b: settings — every script constant, frontend-
 				// editable. One shared row for the whole algo (not

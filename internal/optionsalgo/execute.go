@@ -258,9 +258,14 @@ func (s *Service) ManageOpenPositions(ctx context.Context, algoUserID string) ([
 
 		state, found, err := s.repo.GetPositionState(ctx, t.ID)
 		if err != nil {
-			s.log.Error().Err(err).Int64("trade_id", t.ID).Msg("optionsalgo: position state load failed")
-			outcomes = append(outcomes, outcome)
-			continue
+			// Do NOT skip the tick: skipping means this position's stop is
+			// not evaluated at all, so a transient DB blip left it
+			// unprotected. Fall back to the same conservative reconstruction
+			// used when no row exists — the worst case is a stop that
+			// forgets how far it had trailed, which is strictly safer than
+			// no stop check at all.
+			s.log.Error().Err(err).Int64("trade_id", t.ID).Msg("optionsalgo: position state load failed, falling back to initial stop")
+			found = false
 		}
 		if !found {
 			state = PositionState{TradeID: t.ID, HighestPrice: t.EntryPrice, CurrentStop: InitialStop(t.EntryPrice, cfg.InitialStopLossPercent)}
@@ -323,21 +328,44 @@ func (s *Service) currentOptionPrice(ctx context.Context, instrumentID int64) (f
 	if err != nil {
 		return 0, err
 	}
-	if len(quotes) == 0 || quotes[0].LTP <= 0 {
+	if len(quotes) == 0 {
 		return 0, fmt.Errorf("no live quote available for instrument %d", instrumentID)
 	}
-	return quotes[0].EffectivePrice(), nil
+	// Guard on the price this function actually RETURNS, not on LTP. An
+	// earlier version rejected the quote whenever LTP <= 0 while still
+	// returning EffectivePrice() — so a contract with a perfectly good live
+	// book (say 12.00/13.50) but no trade printed yet today errored on
+	// every single tick, and ManageOpenPositions skips the stop-loss for a
+	// trade whose price it can't fetch. That left the position completely
+	// unprotected for as long as the condition lasted.
+	px := quotes[0].EffectivePrice()
+	if px <= 0 {
+		return 0, fmt.Errorf("no live quote available for instrument %d", instrumentID)
+	}
+	return px, nil
 }
 
 // underlyingLostStructure reports whether NIFTY has moved against the side
 // this position was entered on — e.g. a CE was bought on a BULLISH read, but
 // the underlying is no longer BULLISH or has fallen back below VWAP.
 func underlyingLostStructure(optionType string, current Direction, in DirectionInputs) bool {
+	// Only meaningful once the day's opening range is actually established.
+	// Before ~09:45 the OR has too few bars to be valid and direction is
+	// NONE for that reason alone — not because anything reversed. An
+	// earlier version tested `current != Bullish`, which made NONE count as
+	// "lost structure": every overnight position was force-exited on the
+	// first tick of the next morning (~09:16), defeating the entire point
+	// of holding DELIVERY positions past today, and any mid-session dip to
+	// NONE churned the position out for spread + charges.
+	if !in.OR.Valid {
+		return false
+	}
 	switch optionType {
 	case "CE":
-		return current != Bullish || in.Spot < in.VWAP
+		// Exit only on an explicitly OPPOSITE read, or a real VWAP-side loss.
+		return current == Bearish || in.Spot < in.VWAP
 	case "PE":
-		return current != Bearish || in.Spot > in.VWAP
+		return current == Bullish || in.Spot > in.VWAP
 	default:
 		return false
 	}
@@ -354,6 +382,18 @@ func (s *Service) exitPosition(ctx context.Context, t paper.Trade, reason string
 	if err != nil {
 		s.log.Error().Err(err).Int64("trade_id", t.ID).Msg("optionsalgo: exit failed")
 		return false, "exit failed: " + err.Error()
+	}
+	// A DELIVERY close requested while the market is shut doesn't execute —
+	// ClosePartial only records pending_close_qty and returns the trade
+	// still OPEN, with no error. Treating that as a completed exit deleted
+	// the trailing state, so the next tick rebuilt the stop from
+	// InitialStop(entry) — the one path in this system where a stop could
+	// LOOSEN, throwing away a stop that had already ratcheted up to
+	// breakeven or better. Keep the state until the close is real.
+	if closed.Status != "CLOSED" {
+		s.log.Warn().Int64("trade_id", t.ID).Str("status", closed.Status).
+			Msg("optionsalgo: exit scheduled but not executed (market shut) — keeping trailing state")
+		return false, "exit scheduled for next market open (market currently shut)"
 	}
 	if err := s.repo.DeletePositionState(ctx, t.ID); err != nil {
 		s.log.Error().Err(err).Int64("trade_id", t.ID).Msg("optionsalgo: position state cleanup failed")

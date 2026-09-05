@@ -58,13 +58,25 @@ func (s *Service) BuildOptionChain(ctx context.Context, spot float64) ([]OptionQ
 		byToken[c.SymbolToken] = c
 	}
 
-	greeks, err := s.angel.GetOptionGreeks(ctx, niftyUnderlying, angelExpiryFormat(expiry))
-	if err != nil {
-		return nil, fmt.Errorf("option greeks: %w", err)
-	}
-	greeksByStrikeType := make(map[string]angel.OptionGreek, len(greeks))
-	for _, g := range greeks {
-		greeksByStrikeType[greekKey(g.StrikePrice, g.OptionType)] = g
+	// Greeks are best-effort, NOT fatal. Angel's Greeks endpoint is
+	// live-computed and goes dark outside market hours (confirmed live:
+	// "No Data Available" on a Saturday while Quote-FULL returned real
+	// prices for the same contract in the same moment). Failing the whole
+	// chain over it would blank out a screen whose price data is sitting
+	// right there — someone browsing to buy manually needs LTP/bid/ask, not
+	// delta. Quotes below still populate normally; Delta/IV just stay zero.
+	//
+	// This is safe for the algo precisely because it degrades to zero:
+	// SelectByDelta looks for |delta| inside the configured band (0.55-0.70)
+	// and finds nothing at zero, so EvaluateAndMaybeEnter declines with "no
+	// strike with delta in [...]" rather than trading blind.
+	greeksByStrikeType := map[string]angel.OptionGreek{}
+	if greeks, err := s.angel.GetOptionGreeks(ctx, niftyUnderlying, angelExpiryFormat(expiry)); err != nil {
+		s.log.Warn().Err(err).Msg("option chain: greeks unavailable, returning prices without delta/IV")
+	} else {
+		for _, g := range greeks {
+			greeksByStrikeType[greekKey(g.StrikePrice, g.OptionType)] = g
+		}
 	}
 
 	out := make([]OptionQuote, 0, len(contracts))

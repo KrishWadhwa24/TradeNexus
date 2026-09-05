@@ -3,6 +3,7 @@ package optionsalgo
 import (
 	"context"
 	"strings"
+	"time"
 
 	"tradenexus/internal/instruments"
 	"tradenexus/internal/live"
@@ -65,12 +66,25 @@ func sameStringSet(a, b map[string]bool) bool {
 // present in the cache with a real LTP. A cache miss (nothing broadcast for
 // this token yet, e.g. it was only just subscribed this cycle) or a zero LTP
 // tells the caller to fall back to REST for this one contract instead.
+// maxTickAge is how old a cached tick may be and still count as "live".
+// Without a ceiling, a websocket that freezes without disconnecting (TCP
+// still up, no data flowing) would have GetLastTick serve the same
+// last-known price forever, and the entry gate would size and decide off a
+// price that could be hours stale while believing it was current. Generous
+// relative to the 1-minute evaluation cadence — this is a stuck-feed
+// backstop, not a freshness requirement; anything older falls back to a
+// fresh REST quote rather than being trusted.
+const maxTickAge = 2 * time.Minute
+
 func (s *Service) liveQuote(inst instruments.Instrument) (OptionQuote, bool) {
 	if s.live == nil || inst.StrikePrice == nil {
 		return OptionQuote{}, false
 	}
 	tick, ok := s.live.GetLastTick(inst.Exchange, inst.SymbolToken)
 	if !ok || tick.Price <= 0 {
+		return OptionQuote{}, false
+	}
+	if time.Since(tick.Timestamp) > maxTickAge {
 		return OptionQuote{}, false
 	}
 	return OptionQuote{

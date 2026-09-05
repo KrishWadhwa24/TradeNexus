@@ -79,14 +79,26 @@ func TestOptionCharges_ZeroTurnover(t *testing.T) {
 		premium float64
 		qty     int
 	}{
-		{"zero premium", 0, 65},
 		{"zero qty", 100, 0},
 		{"negative premium", -5, 65},
 	} {
 		if got := OptionCharges(SideBuy, tc.premium, tc.qty); got.Total != 0 {
-			t.Errorf("%s: total = %.4f, want 0 (no order, no charges — must not bill a flat brokerage)", tc.name, got.Total)
+			t.Errorf("%s: total = %.4f, want 0 (not a real order — must not bill a flat brokerage)", tc.name, got.Total)
 		}
 	}
+}
+
+// TestOptionCharges_WorthlessExitStillPaysBrokerage: squaring off an option
+// that has gone to zero is still an executed order. Every turnover-based
+// line is zero, but brokerage + GST are still owed — and these are exactly
+// the trades a stop-loss strategy produces most often, so getting this
+// wrong makes losing trades look systematically cheaper than they are.
+func TestOptionCharges_WorthlessExitStillPaysBrokerage(t *testing.T) {
+	c := OptionCharges(SideSell, 0, 65)
+	closeTo(t, "brokerage", c.Brokerage, 20.0, 0.0001)
+	closeTo(t, "gst", c.GST, 20.0*0.18, 0.0001)
+	closeTo(t, "stt", c.STT, 0, 0.0001) // zero turnover => zero STT
+	closeTo(t, "total", c.Total, 20.0*1.18, 0.0001)
 }
 
 // TestChargesFor_EquityIsNotCharged pins the deliberate scope limit: the

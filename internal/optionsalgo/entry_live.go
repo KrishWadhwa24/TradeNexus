@@ -34,12 +34,28 @@ func (s *Service) EvaluateEntryForSelected(ctx context.Context, direction Direct
 
 	or := BuildOpeningRange(bars, now, cfg)
 
+	// The final bar is the minute currently in progress — Angel returns it
+	// partially filled, so it may hold only a few seconds of volume. It has
+	// to be dropped from BOTH sides of the comparison: using it as
+	// "current" while averaging completed minutes compares seconds against
+	// full minutes, which understates current volume for most of the
+	// session and wrongly rejects genuine breakouts (and, with very few
+	// bars just after the opening range forms, makes current == average so
+	// the gate passes trivially — wrong in both directions).
+	//
+	// After dropping it, "current" is the last COMPLETED minute and the
+	// average covers the completed minutes before it — like for like.
+	complete := bars[:len(bars)-1]
+	if len(complete) < 2 {
+		return EntryDecision{false, "not enough completed 1-minute bars yet to judge the contract's volume"}, nil
+	}
+	currentVol := float64(complete[len(complete)-1].Volume)
+
 	var volSum int64
-	for _, b := range bars {
+	for _, b := range complete[:len(complete)-1] {
 		volSum += b.Volume
 	}
-	avgVol := float64(volSum) / float64(len(bars))
-	currentVol := float64(bars[len(bars)-1].Volume)
+	avgVol := float64(volSum) / float64(len(complete)-1)
 
 	in := EntryInputs{
 		Direction: direction,
