@@ -195,7 +195,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(s.requestLogger)
 	r.Use(middleware.Recoverer)
-	r.Use(timeoutExcept(30*time.Second, "/live-prices", "/admin/reconcile", "/candles/sync", "/sync-scan", "/admin/candles/refetch", "/derivatives/sync", "/paper/trades", "/paper/summary"))
+	r.Use(timeoutExcept(30*time.Second, "/live-prices", "/chain-stream", "/admin/reconcile", "/candles/sync", "/sync-scan", "/admin/candles/refetch", "/derivatives/sync", "/paper/trades", "/paper/summary"))
 
 	r.Get("/health", s.handleHealth)
 	r.Get("/health/ready", s.handleReady)
@@ -207,6 +207,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/auth/google", s.handleGoogleLogin)
 		r.Get("/users/{uid}/live-prices", s.handleLivePrices)
 		r.Get("/public/live-prices", s.handlePublicLivePrices) // landing: snapshot + live ticks (WS)
+		r.Get("/users/{uid}/optionsalgo/chain-stream", s.handleOptionChainStream)
 		// Admin-curated list shown on the landing page — read is harmless to
 		// expose publicly (it must be, since the landing page is pre-auth).
 		r.Get("/public/featured-stocks", s.handleListFeaturedStocks)
@@ -391,6 +392,7 @@ func (s *Server) Router() http.Handler {
 			// Paper trading (Module 9)
 			r.Put("/users/{uid}/paper/capital", s.handleSetCapital)
 			r.Put("/users/{uid}/paper/algo-capital", s.handleSetAlgoCapital)
+			r.Put("/users/{uid}/paper/algo-enabled", s.handleSetAlgoEnabled)
 			r.Get("/users/{uid}/paper/account", s.handleGetAccount)
 			r.Post("/users/{uid}/paper/trades", s.handleBuy)
 			r.Post("/users/{uid}/paper/trades/open", s.handleOpenPosition)

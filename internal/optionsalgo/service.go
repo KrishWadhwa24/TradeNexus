@@ -2,6 +2,7 @@ package optionsalgo
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -10,6 +11,7 @@ import (
 	"tradenexus/internal/calendar"
 	"tradenexus/internal/cronx"
 	"tradenexus/internal/instruments"
+	"tradenexus/internal/live"
 	"tradenexus/internal/market"
 	"tradenexus/internal/paper"
 )
@@ -41,23 +43,22 @@ type Service struct {
 	// never touches it. May be nil in tests that only exercise the candle
 	// pipeline.
 	paper *paper.Service
-	// algoUserID is the account StartPolling auto-trades under — empty
-	// means auto-trading is off (candle collection is unaffected either
-	// way). Set once at startup via SetAlgoUserID, after config.
-	// OptionsAlgoUserEmail is resolved to a real user ID.
-	algoUserID string
+	// live is the shared Angel websocket hub — used to keep the option
+	// chain's bid/ask/volume/OI streaming continuously instead of polling
+	// REST every cycle (see chain_live_ws.go). May be nil in tests that
+	// don't exercise the chain; BuildOptionChain falls back to REST-only
+	// when nil.
+	live *live.Hub
+
+	chainSubMu     sync.Mutex
+	chainSubCancel func()
+	chainSubKeys   map[string]bool
 }
 
 // New builds the service.
-func New(angelClient *angel.Client, repo *Repo, cal *calendar.Service, paperSvc *paper.Service, log zerolog.Logger) *Service {
-	return &Service{angel: angelClient, repo: repo, cal: cal, paper: paperSvc, log: log}
+func New(angelClient *angel.Client, repo *Repo, cal *calendar.Service, paperSvc *paper.Service, liveHub *live.Hub, log zerolog.Logger) *Service {
+	return &Service{angel: angelClient, repo: repo, cal: cal, paper: paperSvc, live: liveHub, log: log}
 }
-
-// SetAlgoUserID sets which account StartPolling's automatic tick trades
-// under. Not a constructor param because resolving the configured email to
-// a user ID happens after this Service already needs to exist (main.go
-// wires optionsalgo before it has a resolved ID in hand).
-func (s *Service) SetAlgoUserID(userID string) { s.algoUserID = userID }
 
 // backfillOne pulls the full backfillWindow of 1-minute bars for one
 // instrument and upserts them. Shared by Backfill (underlyings) and
@@ -207,18 +208,32 @@ func (s *Service) StartPolling(ctx context.Context) {
 					if err := s.RefreshFuturesLatest(c); err != nil {
 						s.log.Error().Err(err).Msg("optionsalgo: futures refresh failed")
 					}
-					if s.algoUserID == "" {
+					// Every account with algo_enabled=true (the frontend
+					// on/off toggle — see paper.Service.SetAlgoEnabled) gets
+					// its own independent evaluate-and-maybe-enter pass this
+					// tick. Replaces the old single-account
+					// OPTIONS_ALGO_USER_EMAIL mechanism: opted-in accounts
+					// are discovered fresh from the DB every tick, so a
+					// toggle flipped from the frontend takes effect on the
+					// very next tick, no restart needed.
+					userIDs, err := s.paper.AlgoEnabledUserIDs(c)
+					if err != nil {
+						s.log.Error().Err(err).Msg("optionsalgo: listing algo-enabled accounts failed")
 						return
 					}
-					// Manage existing positions before considering a new
-					// entry — an exit this same tick frees up the
-					// max-1-open-position slot for EvaluateAndMaybeEnter to
-					// use right away, instead of waiting a full extra minute.
-					if _, err := s.ManageOpenPositions(c, s.algoUserID); err != nil {
-						s.log.Error().Err(err).Msg("optionsalgo: manage positions failed")
-					}
-					if _, err := s.EvaluateAndMaybeEnter(c, s.algoUserID); err != nil {
-						s.log.Error().Err(err).Msg("optionsalgo: evaluate entry failed")
+					for _, uid := range userIDs {
+						// Manage existing positions before considering a new
+						// entry — an exit this same tick frees up the
+						// max-1-open-position slot for EvaluateAndMaybeEnter
+						// to use right away, instead of waiting a full extra
+						// minute. One account's failure doesn't stop the
+						// others from being evaluated this tick.
+						if _, err := s.ManageOpenPositions(c, uid); err != nil {
+							s.log.Error().Err(err).Str("user_id", uid).Msg("optionsalgo: manage positions failed")
+						}
+						if _, err := s.EvaluateAndMaybeEnter(c, uid); err != nil {
+							s.log.Error().Err(err).Str("user_id", uid).Msg("optionsalgo: evaluate entry failed")
+						}
 					}
 				})
 			}

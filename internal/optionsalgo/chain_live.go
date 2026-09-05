@@ -17,11 +17,14 @@ const niftyUnderlying = "NIFTY"
 
 // BuildOptionChain resolves the nearest-expiry NIFTY chain around spot (ATM
 // +/- strikesEachSide strikes, both CE/PE) and joins it with live
-// bid/ask/volume/OI (GetOptionQuoteFull) and Greeks (GetOptionGreeks) —
-// exactly the two Angel integrations verified live in Phase 0. Both calls
-// are batched (one quote-full call for every token, one Greeks call for the
-// whole expiry) rather than per-contract, since Angel already supports that
-// and it's far cheaper against the rate limiter.
+// bid/ask/volume/OI and Greeks (GetOptionGreeks). Bid/ask/volume/OI prefer
+// the Hub's live SnapQuote cache (see ensureChainSubscribed/liveQuote in
+// chain_live_ws.go) — continuously streamed, not polled — and only fall
+// back to the REST GetOptionQuoteFull call (the original Phase 0
+// integration) for whichever contracts don't have a cached tick yet, e.g.
+// right after the ATM window shifts and a new strike enters it. Greeks
+// still come from one batched REST call per cycle (Angel has no websocket
+// Greeks stream).
 func (s *Service) BuildOptionChain(ctx context.Context, spot float64) ([]OptionQuote, error) {
 	cfg, err := s.repo.GetConfig(ctx)
 	if err != nil {
@@ -47,18 +50,14 @@ func (s *Service) BuildOptionChain(ctx context.Context, spot float64) ([]OptionQ
 		return nil, fmt.Errorf("no option contracts found for the selected strikes (expiry %s)", expiry.Format("2006-01-02"))
 	}
 
+	s.ensureChainSubscribed(ctx, contracts)
+
 	byToken := make(map[string]instruments.Instrument, len(contracts))
-	tokens := make([]string, 0, len(contracts))
 	exchange := contracts[0].Exchange
 	for _, c := range contracts {
 		byToken[c.SymbolToken] = c
-		tokens = append(tokens, c.SymbolToken)
 	}
 
-	quotes, err := s.angel.GetOptionQuoteFull(ctx, exchange, tokens)
-	if err != nil {
-		return nil, fmt.Errorf("quote-full: %w", err)
-	}
 	greeks, err := s.angel.GetOptionGreeks(ctx, niftyUnderlying, angelExpiryFormat(expiry))
 	if err != nil {
 		return nil, fmt.Errorf("option greeks: %w", err)
@@ -68,31 +67,54 @@ func (s *Service) BuildOptionChain(ctx context.Context, spot float64) ([]OptionQ
 		greeksByStrikeType[greekKey(g.StrikePrice, g.OptionType)] = g
 	}
 
-	out := make([]OptionQuote, 0, len(quotes))
-	for _, q := range quotes {
-		inst, ok := byToken[q.SymbolToken]
-		if !ok || inst.StrikePrice == nil {
+	out := make([]OptionQuote, 0, len(contracts))
+	var restTokens []string
+	for _, c := range contracts {
+		if oq, ok := s.liveQuote(c); ok {
+			applyGreeks(&oq, greeksByStrikeType)
+			out = append(out, oq)
 			continue
 		}
-		oq := OptionQuote{
-			InstrumentID:  inst.ID,
-			Token:         inst.SymbolToken,
-			TradingSymbol: inst.TradingSymbol,
-			StrikePrice:   *inst.StrikePrice,
-			OptionType:    inst.OptionType,
-			LotSize:       inst.LotSize,
-			LTP:           q.LTP,
-			Bid:           q.Bid(),
-			Ask:           q.Ask(),
-			Volume:        q.TradeVolume,
-			OpenInterest:  q.OpenInterest,
+		restTokens = append(restTokens, c.SymbolToken)
+	}
+
+	if len(restTokens) > 0 {
+		quotes, err := s.angel.GetOptionQuoteFull(ctx, exchange, restTokens)
+		if err != nil {
+			if len(out) == 0 {
+				return nil, fmt.Errorf("quote-full: %w", err)
+			}
+			s.log.Warn().Err(err).Msg("option chain: REST fallback failed for some contracts, returning live-only subset")
 		}
-		if g, ok := greeksByStrikeType[greekKey(*inst.StrikePrice, inst.OptionType)]; ok {
-			oq.Delta, oq.Gamma, oq.Theta, oq.Vega, oq.IV = g.Delta, g.Gamma, g.Theta, g.Vega, g.IV
+		for _, q := range quotes {
+			inst, ok := byToken[q.SymbolToken]
+			if !ok || inst.StrikePrice == nil {
+				continue
+			}
+			oq := OptionQuote{
+				InstrumentID:  inst.ID,
+				Token:         inst.SymbolToken,
+				TradingSymbol: inst.TradingSymbol,
+				StrikePrice:   *inst.StrikePrice,
+				OptionType:    inst.OptionType,
+				LotSize:       inst.LotSize,
+				LTP:           q.LTP,
+				Bid:           q.Bid(),
+				Ask:           q.Ask(),
+				Volume:        q.TradeVolume,
+				OpenInterest:  q.OpenInterest,
+			}
+			applyGreeks(&oq, greeksByStrikeType)
+			out = append(out, oq)
 		}
-		out = append(out, oq)
 	}
 	return out, nil
+}
+
+func applyGreeks(oq *OptionQuote, greeksByStrikeType map[string]angel.OptionGreek) {
+	if g, ok := greeksByStrikeType[greekKey(oq.StrikePrice, oq.OptionType)]; ok {
+		oq.Delta, oq.Gamma, oq.Theta, oq.Vega, oq.IV = g.Delta, g.Gamma, g.Theta, g.Vega, g.IV
+	}
 }
 
 // SelectContract narrows a built chain to one side (CE for bullish, PE for

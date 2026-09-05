@@ -30,7 +30,11 @@ export function publicLivePricesURL() {
   return `${wsBase}/v1/public/live-prices`;
 }
 
-export function connectLivePrices(userId, { onMessage, onOpen, onClose, onError } = {}) {
+// connectWebSocketWithRetry is the shared auto-reconnect wrapper behind
+// every live-tick websocket in this app (equity live-prices, the option
+// chain stream) — urlFn is called fresh on every (re)connect so a token
+// refresh or a changed subscription list is picked up.
+function connectWebSocketWithRetry(urlFn, { onMessage, onOpen, onClose, onError } = {}) {
   let ws = null;
   let retryTimer = null;
   let disposed = false;
@@ -53,7 +57,7 @@ export function connectLivePrices(userId, { onMessage, onOpen, onClose, onError 
   function connect() {
     if (disposed) return;
     clearRetry();
-    ws = new WebSocket(livePricesURL(userId));
+    ws = new WebSocket(urlFn());
     ws.onopen = (event) => {
       retryDelay = 1000;
       onOpen?.(event);
@@ -75,6 +79,24 @@ export function connectLivePrices(userId, { onMessage, onOpen, onClose, onError 
     clearRetry();
     if (ws) ws.close();
   };
+}
+
+export function connectLivePrices(userId, handlers) {
+  return connectWebSocketWithRetry(() => livePricesURL(userId), handlers);
+}
+
+// optionChainStreamURL builds the URL for the live option-chain tick stream
+// (bid/ask/volume/OI, SnapQuote mode) — ids are the instrument IDs the
+// frontend already has from GET /optionsalgo/chain.
+export function optionChainStreamURL(userId, ids) {
+  const base = import.meta.env.VITE_API_BASE_URL || window.location.origin;
+  const wsBase = base.replace(/^http/, "ws");
+  const qs = new URLSearchParams({ token, ids: ids.join(",") });
+  return `${wsBase}/v1/users/${userId}/optionsalgo/chain-stream?${qs}`;
+}
+
+export function connectOptionChainStream(userId, ids, handlers) {
+  return connectWebSocketWithRetry(() => optionChainStreamURL(userId, ids), handlers);
 }
 
 async function req(method, path, body) {

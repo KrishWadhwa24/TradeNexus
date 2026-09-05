@@ -51,6 +51,10 @@ type Account struct {
 	StartingCapital float64 `json:"starting_capital"`
 	CashBalance     float64 `json:"cash_balance"`
 	AlgoCashBalance float64 `json:"algo_cash_balance"`
+	// AlgoEnabled is the per-user on/off switch for the options-algo
+	// auto-trading loop (StartPolling's per-tick AlgoEnabledUserIDs query) —
+	// replaces the old single-account OPTIONS_ALGO_USER_EMAIL env var.
+	AlgoEnabled bool `json:"algo_enabled"`
 }
 
 // availableBalance returns the balance a trade with this source draws
@@ -134,10 +138,15 @@ func (s *Service) SetCapital(ctx context.Context, userID string, capital float64
 	if capital < 0 {
 		return Account{}, errors.New("capital must be >= 0")
 	}
+	// Exclude options-algo positions — they're funded from algo_cash_balance,
+	// not cash_balance (see SetAlgoCapital's mirror-image filter), so their
+	// notional cost has no business being subtracted here. Without this, an
+	// open algo position inflates openCost and silently under-sets the
+	// user's regular cash_balance to less than the capital they asked for.
 	var openCost float64
 	_ = s.pool.QueryRow(ctx,
-		`SELECT COALESCE(SUM(entry_price*quantity),0) FROM paper_trades WHERE user_id=$1::uuid AND status='OPEN'`,
-		userID).Scan(&openCost)
+		`SELECT COALESCE(SUM(entry_price*quantity),0) FROM paper_trades WHERE user_id=$1::uuid AND status='OPEN' AND source != $2`,
+		userID, SourceOptionsAlgo).Scan(&openCost)
 
 	cash := capital - openCost
 	_, err := s.pool.Exec(ctx, `
@@ -158,10 +167,65 @@ func (s *Service) GetAccount(ctx context.Context, userID string) (Account, error
 	var a Account
 	a.UserID = userID
 	err := s.pool.QueryRow(ctx,
-		`SELECT starting_capital, cash_balance, algo_cash_balance FROM paper_accounts WHERE user_id=$1::uuid`, userID).
-		Scan(&a.StartingCapital, &a.CashBalance, &a.AlgoCashBalance)
+		`SELECT starting_capital, cash_balance, algo_cash_balance, algo_enabled FROM paper_accounts WHERE user_id=$1::uuid`, userID).
+		Scan(&a.StartingCapital, &a.CashBalance, &a.AlgoCashBalance, &a.AlgoEnabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return a, nil // zeroed account
+	}
+	return a, err
+}
+
+// SetAlgoEnabled flips the per-user auto-trading switch — read each tick by
+// StartPolling via AlgoEnabledUserIDs. A plain UPDATE, not an upsert like
+// SetCapital/SetAlgoCapital: a user has no reason to toggle this before
+// they've ever set up paper trading (no paper_accounts row yet), and if
+// somehow called first, it just affects 0 rows — GetAccount already
+// tolerates a missing row by returning a zeroed Account.
+func (s *Service) SetAlgoEnabled(ctx context.Context, userID string, enabled bool) (Account, error) {
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE paper_accounts SET algo_enabled=$2, updated_at=now() WHERE user_id=$1::uuid`,
+		userID, enabled); err != nil {
+		return Account{}, err
+	}
+	return s.GetAccount(ctx, userID)
+}
+
+// AlgoEnabledUserIDs lists every account with auto-trading switched on —
+// StartPolling's per-tick loop iterates this instead of a single hardcoded
+// account (the old OPTIONS_ALGO_USER_EMAIL mechanism).
+func (s *Service) AlgoEnabledUserIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT user_id FROM paper_accounts WHERE algo_enabled = true`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// lockAccountForUpdate reads the account row WITH a row-level lock (FOR
+// UPDATE) inside the caller's transaction — closing a check-then-debit race
+// where two concurrent orders (e.g. a double-submit, or the algo firing two
+// overlapping signals) could both read the same stale balance, both pass
+// the "sufficient funds" check, and both debit, overdrawing below zero.
+// Blocks a concurrent caller for the same user until this transaction
+// commits or rolls back. Returns a zeroed Account (not an error) if the
+// user has no paper_accounts row yet, same as GetAccount.
+func (s *Service) lockAccountForUpdate(ctx context.Context, tx pgx.Tx, userID string) (Account, error) {
+	var a Account
+	a.UserID = userID
+	err := tx.QueryRow(ctx,
+		`SELECT starting_capital, cash_balance, algo_cash_balance FROM paper_accounts WHERE user_id=$1::uuid FOR UPDATE`, userID).
+		Scan(&a.StartingCapital, &a.CashBalance, &a.AlgoCashBalance)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return a, nil
 	}
 	return a, err
 }

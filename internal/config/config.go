@@ -110,12 +110,6 @@ type Config struct {
 	// entirely separate from equity scanning; toggling this off has zero
 	// effect on the daily equity candle/scan pipeline.
 	OptionsAlgoEnabled bool `env:"OPTIONS_ALGO_ENABLED" envDefault:"true"`
-	// OptionsAlgoUserEmail is the account the auto-trading strategy places
-	// real (paper) trades under — resolved to a user ID once at startup via
-	// the same AuthByEmail lookup the admin bootstrap uses. Empty (the
-	// default) means auto-trading is off entirely: candle collection and
-	// the manual option-chain/buy flow are both unaffected either way.
-	OptionsAlgoUserEmail string `env:"OPTIONS_ALGO_USER_EMAIL" envDefault:""`
 
 	// Notifications (Module 7)
 	NotifyEnabled    bool   `env:"NOTIFY_ENABLED" envDefault:"true"`

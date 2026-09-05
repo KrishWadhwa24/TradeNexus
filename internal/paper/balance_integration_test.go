@@ -225,3 +225,183 @@ func TestCloseAtPrice_CreditsCorrectBalance(t *testing.T) {
 		t.Errorf("cash_balance = %v, want unchanged 100000 — an options-algo close must never touch it", cash)
 	}
 }
+
+// TestSetCapital_ExcludesAlgoPositionsFromOpenCost is the regression test for
+// a real money-correctness bug caught during review: SetCapital's openCost
+// query summed EVERY open position's notional cost, including options-algo
+// ones — even though algo positions are funded from algo_cash_balance, not
+// cash_balance. An open algo position used to silently reduce a user's
+// regular cash_balance below the capital they actually asked for.
+func TestSetCapital_ExcludesAlgoPositionsFromOpenCost(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	userID := testAccount(t, pool, 0, 250000)
+	instID := testInstrumentID(t, pool)
+	t.Cleanup(func() { pool.Exec(ctx, `DELETE FROM paper_trades WHERE user_id=$1::uuid`, userID) })
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	if _, err := mergeOrOpen(ctx, tx, userID, instID, SideBuy, ProductDelivery, nil, SourceOptionsAlgo, 65, 1000); err != nil {
+		t.Fatalf("mergeOrOpen(options-algo): %v", err)
+	}
+	if _, err := mergeOrOpen(ctx, tx, userID, instID, SideBuy, ProductDelivery, nil, "web", 1, 5000); err != nil {
+		t.Fatalf("mergeOrOpen(web): %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	s := &Service{pool: pool}
+	acct, err := s.SetCapital(ctx, userID, 100000)
+	if err != nil {
+		t.Fatalf("SetCapital: %v", err)
+	}
+	// openCost must only see the web position (5000): cash = 100000 - 5000 =
+	// 95000. The options-algo position's 65*1000=65000 notional must NOT be
+	// subtracted here — it was never funded from cash_balance.
+	if acct.CashBalance != 95000 {
+		t.Errorf("cash_balance = %v, want 95000 (100000 - the web position's 5000 only, excluding the algo position's 65000)", acct.CashBalance)
+	}
+}
+
+// TestSetAlgoEnabled_AndAlgoEnabledUserIDs covers the per-user auto-trading
+// toggle (replaces the old single-account OPTIONS_ALGO_USER_EMAIL env var):
+// flipping one account's flag must not affect another's, and
+// AlgoEnabledUserIDs must return exactly the accounts currently opted in.
+func TestSetAlgoEnabled_AndAlgoEnabledUserIDs(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	s := &Service{pool: pool}
+
+	onID := testAccount(t, pool, 0, 0)
+	offID := testAccount(t, pool, 0, 0)
+
+	acct, err := s.SetAlgoEnabled(ctx, onID, true)
+	if err != nil {
+		t.Fatalf("SetAlgoEnabled(true): %v", err)
+	}
+	if !acct.AlgoEnabled {
+		t.Fatal("expected AlgoEnabled=true in SetAlgoEnabled's returned account")
+	}
+
+	got, err := s.GetAccount(ctx, onID)
+	if err != nil {
+		t.Fatalf("GetAccount(onID): %v", err)
+	}
+	if !got.AlgoEnabled {
+		t.Fatal("expected GetAccount to reflect algo_enabled=true after SetAlgoEnabled")
+	}
+	got, err = s.GetAccount(ctx, offID)
+	if err != nil {
+		t.Fatalf("GetAccount(offID): %v", err)
+	}
+	if got.AlgoEnabled {
+		t.Fatal("expected the second (untouched) account to stay algo_enabled=false")
+	}
+
+	ids, err := s.AlgoEnabledUserIDs(ctx)
+	if err != nil {
+		t.Fatalf("AlgoEnabledUserIDs: %v", err)
+	}
+	foundOn, foundOff := false, false
+	for _, id := range ids {
+		if id == onID {
+			foundOn = true
+		}
+		if id == offID {
+			foundOff = true
+		}
+	}
+	if !foundOn {
+		t.Error("expected the enabled account to appear in AlgoEnabledUserIDs")
+	}
+	if foundOff {
+		t.Error("expected the disabled account to NOT appear in AlgoEnabledUserIDs")
+	}
+
+	if _, err := s.SetAlgoEnabled(ctx, onID, false); err != nil {
+		t.Fatalf("SetAlgoEnabled(false): %v", err)
+	}
+	ids, err = s.AlgoEnabledUserIDs(ctx)
+	if err != nil {
+		t.Fatalf("AlgoEnabledUserIDs after turning off: %v", err)
+	}
+	for _, id := range ids {
+		if id == onID {
+			t.Fatal("expected the account to disappear from AlgoEnabledUserIDs after being turned off")
+		}
+	}
+}
+
+// TestLockAccountForUpdate_BlocksConcurrentReader is the regression test for
+// a real concurrency bug caught during review: OpenPosition/ConvertToDelivery
+// used to check "sufficient funds" against an unlocked, pre-transaction
+// balance read — so two concurrent orders for the same user could both pass
+// the check against the same stale balance and both debit, overdrawing
+// below zero. lockAccountForUpdate's FOR UPDATE read is supposed to close
+// that by serializing concurrent callers on the same account row; this
+// proves it actually blocks (and sees the post-commit balance), not just
+// that it compiles.
+func TestLockAccountForUpdate_BlocksConcurrentReader(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	userID := testAccount(t, pool, 1000, 0)
+	s := &Service{}
+
+	tx1, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx1: %v", err)
+	}
+	defer tx1.Rollback(ctx) //nolint:errcheck
+
+	if _, err := s.lockAccountForUpdate(ctx, tx1, userID); err != nil {
+		t.Fatalf("tx1 lock: %v", err)
+	}
+	// tx1 now holds the row lock. Debit it, but don't commit yet — a second
+	// caller's lockAccountForUpdate must not be able to read past this.
+	if err := debitBalance(ctx, tx1, userID, "web", 400); err != nil {
+		t.Fatalf("tx1 debit: %v", err)
+	}
+
+	tx2Started := make(chan struct{})
+	tx2Done := make(chan Account, 1)
+	go func() {
+		tx2, err := pool.Begin(ctx)
+		if err != nil {
+			t.Errorf("begin tx2: %v", err)
+			close(tx2Started)
+			return
+		}
+		defer tx2.Rollback(ctx) //nolint:errcheck
+		close(tx2Started)
+		acct, err := s.lockAccountForUpdate(ctx, tx2, userID)
+		if err != nil {
+			t.Errorf("tx2 lock: %v", err)
+			return
+		}
+		tx2Done <- acct
+	}()
+
+	<-tx2Started
+	select {
+	case <-tx2Done:
+		t.Fatal("tx2's lockAccountForUpdate returned before tx1 committed — the row lock isn't actually blocking concurrent callers")
+	case <-time.After(300 * time.Millisecond):
+		// expected: tx2 is blocked waiting on tx1's row lock.
+	}
+
+	if err := tx1.Commit(ctx); err != nil {
+		t.Fatalf("commit tx1: %v", err)
+	}
+
+	select {
+	case acct := <-tx2Done:
+		if acct.CashBalance != 600 {
+			t.Errorf("tx2 saw cash_balance=%v after tx1 committed, want 600 (1000-400) — must see tx1's debit, not a stale pre-commit value", acct.CashBalance)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("tx2 never unblocked after tx1 committed")
+	}
+}

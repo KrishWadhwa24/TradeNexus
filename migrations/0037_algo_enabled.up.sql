@@ -1,0 +1,1 @@
+ALTER TABLE paper_accounts ADD COLUMN algo_enabled BOOLEAN NOT NULL DEFAULT FALSE;

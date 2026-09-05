@@ -163,10 +163,6 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 	if err := validateOptionLotSize(inst, qty); err != nil {
 		return Trade{}, err
 	}
-	acct, err := s.GetAccount(ctx, userID)
-	if err != nil {
-		return Trade{}, err
-	}
 
 	open := s.cal.Cal().IsMarketOpen(time.Now().In(market.IST))
 	if source == "" {
@@ -187,15 +183,24 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 			return Trade{}, err
 		}
 		margin := marginFraction(productType, inst.OptionType != "") * schedPx * float64(qty)
-		if avail := acct.availableBalance(source); margin > avail {
-			return Trade{}, fmt.Errorf("insufficient cash: need %.2f margin, have %.2f", margin, avail)
-		}
 
 		tx, err := s.pool.Begin(ctx)
 		if err != nil {
 			return Trade{}, err
 		}
 		defer tx.Rollback(ctx) //nolint:errcheck
+
+		// Balance check happens INSIDE the transaction, against a row-locked
+		// read (see lockAccountForUpdate) — not the unlocked pre-tx read this
+		// used to do — so two concurrent orders for the same user can't both
+		// pass the check against the same stale balance and overdraw.
+		locked, err := s.lockAccountForUpdate(ctx, tx, userID)
+		if err != nil {
+			return Trade{}, err
+		}
+		if avail := locked.availableBalance(source); margin > avail {
+			return Trade{}, fmt.Errorf("insufficient cash: need %.2f margin, have %.2f", margin, avail)
+		}
 
 		var id int64
 		if err = tx.QueryRow(ctx, `
@@ -219,15 +224,22 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 		return Trade{}, err
 	}
 	margin := marginFraction(productType, inst.OptionType != "") * px * float64(qty)
-	if avail := acct.availableBalance(source); margin > avail {
-		return Trade{}, fmt.Errorf("insufficient cash: need %.2f margin, have %.2f", margin, avail)
-	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Trade{}, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// See the SCHEDULED branch above: the check must happen against a
+	// row-locked read inside this transaction, not an unlocked pre-tx one.
+	locked, err := s.lockAccountForUpdate(ctx, tx, userID)
+	if err != nil {
+		return Trade{}, err
+	}
+	if avail := locked.availableBalance(source); margin > avail {
+		return Trade{}, fmt.Errorf("insufficient cash: need %.2f margin, have %.2f", margin, avail)
+	}
 
 	id, err := mergeOrOpen(ctx, tx, userID, inst.ID, side, productType, signalID, source, qty, px)
 	if err != nil {
@@ -390,19 +402,23 @@ func (s *Service) ConvertToDelivery(ctx context.Context, tradeID int64) (Trade, 
 	}
 
 	remaining := (1 - marginFraction(ProductIntraday, t.OptionType != "")) * t.EntryPrice * float64(t.Quantity)
-	acct, err := s.GetAccount(ctx, t.userID)
-	if err != nil {
-		return Trade{}, err
-	}
-	if avail := acct.availableBalance(t.Source); remaining > avail {
-		return Trade{}, fmt.Errorf("insufficient cash to convert: need %.2f more, have %.2f", remaining, avail)
-	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Trade{}, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Row-locked read inside the transaction — see OpenPosition's identical
+	// fix and lockAccountForUpdate's doc comment for why an unlocked pre-tx
+	// check isn't enough.
+	locked, err := s.lockAccountForUpdate(ctx, tx, t.userID)
+	if err != nil {
+		return Trade{}, err
+	}
+	if avail := locked.availableBalance(t.Source); remaining > avail {
+		return Trade{}, fmt.Errorf("insufficient cash to convert: need %.2f more, have %.2f", remaining, avail)
+	}
 
 	if err := debitBalance(ctx, tx, t.userID, t.Source, remaining); err != nil {
 		return Trade{}, err

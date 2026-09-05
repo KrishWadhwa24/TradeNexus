@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { api, connectLivePrices, fmt } from "../api.js";
+import { api, connectLivePrices, connectOptionChainStream, fmt } from "../api.js";
 
 function Stat({ label, value, cls }) {
   return (
@@ -67,6 +67,35 @@ function ChainBrowser({ userId, onTraded }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Live-patch bid/ask/LTP/volume/OI in place as ticks stream in — the chain
+  // shape itself (strikes, Greeks, lot size) still only refreshes on load()
+  // (manual Refresh, or after a buy). Re-subscribes only when the set of
+  // instrument IDs actually changes (e.g. after a Refresh moves the ATM
+  // window), not on every unrelated re-render.
+  const chainIdsKey = (chain?.chain ?? []).map((q) => q.InstrumentID).join(",");
+  useEffect(() => {
+    if (!chainIdsKey) return;
+    const ids = chainIdsKey.split(",").map(Number);
+    const disconnect = connectOptionChainStream(userId, ids, {
+      onMessage: (event) => {
+        const tick = JSON.parse(event.data);
+        if (tick.type || !tick.instrument_id) return; // "ready"/"heartbeat" frames, not a price tick
+        setChain((prev) => {
+          if (!prev?.chain) return prev;
+          return {
+            ...prev,
+            chain: prev.chain.map((q) =>
+              q.InstrumentID === tick.instrument_id
+                ? { ...q, LTP: tick.price, Bid: tick.bid ?? 0, Ask: tick.ask ?? 0, Volume: tick.volume ?? 0, OpenInterest: tick.open_interest ?? 0 }
+                : q
+            ),
+          };
+        });
+      },
+    });
+    return disconnect;
+  }, [chainIdsKey, userId]);
+
   async function buy(q) {
     if (!q.LotSize) return;
     setBuying(q.InstrumentID);
@@ -127,6 +156,37 @@ function ChainBrowser({ userId, onTraded }) {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+function AlgoToggle({ userId, enabled, onUpdated }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  async function toggle() {
+    setBusy(true); setMsg("");
+    try {
+      await api.put(`/v1/users/${userId}/paper/algo-enabled`, { enabled: !enabled });
+      onUpdated?.();
+    } catch (e) { setMsg("Failed: " + e.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+      <div className="section-title" style={{ margin: "0 0 6px" }}>Algo trading</div>
+      <div className="subtle" style={{ marginBottom: 14 }}>
+        When on, the strategy evaluates every minute during market hours and places real (paper)
+        trades automatically under your algo capital below.
+      </div>
+      <div className="row" style={{ gap: 8, alignItems: "center" }}>
+        <span className={"tag " + (enabled ? "tag-buy" : "tag-sell")}>{enabled ? "ON" : "OFF"}</span>
+        <button className="btn-sm btn-primary" onClick={toggle} disabled={busy}>
+          {busy ? "Saving…" : enabled ? "Turn off" : "Turn on"}
+        </button>
+        {msg && <span className="msg">{msg}</span>}
+      </div>
     </div>
   );
 }
@@ -321,6 +381,7 @@ export default function Options({ userId, isAdmin }) {
   const [algoSum, setAlgoSum] = useState(null);
   const [mySum, setMySum] = useState(null);
   const [trades, setTrades] = useState([]);
+  const [account, setAccount] = useState(null);
   const [err, setErr] = useState("");
 
   const load = useCallback(() => {
@@ -330,8 +391,9 @@ export default function Options({ userId, isAdmin }) {
       api.get(`/v1/users/${userId}/paper/algo-summary`),
       api.get(`/v1/users/${userId}/paper/summary`),
       api.get(`/v1/users/${userId}/paper/trades`),
+      api.get(`/v1/users/${userId}/paper/account`),
     ])
-      .then(([a, m, t]) => { setAlgoSum(a); setMySum(m); setTrades(t.trades || []); })
+      .then(([a, m, t, acct]) => { setAlgoSum(a); setMySum(m); setTrades(t.trades || []); setAccount(acct); })
       .catch((e) => setErr(e.message));
   }, [userId]);
 
@@ -380,6 +442,7 @@ export default function Options({ userId, isAdmin }) {
       {section === "algo" && (
         <>
           <SummaryStats sum={algoSum} openTrades={algoTrades} />
+          <AlgoToggle userId={userId} enabled={account?.algo_enabled} onUpdated={load} />
           <CapitalControl userId={userId} current={algoSum?.cash_balance} onUpdated={load} />
           {isAdmin && <SettingsPanel />}
           <PerformanceStats userId={userId} />

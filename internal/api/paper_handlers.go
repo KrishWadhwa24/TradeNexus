@@ -170,6 +170,27 @@ func (s *Server) handleSetAlgoCapital(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, acct)
 }
 
+// PUT /v1/users/{uid}/paper/algo-enabled — the frontend on/off switch for
+// this account's auto-trading (replaces the old single-account
+// OPTIONS_ALGO_USER_EMAIL env var). Not admin-gated, same reasoning as
+// handleSetAlgoCapital: a user switching their own auto-trading on/off is
+// no different from setting their own capital.
+func (s *Server) handleSetAlgoEnabled(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	acct, err := s.paper.SetAlgoEnabled(r.Context(), chi.URLParam(r, "uid"), body.Enabled)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, acct)
+}
+
 // GET /v1/users/{uid}/paper/algo-stats — win rate/expectancy/profit-factor
 // breakdown over CLOSED algo trades. Always computed, even below the
 // script's 30-trade "ready to tune" threshold — ReadyForTuning tells the
