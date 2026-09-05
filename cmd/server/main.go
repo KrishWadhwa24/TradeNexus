@@ -198,15 +198,10 @@ func main() {
 	// so admin verification endpoints (candles, direction) still work even if
 	// polling is disabled.
 	optionsAlgoRepo := optionsalgo.NewRepo(pg.Pool)
-	optionsAlgoSvc := optionsalgo.New(angelClient, optionsAlgoRepo, calSvc, paperSvc, log)
-	if cfg.OptionsAlgoUserEmail != "" {
-		if id, _, _, aerr := userRepo.AuthByEmail(ctx, cfg.OptionsAlgoUserEmail); aerr == nil && id != "" {
-			optionsAlgoSvc.SetAlgoUserID(id)
-			log.Info().Str("email", cfg.OptionsAlgoUserEmail).Msg("optionsalgo: auto-trading enabled for this account")
-		} else {
-			log.Error().Err(aerr).Str("email", cfg.OptionsAlgoUserEmail).Msg("optionsalgo: OPTIONS_ALGO_USER_EMAIL didn't resolve to a user — auto-trading stays off")
-		}
-	}
+	optionsAlgoSvc := optionsalgo.New(angelClient, optionsAlgoRepo, calSvc, paperSvc, liveHub, log)
+	// Which accounts actually auto-trade is now a per-user frontend toggle
+	// (paper.Service.SetAlgoEnabled / algo_enabled column), discovered fresh
+	// every polling tick — no startup wiring needed here anymore.
 	if cfg.OptionsAlgoEnabled {
 		optionsAlgoSvc.StartPolling(ctx)
 	}
