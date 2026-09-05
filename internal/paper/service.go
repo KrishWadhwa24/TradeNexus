@@ -102,6 +102,14 @@ type Trade struct {
 	ExitTime    *time.Time `json:"exit_time,omitempty"`
 	Status      string     `json:"status"`
 	PnL         float64    `json:"pnl"`
+	// EntryCharges/ExitCharges are the real statutory + broker costs booked
+	// against this trade (see charges.go). PnL above stays GROSS — net P&L
+	// is PnL - EntryCharges - ExitCharges — so the UI can show both what the
+	// move earned and what it actually cost to capture. Always 0 for equity
+	// (its rate card isn't modelled) and 0 on trades opened before charges
+	// existed.
+	EntryCharges float64 `json:"entry_charges"`
+	ExitCharges  float64 `json:"exit_charges"`
 	// CurrentPrice/Unrealized are pointers, not plain float64 — omitempty on
 	// a plain float64 drops the field when it's exactly 0, which is a
 	// completely legitimate value here (a position bought seconds ago,
@@ -188,6 +196,51 @@ func (s *Service) SetAlgoEnabled(ctx context.Context, userID string, enabled boo
 		return Account{}, err
 	}
 	return s.GetAccount(ctx, userID)
+}
+
+// DailyPnL is one IST calendar day's realized algo performance, gross and
+// net of the real statutory/broker charges booked on those trades.
+type DailyPnL struct {
+	Date     string  `json:"date"` // YYYY-MM-DD, IST
+	Trades   int     `json:"trades"`
+	GrossPnL float64 `json:"gross_pnl"`
+	Charges  float64 `json:"charges"`
+	NetPnL   float64 `json:"net_pnl"`
+}
+
+// AlgoDailyPnL aggregates CLOSED options-algo trades into per-IST-day rows
+// between from and to (inclusive), for the statistics screen's heatmap and
+// range summary. Days with no closed trades are simply absent — the caller
+// renders those as empty cells rather than as zero-P&L days.
+//
+// Bucketed by exit_time (when the money was actually realized), not
+// entry_time, so a position opened Monday and closed Wednesday counts on
+// Wednesday — matching how a broker's P&L statement reads.
+func (s *Service) AlgoDailyPnL(ctx context.Context, userID string, from, to time.Time) ([]DailyPnL, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT to_char(exit_time AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD') AS d,
+		       COUNT(*),
+		       COALESCE(SUM(pnl), 0),
+		       COALESCE(SUM(entry_charges + exit_charges), 0)
+		FROM paper_trades
+		WHERE user_id = $1::uuid AND source = $2 AND status = 'CLOSED' AND exit_time IS NOT NULL
+		  AND (exit_time AT TIME ZONE 'Asia/Kolkata')::date BETWEEN $3::date AND $4::date
+		GROUP BY d ORDER BY d`,
+		userID, SourceOptionsAlgo, from.Format("2006-01-02"), to.Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DailyPnL
+	for rows.Next() {
+		var d DailyPnL
+		if err := rows.Scan(&d.Date, &d.Trades, &d.GrossPnL, &d.Charges); err != nil {
+			return nil, err
+		}
+		d.NetPnL = d.GrossPnL - d.Charges
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
 
 // AlgoEnabledUserIDs lists every account with auto-trading switched on —
@@ -442,13 +495,17 @@ func (s *Service) FillScheduled(ctx context.Context) (int, error) {
 		// price needs to move now, positive or negative.
 		cost := marginFraction(t.ProductType, t.OptionType != "") * px * float64(t.Quantity)
 		delta := cost - t.reservedMargin
+		// This is where a scheduled order actually executes, so this is
+		// where its entry charges are booked — at the real fill price, not
+		// the estimate used when it was scheduled.
+		entryCharges := chargesFor(t.OptionType, t.Side, px, t.Quantity)
 		tx, err := s.pool.Begin(ctx)
 		if err != nil {
 			s.log.Error().Err(err).Int64("trade_id", id).Msg("fill scheduled: begin tx failed")
 			continue
 		}
-		_, e1 := tx.Exec(ctx, `UPDATE paper_trades SET status='OPEN', entry_price=$2, entry_time=now(), reserved_margin=0 WHERE id=$1`, id, px)
-		e2 := debitBalance(ctx, tx, t.userID, t.Source, delta)
+		_, e1 := tx.Exec(ctx, `UPDATE paper_trades SET status='OPEN', entry_price=$2, entry_time=now(), reserved_margin=0, entry_charges=$3 WHERE id=$1`, id, px, entryCharges.Total)
+		e2 := debitBalance(ctx, tx, t.userID, t.Source, delta+entryCharges.Total)
 		if e1 != nil || e2 != nil {
 			_ = tx.Rollback(ctx)
 			s.log.Error().Err(errors.Join(e1, e2)).Int64("trade_id", id).Msg("fill scheduled: update failed")
@@ -592,7 +649,7 @@ func (s *Service) CancelPending(ctx context.Context, tradeID int64) (Trade, erro
 func (s *Service) Trades(ctx context.Context, userID string) ([]Trade, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT t.id, t.instrument_id, i.trading_symbol, COALESCE(i.option_type, ''), COALESCE(t.source, ''), t.signal_id, t.side, t.product_type, t.quantity,
-		       t.entry_price, t.entry_time, t.exit_price, t.exit_time, t.status, t.pnl, t.pending_close_qty
+		       t.entry_price, t.entry_time, t.exit_price, t.exit_time, t.status, t.pnl, t.pending_close_qty, t.entry_charges, t.exit_charges
 		FROM paper_trades t JOIN instruments i ON i.id = t.instrument_id
 		WHERE t.user_id = $1::uuid ORDER BY t.created_at DESC`, userID)
 	if err != nil {
@@ -603,7 +660,7 @@ func (s *Service) Trades(ctx context.Context, userID string) ([]Trade, error) {
 	for rows.Next() {
 		var t Trade
 		if err := rows.Scan(&t.ID, &t.InstrumentID, &t.Symbol, &t.OptionType, &t.Source, &t.SignalID, &t.Side, &t.ProductType, &t.Quantity,
-			&t.EntryPrice, &t.EntryTime, &t.ExitPrice, &t.ExitTime, &t.Status, &t.PnL, &t.PendingCloseQty); err != nil {
+			&t.EntryPrice, &t.EntryTime, &t.ExitPrice, &t.ExitTime, &t.Status, &t.PnL, &t.PendingCloseQty, &t.EntryCharges, &t.ExitCharges); err != nil {
 			return nil, err
 		}
 		if t.Status == "OPEN" {
@@ -762,12 +819,12 @@ func (s *Service) getTrade(ctx context.Context, id int64) (Trade, error) {
 	err := s.pool.QueryRow(ctx, `
 		SELECT t.id, t.user_id::text, t.instrument_id, i.trading_symbol, COALESCE(i.option_type, ''), COALESCE(t.source, ''), t.signal_id, t.side, t.product_type,
 		       t.quantity, t.entry_price, t.entry_time, t.exit_price, t.exit_time, t.status, t.pnl,
-		       t.pending_close_qty, t.reserved_margin
+		       t.pending_close_qty, t.reserved_margin, t.entry_charges, t.exit_charges
 		FROM paper_trades t JOIN instruments i ON i.id = t.instrument_id
 		WHERE t.id = $1`, id).
 		Scan(&t.ID, &t.userID, &t.InstrumentID, &t.Symbol, &t.OptionType, &t.Source, &t.SignalID, &t.Side, &t.ProductType,
 			&t.Quantity, &t.EntryPrice, &t.EntryTime, &t.ExitPrice, &t.ExitTime, &t.Status, &t.PnL,
-			&t.PendingCloseQty, &t.reservedMargin)
+			&t.PendingCloseQty, &t.reservedMargin, &t.EntryCharges, &t.ExitCharges)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return t, errors.New("trade not found")
 	}

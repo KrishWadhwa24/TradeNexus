@@ -400,6 +400,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/users/{uid}/paper/summary", s.handlePaperSummary)
 			r.Get("/users/{uid}/paper/algo-summary", s.handleAlgoSummary)
 			r.Get("/users/{uid}/paper/algo-stats", s.handleAlgoStats)
+			r.Get("/users/{uid}/paper/algo-daily-pnl", s.handleAlgoDailyPnL)
 			r.Post("/paper/trades/{tradeId}/close", s.handleCloseTrade)
 			r.Post("/paper/trades/{tradeId}/convert", s.handleConvertToDelivery)
 			r.Post("/paper/trades/{tradeId}/cancel", s.handleCancelScheduled)

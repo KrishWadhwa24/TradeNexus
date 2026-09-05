@@ -160,6 +160,166 @@ function ChainBrowser({ userId, onTraded }) {
   );
 }
 
+// isoDay formats a Date as YYYY-MM-DD without timezone drift (toISOString
+// would shift an IST date back a day for anyone west of UTC).
+function isoDay(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// PnLHeatmap renders one cell per calendar day between from and to, coloured
+// by that day's NET P&L (after charges). Days with no closed trades render
+// as empty cells, deliberately distinct from a real zero-P&L day.
+function PnLHeatmap({ days, from, to }) {
+  const byDate = new Map((days || []).map((d) => [d.date, d]));
+  const cells = [];
+  const start = new Date(from + "T00:00:00");
+  const end = new Date(to + "T00:00:00");
+  if (isNaN(start) || isNaN(end) || end < start) return null;
+
+  // Cap the grid so an accidental multi-year range can't render 700+ nodes.
+  const MAX_DAYS = 400;
+  let magnitude = 0;
+  for (const d of byDate.values()) magnitude = Math.max(magnitude, Math.abs(d.net_pnl));
+
+  for (let cur = new Date(start), i = 0; cur <= end && i < MAX_DAYS; cur.setDate(cur.getDate() + 1), i++) {
+    const key = isoDay(cur);
+    const row = byDate.get(key);
+    let bg = "var(--panel-2, #f0f0f0)";
+    let title = `${key}: no trades`;
+    if (row) {
+      // Opacity scales with size relative to the biggest day in range, so
+      // the worst/best day is always full-strength and the rest read
+      // relative to it.
+      const alpha = magnitude > 0 ? 0.25 + 0.75 * (Math.abs(row.net_pnl) / magnitude) : 0.5;
+      bg = row.net_pnl >= 0 ? `rgba(34,168,96,${alpha})` : `rgba(220,60,60,${alpha})`;
+      title = `${key}: net ${fmt(row.net_pnl)} (gross ${fmt(row.gross_pnl)} − charges ${fmt(row.charges)}) over ${row.trades} trade(s)`;
+    }
+    cells.push(<div key={key} title={title} style={{ width: 14, height: 14, borderRadius: 3, background: bg }} />);
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 10 }}>{cells}</div>
+      <div className="subtle" style={{ display: "flex", gap: 14, alignItems: "center", fontSize: 12 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 12, height: 12, borderRadius: 3, background: "rgba(34,168,96,0.9)" }} /> profit
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 12, height: 12, borderRadius: 3, background: "rgba(220,60,60,0.9)" }} /> loss
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--panel-2, #f0f0f0)" }} /> no trades
+        </span>
+        <span>— all figures are after charges. Hover a day for the breakdown.</span>
+      </div>
+    </div>
+  );
+}
+
+function StatisticsSection({ userId, trades }) {
+  const today = new Date();
+  const ninetyAgo = new Date();
+  ninetyAgo.setDate(today.getDate() - 90);
+
+  const [from, setFrom] = useState(isoDay(ninetyAgo));
+  const [to, setTo] = useState(isoDay(today));
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(() => {
+    if (!userId) return;
+    setBusy(true); setErr("");
+    api.get(`/v1/users/${userId}/paper/algo-daily-pnl?from=${from}&to=${to}`)
+      .then(setData)
+      .catch((e) => setErr(e.message))
+      .finally(() => setBusy(false));
+  }, [userId, from, to]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const t = data?.totals;
+  // Closed algo trades in the selected window — the list under the heatmap.
+  const closed = (trades || []).filter(
+    (x) => x.source === "options-algo" && x.status === "CLOSED" && x.exit_time &&
+           isoDay(new Date(x.exit_time)) >= from && isoDay(new Date(x.exit_time)) <= to
+  );
+
+  return (
+    <>
+      <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+        <div className="section-title" style={{ margin: "0 0 6px" }}>Date range</div>
+        <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <span className="subtle">to</span>
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          <button className="btn-sm btn-primary" onClick={load} disabled={busy}>{busy ? "Loading…" : "Apply"}</button>
+        </div>
+      </div>
+
+      {err && <div className="err" style={{ marginBottom: 12 }}>{err}</div>}
+
+      {t && (
+        <>
+          <div className="promoter-grid" style={{ marginBottom: 20 }}>
+            <Stat label="TRADES" value={t.trades} />
+            <Stat label="GROSS P&L" value={fmt(t.gross_pnl)} cls={t.gross_pnl >= 0 ? "pos" : "neg"} />
+            <Stat label="CHARGES PAID" value={fmt(t.charges)} cls="neg" />
+            <Stat label="NET P&L (AFTER CHARGES)" value={fmt(t.net_pnl)} cls={t.net_pnl >= 0 ? "pos" : "neg"} />
+            <Stat label="EST. INCOME TAX (30%)" value={fmt(t.income_tax_estimate)} cls="neg" />
+            <Stat label="NET AFTER INCOME TAX" value={fmt(t.net_after_income_tax)} cls={t.net_after_income_tax >= 0 ? "pos" : "neg"} />
+          </div>
+
+          <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
+            <div className="section-title" style={{ margin: "0 0 4px" }}>Daily P&amp;L heatmap</div>
+            <div className="subtle" style={{ marginBottom: 14 }}>
+              One cell per day from {data.from} to {data.to} — green means that day finished in profit after
+              all charges, red means it finished in loss.
+            </div>
+            <PnLHeatmap days={data.days} from={data.from} to={data.to} />
+          </div>
+
+          <div className="panel" style={{ padding: 20 }}>
+            <div className="section-title" style={{ margin: "0 0 14px" }}>Closed algo trades ({closed.length})</div>
+            {!closed.length ? (
+              <div className="subtle">No closed algo trades in this range.</div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Exited</th><th>Symbol</th><th>Qty</th><th>Entry</th><th>Exit</th>
+                      <th>Gross P&amp;L</th><th>Charges</th><th>Net P&amp;L</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {closed.map((x) => {
+                      const charges = (x.entry_charges || 0) + (x.exit_charges || 0);
+                      const net = (x.pnl || 0) - charges;
+                      return (
+                        <tr key={x.id}>
+                          <td>{new Date(x.exit_time).toLocaleString()}</td>
+                          <td>{x.symbol}</td>
+                          <td>{x.quantity}</td>
+                          <td>{fmt(x.entry_price)}</td>
+                          <td>{fmt(x.exit_price)}</td>
+                          <td className={x.pnl >= 0 ? "pos" : "neg"}>{fmt(x.pnl)}</td>
+                          <td className="neg">{fmt(charges)}</td>
+                          <td className={net >= 0 ? "pos" : "neg"}>{fmt(net)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 function AlgoToggle({ userId, enabled, onUpdated }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -374,6 +534,7 @@ const SECTIONS = [
   { key: "algo", label: "Algo Trades" },
   { key: "mine", label: "My Option Trades" },
   { key: "chain", label: "Option Chain" },
+  { key: "stats", label: "Statistics" },
 ];
 
 export default function Options({ userId, isAdmin }) {
@@ -471,6 +632,8 @@ export default function Options({ userId, isAdmin }) {
       )}
 
       {section === "chain" && <ChainBrowser userId={userId} onTraded={load} />}
+
+      {section === "stats" && <StatisticsSection userId={userId} trades={trades} />}
     </div>
   );
 }

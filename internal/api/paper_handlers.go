@@ -4,8 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"tradenexus/internal/market"
+	"tradenexus/internal/paper"
 )
 
 // PUT /v1/users/{uid}/paper/capital  {"capital":100000}
@@ -189,6 +193,54 @@ func (s *Server) handleSetAlgoEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, acct)
+}
+
+// GET /v1/users/{uid}/paper/algo-daily-pnl?from=YYYY-MM-DD&to=YYYY-MM-DD —
+// per-IST-day realized algo P&L, gross and net of real charges. Backs the
+// statistics screen's date-range summary and calendar heatmap. Defaults to
+// the last 90 days when from/to are omitted or unparseable.
+func (s *Server) handleAlgoDailyPnL(w http.ResponseWriter, r *http.Request) {
+	const layout = "2006-01-02"
+	to := time.Now().In(market.IST)
+	from := to.AddDate(0, 0, -90)
+	if t, err := time.ParseInLocation(layout, r.URL.Query().Get("from"), market.IST); err == nil {
+		from = t
+	}
+	if t, err := time.ParseInLocation(layout, r.URL.Query().Get("to"), market.IST); err == nil {
+		to = t
+	}
+
+	days, err := s.paper.AlgoDailyPnL(r.Context(), chi.URLParam(r, "uid"), from, to)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	var gross, charges float64
+	var trades int
+	for _, d := range days {
+		gross += d.GrossPnL
+		charges += d.Charges
+		trades += d.Trades
+	}
+	net := gross - charges
+	writeJSON(w, http.StatusOK, map[string]any{
+		"from": from.Format(layout),
+		"to":   to.Format(layout),
+		"days": days,
+		"totals": map[string]any{
+			"trades":    trades,
+			"gross_pnl": gross,
+			"charges":   charges,
+			"net_pnl":   net,
+			// Display-only estimate at the top 30% slab — F&O gains are
+			// business income and the real rate depends on the user's slab,
+			// so this is never applied to any balance. See
+			// paper.EstimateIncomeTax.
+			"income_tax_estimate":  paper.EstimateIncomeTax(net),
+			"net_after_income_tax": net - paper.EstimateIncomeTax(net),
+		},
+	})
 }
 
 // GET /v1/users/{uid}/paper/algo-stats — win rate/expectancy/profit-factor

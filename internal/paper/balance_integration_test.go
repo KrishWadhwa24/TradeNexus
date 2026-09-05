@@ -3,6 +3,7 @@ package paper
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"testing"
 	"time"
@@ -216,10 +217,15 @@ func TestCloseAtPrice_CreditsCorrectBalance(t *testing.T) {
 		Scan(&cash, &algoCash); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	// settlement = marginFraction(DELIVERY, isOption=true)=1.0 * 100 * 65 + 3250 = 6500+3250 = 9750
-	wantAlgoCash := 250000.0 + 100*65 + wantPnl
-	if algoCash != wantAlgoCash {
-		t.Errorf("algo_cash_balance = %v, want %v", algoCash, wantAlgoCash)
+	// settlement = marginFraction(DELIVERY, isOption=true)=1.0 * 100 * 65 + 3250 = 6500+3250 = 9750,
+	// MINUS the real exit charges on that sell (STT dominates — see charges.go).
+	exitCharges := OptionCharges(SideSell, 150, 65)
+	if exitCharges.Total <= 0 {
+		t.Fatal("expected the closing sell to incur real charges")
+	}
+	wantAlgoCash := 250000.0 + 100*65 + wantPnl - exitCharges.Total
+	if math.Abs(algoCash-wantAlgoCash) > 0.0001 {
+		t.Errorf("algo_cash_balance = %v, want %v (settlement 9750 less exit charges %.4f)", algoCash, wantAlgoCash, exitCharges.Total)
 	}
 	if cash != 100000 {
 		t.Errorf("cash_balance = %v, want unchanged 100000 — an options-algo close must never touch it", cash)
@@ -263,6 +269,65 @@ func TestSetCapital_ExcludesAlgoPositionsFromOpenCost(t *testing.T) {
 	// subtracted here — it was never funded from cash_balance.
 	if acct.CashBalance != 95000 {
 		t.Errorf("cash_balance = %v, want 95000 (100000 - the web position's 5000 only, excluding the algo position's 65000)", acct.CashBalance)
+	}
+}
+
+// TestClosePartialAtPrice_ProRatesEntryChargesNeverDoubleBillsBrokerage
+// guards the one place charges could silently inflate: a partial exit books
+// a new CLOSED row, and if it recomputed entry charges for that lot instead
+// of pro-rating the parent's, every partial would bill the flat Rs.20
+// brokerage again for an entry that only ever executed once.
+func TestClosePartialAtPrice_ProRatesEntryChargesNeverDoubleBillsBrokerage(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	userID := testAccount(t, pool, 100000, 250000)
+	instID := testInstrumentID(t, pool)
+	t.Cleanup(func() { pool.Exec(ctx, `DELETE FROM paper_trades WHERE user_id=$1::uuid`, userID) })
+
+	// Open a 130-unit (2-lot) option position carrying a known entry cost.
+	const entryCharges = 50.0
+	var tradeID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO paper_trades (user_id, instrument_id, side, product_type, quantity, entry_price, entry_time, status, source, entry_charges)
+		VALUES ($1::uuid, $2, 'BUY', 'DELIVERY', 130, 100, now(), 'OPEN', 'options-algo', $3) RETURNING id`,
+		userID, instID, entryCharges).Scan(&tradeID); err != nil {
+		t.Fatalf("seed open trade: %v", err)
+	}
+
+	parent := Trade{
+		ID: tradeID, userID: userID, InstrumentID: instID, Source: SourceOptionsAlgo,
+		Side: SideBuy, ProductType: ProductDelivery, OptionType: "CE",
+		Quantity: 130, EntryPrice: 100, EntryCharges: entryCharges,
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if err := closePartialAtPrice(ctx, tx, parent, 65, 150); err != nil { // exit half
+		t.Fatalf("closePartialAtPrice: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	var lotEntry, parentEntry float64
+	if err := pool.QueryRow(ctx,
+		`SELECT entry_charges FROM paper_trades WHERE user_id=$1::uuid AND status='CLOSED'`, userID).Scan(&lotEntry); err != nil {
+		t.Fatalf("read lot: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT entry_charges FROM paper_trades WHERE id=$1`, tradeID).Scan(&parentEntry); err != nil {
+		t.Fatalf("read parent: %v", err)
+	}
+
+	// Half the quantity exited => half the entry cost moves with it.
+	if math.Abs(lotEntry-entryCharges/2) > 0.0001 {
+		t.Errorf("closed lot entry_charges = %.4f, want %.4f (half of the parent's)", lotEntry, entryCharges/2)
+	}
+	// And the two must still sum to exactly what was paid — no invention.
+	if math.Abs((lotEntry+parentEntry)-entryCharges) > 0.0001 {
+		t.Errorf("lot (%.4f) + parent (%.4f) = %.4f, want exactly the original %.4f — charges must never be created or destroyed by a partial exit",
+			lotEntry, parentEntry, lotEntry+parentEntry, entryCharges)
 	}
 }
 

@@ -202,6 +202,8 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 			return Trade{}, fmt.Errorf("insufficient cash: need %.2f margin, have %.2f", margin, avail)
 		}
 
+		// A SCHEDULED order hasn't executed yet, so it incurs no charges
+		// here — they're booked at the real fill price by FillScheduled.
 		var id int64
 		if err = tx.QueryRow(ctx, `
 			INSERT INTO paper_trades (user_id, instrument_id, signal_id, side, product_type, quantity, reserved_margin, status, source)
@@ -245,7 +247,18 @@ func (s *Service) OpenPosition(ctx context.Context, userID string, instrumentID 
 	if err != nil {
 		return Trade{}, err
 	}
-	if err = debitBalance(ctx, tx, userID, source, margin); err != nil {
+	// Entry charges are debited on top of margin — real money leaves the
+	// account the moment the order executes, not at exit. Accumulated onto
+	// the row (+=) rather than assigned, so a merge into an existing
+	// position keeps both fills' costs (see mergeOrOpen).
+	entryCharges := chargesFor(inst.OptionType, side, px, qty)
+	if entryCharges.Total > 0 {
+		if _, err = tx.Exec(ctx,
+			`UPDATE paper_trades SET entry_charges = entry_charges + $2 WHERE id=$1`, id, entryCharges.Total); err != nil {
+			return Trade{}, err
+		}
+	}
+	if err = debitBalance(ctx, tx, userID, source, margin+entryCharges.Total); err != nil {
 		return Trade{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -338,15 +351,31 @@ func settleAmounts(t Trade, exitPrice float64) (pnl, settlement float64) {
 func closeAtPrice(ctx context.Context, tx pgx.Tx, t Trade, exitPrice float64) (float64, error) {
 	pnl, settlement := settleAmounts(t, exitPrice)
 
+	// Exiting a long is a SELL — the side that carries STT, the single
+	// largest statutory line on an options round trip (see charges.go).
+	// Deducted from the settlement credit so the cash actually returned to
+	// the account is what a real broker would return. pnl stays GROSS.
+	exitCharges := chargesFor(t.OptionType, exitSide(t.Side), exitPrice, t.Quantity)
+
 	if _, err := tx.Exec(ctx, `
-		UPDATE paper_trades SET status='CLOSED', exit_price=$2, exit_time=now(), pnl=$3 WHERE id=$1`,
-		t.ID, exitPrice, pnl); err != nil {
+		UPDATE paper_trades SET status='CLOSED', exit_price=$2, exit_time=now(), pnl=$3, exit_charges=$4 WHERE id=$1`,
+		t.ID, exitPrice, pnl, exitCharges.Total); err != nil {
 		return 0, err
 	}
-	if err := creditBalance(ctx, tx, t.userID, t.Source, settlement); err != nil {
+	if err := creditBalance(ctx, tx, t.userID, t.Source, settlement-exitCharges.Total); err != nil {
 		return 0, err
 	}
 	return pnl, nil
+}
+
+// exitSide is the order side that closes a position: selling closes a long,
+// buying back closes a short. Which side matters for charges — on options,
+// STT is levied on the sell leg and stamp duty on the buy leg.
+func exitSide(entrySide string) string {
+	if entrySide == SideBuy {
+		return SideSell
+	}
+	return SideBuy
 }
 
 // closePartialAtPrice sells qty shares off an OPEN position without
@@ -360,18 +389,30 @@ func closePartialAtPrice(ctx context.Context, tx pgx.Tx, t Trade, qty int, exitP
 	lot.Quantity = qty
 	pnl, settlement := settleAmounts(lot, exitPrice)
 
+	exitCharges := chargesFor(t.OptionType, exitSide(t.Side), exitPrice, qty)
+	// Entry charges are PRO-RATED off the parent, never recomputed for the
+	// lot: the entry was one executed order that already paid one flat
+	// brokerage, so recomputing here would bill that Rs.20 again for every
+	// partial exit. The parent keeps the remainder so the two rows always
+	// sum back to what was actually paid at entry.
+	var lotEntryCharges float64
+	if t.Quantity > 0 {
+		lotEntryCharges = t.EntryCharges * float64(qty) / float64(t.Quantity)
+	}
+
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO paper_trades (user_id, instrument_id, signal_id, side, product_type, quantity, entry_price, entry_time, exit_price, exit_time, status, pnl, source)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, now(), 'CLOSED', $10, $11)`,
-		t.userID, t.InstrumentID, t.SignalID, t.Side, t.ProductType, qty, t.EntryPrice, t.EntryTime, exitPrice, pnl, t.Source); err != nil {
+		INSERT INTO paper_trades (user_id, instrument_id, signal_id, side, product_type, quantity, entry_price, entry_time, exit_price, exit_time, status, pnl, source, entry_charges, exit_charges)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, now(), 'CLOSED', $10, $11, $12, $13)`,
+		t.userID, t.InstrumentID, t.SignalID, t.Side, t.ProductType, qty, t.EntryPrice, t.EntryTime, exitPrice, pnl, t.Source,
+		lotEntryCharges, exitCharges.Total); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx,
-		`UPDATE paper_trades SET quantity = quantity - $2 WHERE id=$1`,
-		t.ID, qty); err != nil {
+		`UPDATE paper_trades SET quantity = quantity - $2, entry_charges = entry_charges - $3 WHERE id=$1`,
+		t.ID, qty, lotEntryCharges); err != nil {
 		return err
 	}
-	if err := creditBalance(ctx, tx, t.userID, t.Source, settlement); err != nil {
+	if err := creditBalance(ctx, tx, t.userID, t.Source, settlement-exitCharges.Total); err != nil {
 		return err
 	}
 	return nil
