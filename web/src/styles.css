@@ -1678,12 +1678,6 @@ code {
 .lp-ghost.lg { padding: 14px 24px; font-size: 15px; border-radius: 12px; }
 
 .lp-hero { position: relative; padding: 40px 24px 0; }
-.lp-hero-glow {
-  position: absolute; top: -120px; left: 50%;
-  width: 900px; height: 520px; transform: translateX(-50%);
-  background: radial-gradient(closest-side, rgba(109, 110, 252, .28), rgba(62, 207, 142, .12) 55%, transparent 75%);
-  filter: blur(20px); pointer-events: none;
-}
 .lp-hero-grid {
   position: relative; max-width: 1160px; margin: 0 auto;
   padding: 48px 0 40px; display: grid;
@@ -1842,16 +1836,6 @@ code {
 
   .lp-free-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
   .lp-dash-table .lp-name { display: none; }
-
-  /* Tone down the hero glow on mobile — the 900px blob overwhelms the narrow
-     viewport and creates an ugly purple wash on small screens. */
-  .lp-hero-glow {
-    width: 480px;
-    height: 300px;
-    top: -60px;
-    background: radial-gradient(closest-side, rgba(109, 110, 252, .10), rgba(62, 207, 142, .04) 55%, transparent 75%);
-    filter: blur(30px);
-  }
 
   /* Compact nav buttons on mobile — keep them small and single-line */
   .lp-nav-cta .lp-primary,

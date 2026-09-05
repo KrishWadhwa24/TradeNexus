@@ -26,6 +26,7 @@ func testConfig() AlgoConfig {
 		EMAFastPeriod: 20, EMASlowPeriod: 50, ATRPeriod: 14, ATRAvgSpan: 20,
 		ORStartHour: 9, ORStartMin: 15, OREndHour: 9, OREndMin: 45, ORMinRangePercent: 0.15,
 		MaxDistanceFromVWAPATR: 1.5, StrikesEachSide: 5, MaxTradesPerDay: 1,
+		MinDaysToExpiry: 21, MaxIVMultiplier: 1.3,
 	}
 }
 

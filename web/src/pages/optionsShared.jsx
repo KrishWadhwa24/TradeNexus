@@ -1,7 +1,12 @@
+// Shared building blocks for the options-trading pages (AlgoTrades.jsx,
+// MyOptionTrades.jsx, OptionChain.jsx, OptionStatistics.jsx) — split out of
+// what used to be one page (Options.jsx) into separate sidebar entries, per
+// the same pattern the app already uses elsewhere (each nav item is its own
+// page). Not a page itself — nothing here is a default export.
 import React, { useCallback, useEffect, useState } from "react";
-import { api, connectLivePrices, connectOptionChainStream, fmt } from "../api.js";
+import { api, connectOptionChainStream, fmt } from "../api.js";
 
-function Stat({ label, value, cls }) {
+export function Stat({ label, value, cls }) {
   return (
     <div className="card">
       <div className="label">{label}</div>
@@ -10,13 +15,13 @@ function Stat({ label, value, cls }) {
   );
 }
 
-function unrealizedPnL(side, entryPrice, currentPrice, qty) {
+export function unrealizedPnL(side, entryPrice, currentPrice, qty) {
   return side === "SELL" ? (entryPrice - currentPrice) * qty : (currentPrice - entryPrice) * qty;
 }
 
 // TradeCard is one open option position — algo or manual, same shape either
-// way (the only difference is which list it's rendered in).
-function TradeCard({ t }) {
+// way (the only difference is which page it's rendered on).
+export function TradeCard({ t }) {
   const pnlCls = (t.unrealized_pnl || 0) >= 0 ? "text-green" : "text-red";
   return (
     <div className="promoter-card">
@@ -34,7 +39,7 @@ function TradeCard({ t }) {
   );
 }
 
-function SummaryStats({ sum, openTrades }) {
+export function SummaryStats({ sum, openTrades }) {
   const marketValue = openTrades.reduce((s, t) => s + t.entry_price * t.quantity + (t.unrealized_pnl || 0), 0);
   const unrealizedTotal = openTrades.reduce((s, t) => s + (t.unrealized_pnl || 0), 0);
   const totalPnl = (sum?.realized_pnl || 0) + unrealizedTotal;
@@ -51,7 +56,7 @@ function SummaryStats({ sum, openTrades }) {
   );
 }
 
-function ChainBrowser({ userId, onTraded }) {
+export function ChainBrowser({ userId, onTraded }) {
   const [chain, setChain] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -162,14 +167,14 @@ function ChainBrowser({ userId, onTraded }) {
 
 // isoDay formats a Date as YYYY-MM-DD without timezone drift (toISOString
 // would shift an IST date back a day for anyone west of UTC).
-function isoDay(d) {
+export function isoDay(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 // PnLHeatmap renders one cell per calendar day between from and to, coloured
 // by that day's NET P&L (after charges). Days with no closed trades render
 // as empty cells, deliberately distinct from a real zero-P&L day.
-function PnLHeatmap({ days, from, to }) {
+export function PnLHeatmap({ days, from, to }) {
   const byDate = new Map((days || []).map((d) => [d.date, d]));
   const cells = [];
   const start = new Date(from + "T00:00:00");
@@ -216,7 +221,9 @@ function PnLHeatmap({ days, from, to }) {
   );
 }
 
-function StatisticsSection({ userId, trades }) {
+// StatisticsSection now fetches its own trade list — it's a standalone page
+// (OptionStatistics.jsx) rather than a tab fed by a shared parent fetch.
+export function StatisticsSection({ userId }) {
   const today = new Date();
   const ninetyAgo = new Date();
   ninetyAgo.setDate(today.getDate() - 90);
@@ -224,14 +231,18 @@ function StatisticsSection({ userId, trades }) {
   const [from, setFrom] = useState(isoDay(ninetyAgo));
   const [to, setTo] = useState(isoDay(today));
   const [data, setData] = useState(null);
+  const [trades, setTrades] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const load = useCallback(() => {
     if (!userId) return;
     setBusy(true); setErr("");
-    api.get(`/v1/users/${userId}/paper/algo-daily-pnl?from=${from}&to=${to}`)
-      .then(setData)
+    Promise.all([
+      api.get(`/v1/users/${userId}/paper/algo-daily-pnl?from=${from}&to=${to}`),
+      api.get(`/v1/users/${userId}/paper/trades`),
+    ])
+      .then(([d, t]) => { setData(d); setTrades(t.trades || []); })
       .catch((e) => setErr(e.message))
       .finally(() => setBusy(false));
   }, [userId, from, to]);
@@ -240,7 +251,7 @@ function StatisticsSection({ userId, trades }) {
 
   const t = data?.totals;
   // Closed algo trades in the selected window — the list under the heatmap.
-  const closed = (trades || []).filter(
+  const closed = trades.filter(
     (x) => x.source === "options-algo" && x.status === "CLOSED" && x.exit_time &&
            isoDay(new Date(x.exit_time)) >= from && isoDay(new Date(x.exit_time)) <= to
   );
@@ -320,7 +331,7 @@ function StatisticsSection({ userId, trades }) {
   );
 }
 
-function AlgoToggle({ userId, enabled, onUpdated }) {
+export function AlgoToggle({ userId, enabled, onUpdated }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -338,7 +349,7 @@ function AlgoToggle({ userId, enabled, onUpdated }) {
       <div className="section-title" style={{ margin: "0 0 6px" }}>Algo trading</div>
       <div className="subtle" style={{ marginBottom: 14 }}>
         When on, the strategy evaluates every minute during market hours and places real (paper)
-        trades automatically under your algo capital below.
+        trades automatically under your algo capital (set from your Profile page).
       </div>
       <div className="row" style={{ gap: 8, alignItems: "center" }}>
         <span className={"tag " + (enabled ? "tag-buy" : "tag-sell")}>{enabled ? "ON" : "OFF"}</span>
@@ -351,100 +362,7 @@ function AlgoToggle({ userId, enabled, onUpdated }) {
   );
 }
 
-function CapitalControl({ userId, current, onUpdated }) {
-  const [value, setValue] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
-
-  useEffect(() => { if (current != null) setValue(String(current)); }, [current]);
-
-  async function save() {
-    setBusy(true); setMsg("");
-    try {
-      await api.put(`/v1/users/${userId}/paper/algo-capital`, { capital: Number(value) });
-      setMsg("Saved.");
-      onUpdated?.();
-    } catch (e) { setMsg("Failed: " + e.message); }
-    finally { setBusy(false); }
-  }
-
-  return (
-    <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
-      <div className="section-title" style={{ margin: "0 0 6px" }}>Algo capital</div>
-      <div className="subtle" style={{ marginBottom: 14 }}>
-        Separate from your regular paper-trading capital — this is what the algo's 1% risk-per-trade
-        sizing is calculated against.
-      </div>
-      <div className="row" style={{ gap: 8 }}>
-        <input type="number" value={value} onChange={(e) => setValue(e.target.value)} style={{ width: 160 }} />
-        <button className="btn-sm btn-primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
-        {msg && <span className="msg">{msg}</span>}
-      </div>
-    </div>
-  );
-}
-
-const CONFIG_FIELDS = [
-  ["RiskPerTradePercent", "Risk per trade (%)"],
-  ["MaxDailyLossPercent", "Max daily loss (%)"],
-  ["MaxWeeklyLossPercent", "Max weekly loss (%)"],
-  ["InitialStopLossPercent", "Initial stop-loss (%)"],
-  ["BreakevenTriggerPercent", "Breakeven trigger (%)"],
-  ["TrailingTriggerPercent", "Trailing trigger (%)"],
-  ["TrailingDistancePercent", "Trailing distance (%)"],
-  ["DeltaTarget", "Delta target"],
-  ["DeltaMin", "Delta min"],
-  ["DeltaMax", "Delta max"],
-  ["MaxSpreadPercent", "Max spread (%)"],
-  ["MinVolumeMultiplier", "Min volume multiplier"],
-  ["MaxTradesPerDay", "Max trades per day"],
-];
-
-function SettingsPanel() {
-  const [cfg, setCfg] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
-
-  const load = useCallback(() => { api.get("/v1/admin/optionsalgo/config").then(setCfg).catch(() => {}); }, []);
-  useEffect(() => { load(); }, [load]);
-
-  async function save() {
-    setBusy(true); setMsg("");
-    try {
-      await api.put("/v1/admin/optionsalgo/config", cfg);
-      setMsg("Saved — takes effect on the next evaluation tick.");
-    } catch (e) { setMsg("Failed: " + e.message); }
-    finally { setBusy(false); }
-  }
-
-  if (!cfg) return null;
-  return (
-    <div className="panel" style={{ padding: 20, marginBottom: 20 }}>
-      <div className="section-title" style={{ margin: "0 0 6px" }}>Strategy settings</div>
-      <div className="subtle" style={{ marginBottom: 14 }}>
-        Every script value, live-editable — e.g. raise risk to 2-3% for a day to see how the strategy
-        behaves, then set it back. Applies immediately, no restart needed.
-      </div>
-      <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 }}>
-        {CONFIG_FIELDS.map(([key, label]) => (
-          <label key={key} style={{ display: "grid", gap: 4 }}>
-            <span className="subtle" style={{ fontSize: 12 }}>{label}</span>
-            <input
-              type="number" step="any" value={cfg[key]}
-              onChange={(e) => setCfg({ ...cfg, [key]: Number(e.target.value) })}
-            />
-          </label>
-        ))}
-      </div>
-      <div className="row" style={{ marginTop: 14, gap: 8 }}>
-        <button className="btn-sm btn-primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save settings"}</button>
-        {msg && <span className="msg">{msg}</span>}
-      </div>
-    </div>
-  );
-}
-
-function PerformanceStats({ userId }) {
+export function PerformanceStats({ userId }) {
   const [stats, setStats] = useState(null);
   useEffect(() => {
     if (!userId) return;
@@ -482,7 +400,7 @@ function PerformanceStats({ userId }) {
   );
 }
 
-function DecisionLog({ isAdmin }) {
+export function DecisionLog({ isAdmin }) {
   const [decisions, setDecisions] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -526,114 +444,6 @@ function DecisionLog({ isAdmin }) {
           </table>
         </div>
       )}
-    </div>
-  );
-}
-
-const SECTIONS = [
-  { key: "algo", label: "Algo Trades" },
-  { key: "mine", label: "My Option Trades" },
-  { key: "chain", label: "Option Chain" },
-  { key: "stats", label: "Statistics" },
-];
-
-export default function Options({ userId, isAdmin }) {
-  const [section, setSection] = useState("algo");
-  const [algoSum, setAlgoSum] = useState(null);
-  const [mySum, setMySum] = useState(null);
-  const [trades, setTrades] = useState([]);
-  const [account, setAccount] = useState(null);
-  const [err, setErr] = useState("");
-
-  const load = useCallback(() => {
-    if (!userId) return;
-    setErr("");
-    Promise.all([
-      api.get(`/v1/users/${userId}/paper/algo-summary`),
-      api.get(`/v1/users/${userId}/paper/summary`),
-      api.get(`/v1/users/${userId}/paper/trades`),
-      api.get(`/v1/users/${userId}/paper/account`),
-    ])
-      .then(([a, m, t, acct]) => { setAlgoSum(a); setMySum(m); setTrades(t.trades || []); setAccount(acct); })
-      .catch((e) => setErr(e.message));
-  }, [userId]);
-
-  useEffect(() => { load(); }, [load]);
-
-  useEffect(() => {
-    if (!userId) return;
-    return connectLivePrices(userId, {
-      onMessage: (event) => {
-        try {
-          const tick = JSON.parse(event.data);
-          if (!tick.instrument_id || !tick.price) return;
-          setTrades((cur) => cur.map((t) => {
-            if (t.status !== "OPEN" || t.instrument_id !== tick.instrument_id) return t;
-            return { ...t, current_price: tick.price, unrealized_pnl: unrealizedPnL(t.side, t.entry_price, tick.price, t.quantity) };
-          }));
-        } catch { /* ignore heartbeat/ready control frames */ }
-      },
-    });
-  }, [userId]);
-
-  if (!userId) return <div className="empty">Select a user to view options trading.</div>;
-  if (err) return <div className="err">{err}</div>;
-
-  // Options only — every non-option (equity) trade is excluded from both
-  // sections here regardless of source, since this page is options-specific;
-  // the existing Paper Trading page still shows everything, unfiltered.
-  const optionTrades = trades.filter((t) => t.option_type === "CE" || t.option_type === "PE");
-  const algoTrades = optionTrades.filter((t) => t.source === "options-algo" && t.status === "OPEN");
-  const myTrades = optionTrades.filter((t) => t.source !== "options-algo" && t.status === "OPEN");
-
-  return (
-    <div>
-      <div className="promoter-filters" style={{ marginBottom: 16 }}>
-        {SECTIONS.map((s) => (
-          <button
-            key={s.key}
-            className={"chip chip-tab" + (section === s.key ? " is-active" : "")}
-            onClick={() => setSection(s.key)}
-          >
-            {s.label}
-          </button>
-        ))}
-      </div>
-
-      {section === "algo" && (
-        <>
-          <SummaryStats sum={algoSum} openTrades={algoTrades} />
-          <AlgoToggle userId={userId} enabled={account?.algo_enabled} onUpdated={load} />
-          <CapitalControl userId={userId} current={algoSum?.cash_balance} onUpdated={load} />
-          {isAdmin && <SettingsPanel />}
-          <PerformanceStats userId={userId} />
-          {!algoTrades.length ? (
-            <div className="empty">No open algo positions right now — the strategy trades automatically when its conditions are met.</div>
-          ) : (
-            <div className="promoter-grid">
-              {algoTrades.map((t) => <TradeCard key={t.id} t={t} />)}
-            </div>
-          )}
-          <DecisionLog isAdmin={isAdmin} />
-        </>
-      )}
-
-      {section === "mine" && (
-        <>
-          <SummaryStats sum={mySum} openTrades={myTrades} />
-          {!myTrades.length ? (
-            <div className="empty">No manual option positions yet — buy one from the Option Chain tab.</div>
-          ) : (
-            <div className="promoter-grid">
-              {myTrades.map((t) => <TradeCard key={t.id} t={t} />)}
-            </div>
-          )}
-        </>
-      )}
-
-      {section === "chain" && <ChainBrowser userId={userId} onTraded={load} />}
-
-      {section === "stats" && <StatisticsSection userId={userId} trades={trades} />}
     </div>
   );
 }

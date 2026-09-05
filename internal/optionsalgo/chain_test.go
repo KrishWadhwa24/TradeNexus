@@ -169,3 +169,38 @@ func TestLiquidityCheck_RejectsEmptyOrderBook(t *testing.T) {
 		t.Errorf("a tight-spread, high-volume contract must pass, got %q", why)
 	}
 }
+
+func TestAverageIV_ExcludesZeroIVQuotes(t *testing.T) {
+	// Two real IVs, one Greeks-unavailable (IV=0) — the zero must not drag
+	// the average down and make the real ones look artificially cheap.
+	quotes := []OptionQuote{{IV: 10}, {IV: 20}, {IV: 0}}
+	if got := AverageIV(quotes); got != 15 {
+		t.Errorf("AverageIV = %v, want 15 (mean of 10,20 — the zero-IV quote excluded)", got)
+	}
+	if got := AverageIV(nil); got != 0 {
+		t.Errorf("AverageIV(nil) = %v, want 0", got)
+	}
+	if got := AverageIV([]OptionQuote{{IV: 0}, {IV: 0}}); got != 0 {
+		t.Errorf("AverageIV(all zero) = %v, want 0", got)
+	}
+}
+
+func TestIVCheck_RejectsExpensiveContract(t *testing.T) {
+	if ok, _ := IVCheck(OptionQuote{IV: 20}, 10, 1.3); ok {
+		t.Error("expected rejection: 20 is more than 1.3x the average of 10")
+	}
+	if ok, why := IVCheck(OptionQuote{IV: 12}, 10, 1.3); !ok {
+		t.Errorf("expected pass: 12 is within 1.3x of 10, got rejected: %s", why)
+	}
+}
+
+// TestIVCheck_GreeksOutageIsNoOp is the regression-shaped test for the
+// defensive guard: when Greeks are unavailable for the whole chain (avgIV=0,
+// confirmed live behavior outside market hours), this gate must not block
+// every trade — only the delta-selection gate upstream, which already
+// requires real Greeks, should do that.
+func TestIVCheck_GreeksOutageIsNoOp(t *testing.T) {
+	if ok, why := IVCheck(OptionQuote{IV: 0}, 0, 1.3); !ok {
+		t.Errorf("expected a no-op pass when avgIV is 0 (greeks outage), got rejected: %s", why)
+	}
+}

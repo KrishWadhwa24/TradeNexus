@@ -145,3 +145,39 @@ func AverageVolume(quotes []OptionQuote) float64 {
 	}
 	return float64(sum) / float64(len(quotes))
 }
+
+// AverageIV is the plain mean IV across a set of quotes — IVCheck's
+// cross-sectional comparison point. There is no IV history to compare a
+// contract against yet (option_chain_snapshots' archival only just began),
+// so "average" here means "average across today's chain right now," same
+// scope limitation as AverageVolume above. Quotes with IV == 0 (Greeks
+// unavailable, e.g. outside market hours) are excluded — folding them in
+// would drag the average toward zero and make everything with a real IV
+// look artificially expensive by comparison.
+func AverageIV(quotes []OptionQuote) float64 {
+	var sum float64
+	var n int
+	for _, q := range quotes {
+		if q.IV > 0 {
+			sum += q.IV
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return sum / float64(n)
+}
+
+// IVCheck rejects a contract priced disproportionately above its peers'
+// average IV right now — buying at elevated IV means overpaying for the
+// same expected move. avgIV <= 0 (Greeks unavailable for the whole chain)
+// makes this a no-op, same defensive pattern LiquidityCheck uses for
+// avgVolume: a Greeks outage must not block every trade through this gate,
+// only through the delta-selection gate that already requires real Greeks.
+func IVCheck(q OptionQuote, avgIV, maxIVMultiplier float64) (ok bool, reason string) {
+	if avgIV > 0 && q.IV > avgIV*maxIVMultiplier {
+		return false, "IV too far above the chain's average — overpaying for this move"
+	}
+	return true, ""
+}

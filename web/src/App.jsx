@@ -15,7 +15,11 @@ import AnalyserHub from "./pages/AnalyserHub.jsx";
 import MarketsHub from "./pages/MarketsHub.jsx";
 import Audit from "./pages/Audit.jsx";
 import Paper from "./pages/Paper.jsx";
-import Options from "./pages/Options.jsx";
+import OptionsHub from "./pages/OptionsHub.jsx";
+import AlgoTrades from "./pages/AlgoTrades.jsx";
+import MyOptionTrades from "./pages/MyOptionTrades.jsx";
+import OptionChain from "./pages/OptionChain.jsx";
+import OptionStatistics from "./pages/OptionStatistics.jsx";
 import Trade from "./pages/Trade.jsx";
 import Profile from "./pages/Profile.jsx";
 import Admin from "./pages/Admin.jsx";
@@ -71,15 +75,19 @@ const NAV = [
   // Scanners. mutual-funds/promoter-buying are still valid `view` values,
   // just reached via the hub instead of their own sidebar rows.
   { key: "analyser", label: "Analyser", icon: "pulse" },
+  // Flat entry — lands on OptionsHub, a picker page, same pattern as
+  // Scanners/Markets/Analyser. algo-trades/my-option-trades/option-chain/
+  // option-stats are still valid `view` values, reached via the hub instead
+  // of their own sidebar rows (an earlier version made them sidebar
+  // sub-items under Paper Trading — reverted to match how every other
+  // multi-view area in this app already works).
+  { key: "options", label: "Options", icon: "wallet" },
 
   { key: "audit", label: "Audit", icon: "list" },
   {
-    // Two sub-views now: search-any-stock-and-trade, and the positions/
-    // history table — a flat entry can only ever render one component.
     group: "paper", label: "Paper Trading", icon: "wallet", items: [
       { key: "trade", label: "Trade", icon: "search" },
       { key: "paper", label: "Positions", icon: "wallet" },
-      { key: "options", label: "Options", icon: "wallet" },
     ],
   },
   { key: "admin", label: "Admin", icon: "shield", admin: true },
@@ -109,7 +117,11 @@ const TITLES = {
   audit: "Signal Audit",
   trade: "Paper Trading — Trade",
   paper: "Paper Trading — Positions",
-  options: "Paper Trading — Options",
+  options: "Options",
+  "algo-trades": "Algo Trades",
+  "my-option-trades": "My Option Trades",
+  "option-chain": "Option Chain",
+  "option-stats": "Option Statistics",
   profile: "Profile",
   admin: "Admin — Candle Tools",
 };
@@ -127,6 +139,7 @@ const HUB_CHILDREN = {
   scanners: (v) => v.startsWith("scanner:") || v.startsWith("patterns:"),
   analyser: (v) => v === "mutual-funds" || v === "promoter-buying" || v === "big-investors",
   markets: (v) => v === "ipo" || v === "promoter" || v === "bulk" || v === "block",
+  options: (v) => v === "algo-trades" || v === "my-option-trades" || v === "option-chain" || v === "option-stats",
 };
 
 // The ordered list of tabs driven by bottom-nav swipe gestures.
@@ -403,8 +416,12 @@ export default function App() {
       case "audit": return <Audit isAdmin={isAdmin} />;
       case "trade": return <Trade {...p} />;
       case "paper": return <Paper {...p} />;
-      case "options": return <Options {...p} isAdmin={isAdmin} />;
-      case "profile": return <Profile {...p} onLogout={logout} />;
+      case "options": return <OptionsHub onSelect={enterHub} />;
+      case "algo-trades": return <AlgoTrades {...p} isAdmin={isAdmin} />;
+      case "my-option-trades": return <MyOptionTrades {...p} />;
+      case "option-chain": return <OptionChain {...p} />;
+      case "option-stats": return <OptionStatistics {...p} />;
+      case "profile": return <Profile {...p} isAdmin={isAdmin} onLogout={logout} />;
       case "admin": return isAdmin ? <Admin /> : <Home {...p} />;
       default: return null;
     }

@@ -30,6 +30,17 @@ type AlgoConfig struct {
 	MaxDistanceFromVWAPATR  float64
 	StrikesEachSide         int
 	MaxTradesPerDay         int
+	// MinDaysToExpiry gates which expiry gets traded — the soonest one at
+	// least this many days out, not simply the nearest. Theta decay
+	// accelerates hardest in an option's final days, so nearest-expiry is
+	// the worst choice for a buyer; skipping the closest weeklies trades
+	// some premium efficiency for materially slower decay.
+	MinDaysToExpiry int
+	// MaxIVMultiplier rejects a candidate whose IV sits too far above the
+	// chain's own average IV right now (cross-sectional, not historical —
+	// there's no IV history to compare against yet). Buying at elevated IV
+	// means overpaying for the same expected move.
+	MaxIVMultiplier float64
 }
 
 // GetConfig reads the single algo_config row — seeded by migration
@@ -42,7 +53,8 @@ func (r *Repo) GetConfig(ctx context.Context) (AlgoConfig, error) {
 		       trailing_distance_percent, delta_target, delta_min, delta_max,
 		       max_spread_percent, min_volume_multiplier, ema_fast_period, ema_slow_period,
 		       atr_period, atr_avg_span, or_start_hour, or_start_min, or_end_hour, or_end_min,
-		       or_min_range_percent, max_distance_from_vwap_atr, strikes_each_side, max_trades_per_day
+		       or_min_range_percent, max_distance_from_vwap_atr, strikes_each_side, max_trades_per_day,
+		       min_days_to_expiry, max_iv_multiplier
 		FROM algo_config WHERE id = 1`).Scan(
 		&c.RiskPerTradePercent, &c.MaxDailyLossPercent, &c.MaxWeeklyLossPercent,
 		&c.InitialStopLossPercent, &c.BreakevenTriggerPercent, &c.TrailingTriggerPercent,
@@ -50,6 +62,7 @@ func (r *Repo) GetConfig(ctx context.Context) (AlgoConfig, error) {
 		&c.MaxSpreadPercent, &c.MinVolumeMultiplier, &c.EMAFastPeriod, &c.EMASlowPeriod,
 		&c.ATRPeriod, &c.ATRAvgSpan, &c.ORStartHour, &c.ORStartMin, &c.OREndHour, &c.OREndMin,
 		&c.ORMinRangePercent, &c.MaxDistanceFromVWAPATR, &c.StrikesEachSide, &c.MaxTradesPerDay,
+		&c.MinDaysToExpiry, &c.MaxIVMultiplier,
 	)
 	return c, err
 }
@@ -66,6 +79,7 @@ func (r *Repo) UpdateConfig(ctx context.Context, c AlgoConfig) error {
 			max_spread_percent=$11, min_volume_multiplier=$12, ema_fast_period=$13, ema_slow_period=$14,
 			atr_period=$15, atr_avg_span=$16, or_start_hour=$17, or_start_min=$18, or_end_hour=$19, or_end_min=$20,
 			or_min_range_percent=$21, max_distance_from_vwap_atr=$22, strikes_each_side=$23, max_trades_per_day=$24,
+			min_days_to_expiry=$25, max_iv_multiplier=$26,
 			updated_at=now()
 		WHERE id = 1`,
 		c.RiskPerTradePercent, c.MaxDailyLossPercent, c.MaxWeeklyLossPercent,
@@ -74,6 +88,7 @@ func (r *Repo) UpdateConfig(ctx context.Context, c AlgoConfig) error {
 		c.MaxSpreadPercent, c.MinVolumeMultiplier, c.EMAFastPeriod, c.EMASlowPeriod,
 		c.ATRPeriod, c.ATRAvgSpan, c.ORStartHour, c.ORStartMin, c.OREndHour, c.OREndMin,
 		c.ORMinRangePercent, c.MaxDistanceFromVWAPATR, c.StrikesEachSide, c.MaxTradesPerDay,
+		c.MinDaysToExpiry, c.MaxIVMultiplier,
 	)
 	return err
 }

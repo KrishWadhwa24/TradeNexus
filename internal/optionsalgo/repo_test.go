@@ -216,3 +216,46 @@ func TestLogDecision_AndRecentDecisions(t *testing.T) {
 		t.Errorf("context fields didn't round-trip: %+v", got)
 	}
 }
+
+// TestOptionExpiryAtLeastDaysOut_SkipsNearExpiries is the regression test
+// for A1: buying the nearest expiry maximizes theta decay for a long
+// option buyer. Checked against whatever NIFTY expiries are actually synced
+// right now (not a fixture) — same discipline as verifying this live before
+// building it.
+func TestOptionExpiryAtLeastDaysOut_SkipsNearExpiries(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+
+	nearest, err := r.NearestOptionExpiry(ctx, "NIFTY")
+	if err != nil {
+		t.Skipf("no NIFTY expiries synced: %v", err)
+	}
+
+	// minDays=0 must behave exactly like "nearest" — same underlying query,
+	// just phrased as a floor of zero days out.
+	same, err := r.OptionExpiryAtLeastDaysOut(ctx, "NIFTY", 0)
+	if err != nil {
+		t.Fatalf("OptionExpiryAtLeastDaysOut(0): %v", err)
+	}
+	if !same.Equal(nearest) {
+		t.Errorf("OptionExpiryAtLeastDaysOut(0) = %v, want it to match NearestOptionExpiry %v", same, nearest)
+	}
+
+	// A real minDays must actually skip the near dates, not just re-derive
+	// the nearest one.
+	farOut, err := r.OptionExpiryAtLeastDaysOut(ctx, "NIFTY", 21)
+	if err != nil {
+		t.Skipf("no NIFTY expiry synced 21+ days out yet: %v", err)
+	}
+	if !farOut.After(nearest) && !farOut.Equal(nearest) {
+		t.Errorf("farOut expiry %v should be >= nearest %v", farOut, nearest)
+	}
+	if daysOut := farOut.Sub(time.Now()).Hours() / 24; daysOut < 21 {
+		t.Errorf("selected expiry %v is only %.1f days out, want >= 21", farOut, daysOut)
+	}
+
+	// Nothing synced that far out must error, not silently return zero.
+	if _, err := r.OptionExpiryAtLeastDaysOut(ctx, "NIFTY", 100000); err == nil {
+		t.Error("expected an error when no expiry is synced that far out")
+	}
+}

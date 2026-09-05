@@ -10,7 +10,121 @@ function Stat({ label, value, cls }) {
   );
 }
 
-export default function Profile({ userId, onLogout }) {
+// AlgoCapitalControl — moved here from the old Options page: the algo's
+// capital is an account-level setting, same category as regular virtual
+// capital right above it, not something that belongs on a trading-activity
+// page.
+function AlgoCapitalControl({ userId }) {
+  const [value, setValue] = useState("");
+  const [current, setCurrent] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const load = useCallback(() => {
+    if (!userId) return;
+    api.get(`/v1/users/${userId}/paper/algo-summary`)
+      .then((s) => { setCurrent(s.cash_balance); setValue(String(s.cash_balance ?? "")); })
+      .catch(() => {});
+  }, [userId]);
+  useEffect(() => { load(); }, [load]);
+
+  async function save() {
+    setBusy(true); setMsg("");
+    try {
+      await api.put(`/v1/users/${userId}/paper/algo-capital`, { capital: Number(value) });
+      setMsg("Saved.");
+      load();
+    } catch (e) { setMsg("Failed: " + e.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <>
+      <div className="section-title">Algo capital</div>
+      <div className="panel" style={{ padding: 18, marginBottom: 24 }}>
+        <div className="subtle" style={{ marginBottom: 10 }}>
+          Separate from your regular virtual capital above — this is what the algo's 1% risk-per-trade
+          sizing is calculated against.
+        </div>
+        <div className="row">
+          <input type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder="e.g. 250000" />
+          <button className="btn-primary btn-sm" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+          {msg && <span className="msg">{msg}</span>}
+        </div>
+        {current != null && <div className="subtle" style={{ marginTop: 10 }}>Current: {fmt(current)}</div>}
+      </div>
+    </>
+  );
+}
+
+const CONFIG_FIELDS = [
+  ["RiskPerTradePercent", "Risk per trade (%)"],
+  ["MaxDailyLossPercent", "Max daily loss (%)"],
+  ["MaxWeeklyLossPercent", "Max weekly loss (%)"],
+  ["InitialStopLossPercent", "Initial stop-loss (%)"],
+  ["BreakevenTriggerPercent", "Breakeven trigger (%)"],
+  ["TrailingTriggerPercent", "Trailing trigger (%)"],
+  ["TrailingDistancePercent", "Trailing distance (%)"],
+  ["DeltaTarget", "Delta target"],
+  ["DeltaMin", "Delta min"],
+  ["DeltaMax", "Delta max"],
+  ["MaxSpreadPercent", "Max spread (%)"],
+  ["MinVolumeMultiplier", "Min volume multiplier"],
+  ["MinDaysToExpiry", "Min days to expiry"],
+  ["MaxIVMultiplier", "Max IV multiplier (vs chain average)"],
+  ["MaxTradesPerDay", "Max trades per day"],
+];
+
+// StrategySettingsPanel — moved here from the old Options page (admin-only,
+// unchanged otherwise). Account-level/strategy configuration belongs with
+// the rest of the account's settings, not mixed in with trade activity.
+function StrategySettingsPanel() {
+  const [cfg, setCfg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const load = useCallback(() => { api.get("/v1/admin/optionsalgo/config").then(setCfg).catch(() => {}); }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function save() {
+    setBusy(true); setMsg("");
+    try {
+      await api.put("/v1/admin/optionsalgo/config", cfg);
+      setMsg("Saved — takes effect on the next evaluation tick.");
+    } catch (e) { setMsg("Failed: " + e.message); }
+    finally { setBusy(false); }
+  }
+
+  if (!cfg) return null;
+  return (
+    <>
+      <div className="section-title">Strategy settings</div>
+      <div className="panel" style={{ padding: 18, marginBottom: 24 }}>
+        <div className="subtle" style={{ marginBottom: 14 }}>
+          Every script value, live-editable — e.g. raise risk to 2-3% for a day to see how the strategy
+          behaves, then set it back. Applies immediately, no restart needed.
+        </div>
+        <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 }}>
+          {CONFIG_FIELDS.map(([key, label]) => (
+            <label key={key} style={{ display: "grid", gap: 4 }}>
+              <span className="subtle" style={{ fontSize: 12 }}>{label}</span>
+              <input
+                type="number" step="any" value={cfg[key]}
+                onChange={(e) => setCfg({ ...cfg, [key]: Number(e.target.value) })}
+              />
+            </label>
+          ))}
+        </div>
+        <div className="row" style={{ marginTop: 14, gap: 8 }}>
+          <button className="btn-sm btn-primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save settings"}</button>
+          {msg && <span className="msg">{msg}</span>}
+        </div>
+      </div>
+    </>
+  );
+}
+
+export default function Profile({ userId, isAdmin, onLogout }) {
   const [sum, setSum] = useState(null);
   const [capital, setCapital] = useState("");
   const [tg, setTg] = useState({ bot_token: "", chat_id: "", enabled: true });
@@ -71,6 +185,9 @@ export default function Profile({ userId, onLogout }) {
           Setting capital resets available cash to capital minus the cost of open positions.
         </div>
       </div>
+
+      <AlgoCapitalControl userId={userId} />
+      {isAdmin && <StrategySettingsPanel />}
 
       <div className="section-title">Telegram alerts</div>
       <div className="panel" style={{ padding: 18, marginBottom: 24 }}>

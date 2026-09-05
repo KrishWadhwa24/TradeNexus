@@ -3,6 +3,7 @@ package optionsalgo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"tradenexus/internal/instruments"
@@ -22,6 +23,35 @@ func (r *Repo) NearestOptionExpiry(ctx context.Context, underlying string) (time
 	}
 	if expiry.IsZero() {
 		return time.Time{}, errors.New("no unexpired option expiry found — run the derivatives sync")
+	}
+	return expiry, nil
+}
+
+// OptionExpiryAtLeastDaysOut returns the soonest expiry at least minDays
+// away — used instead of NearestOptionExpiry so the algo isn't structurally
+// stuck buying the fastest-decaying contract available (theta accelerates
+// hardest in an option's final days, making nearest-expiry the worst choice
+// for a long-only buyer).
+//
+// Deliberately does NOT try to identify "the monthly contract" specifically
+// (e.g. picking the last expiry within each calendar month) — the
+// derivatives sync only pulls near-dated contracts, so a month with only
+// one expiry synced so far would have that single weekly wrongly picked as
+// "the monthly." Asking for "far enough out" sidesteps that entirely: it
+// doesn't matter whether the result IS the monthly contract, only that it's
+// past the high-decay near dates.
+func (r *Repo) OptionExpiryAtLeastDaysOut(ctx context.Context, underlying string, minDays int) (time.Time, error) {
+	var expiry time.Time
+	err := r.pool.QueryRow(ctx, `
+		SELECT MIN(expiry_date) FROM instruments
+		WHERE underlying_symbol = $1 AND option_type IN ('CE','PE')
+		  AND expiry_date >= CURRENT_DATE + ($2 * INTERVAL '1 day') AND active = TRUE`,
+		underlying, minDays).Scan(&expiry)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if expiry.IsZero() {
+		return time.Time{}, fmt.Errorf("no option expiry at least %d days out — run the derivatives sync or lower MinDaysToExpiry", minDays)
 	}
 	return expiry, nil
 }

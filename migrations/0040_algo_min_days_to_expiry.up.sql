@@ -1,0 +1,2 @@
+ALTER TABLE algo_config ADD COLUMN min_days_to_expiry INT NOT NULL DEFAULT 21;
+ALTER TABLE algo_config ADD COLUMN max_iv_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.3;

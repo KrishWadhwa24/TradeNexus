@@ -30,7 +30,9 @@ func (s *Service) BuildOptionChain(ctx context.Context, spot float64) ([]OptionQ
 	if err != nil {
 		return nil, err
 	}
-	expiry, err := s.repo.NearestOptionExpiry(ctx, niftyUnderlying)
+	// Far enough out, not nearest — see OptionExpiryAtLeastDaysOut's doc
+	// comment for why nearest-expiry is the worst choice for a long buyer.
+	expiry, err := s.repo.OptionExpiryAtLeastDaysOut(ctx, niftyUnderlying, cfg.MinDaysToExpiry)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +168,11 @@ func (s *Service) SelectContract(ctx context.Context, direction Direction, chain
 
 	avgVol := AverageVolume(sideQuotes)
 	if liquid, why := LiquidityCheck(selected, avgVol, cfg.MaxSpreadPercent, cfg.MinVolumeMultiplier); !liquid {
+		return OptionQuote{}, fmt.Sprintf("%s rejected: %s", selected.TradingSymbol, why), false
+	}
+
+	avgIV := AverageIV(sideQuotes)
+	if ok, why := IVCheck(selected, avgIV, cfg.MaxIVMultiplier); !ok {
 		return OptionQuote{}, fmt.Sprintf("%s rejected: %s", selected.TradingSymbol, why), false
 	}
 

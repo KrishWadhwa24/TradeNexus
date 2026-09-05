@@ -117,7 +117,6 @@ export default function Landing({ onGetStarted, theme, onToggleTheme }) {
 
       {/* HERO */}
       <section className="lp-hero">
-        <div className="lp-hero-glow" />
         <div className="lp-hero-grid">
           <div className="lp-hero-copy">
             <span className="lp-kicker">// NSE + BSE · REAL-TIME SCANNER</span>
